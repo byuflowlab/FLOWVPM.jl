@@ -1,6 +1,6 @@
 # FLOWVPM
 
-Implementation of the viscous Vortex Particle Method written in Julia 1.0.
+Implementation of the three-dimensional viscous Vortex Particle Method written in Julia 1.0.
 
 ## Features
   * Single node CPU parallel processing (threads).

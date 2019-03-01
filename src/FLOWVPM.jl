@@ -34,6 +34,12 @@ import Base.real
 import Base.imag
 import Base.atan
 
+# GPU capabilities
+const GPUenabled = false                        # GPU modules enabled/disabled
+if GPUenabled
+    using CUDAnative
+    using CuArrays
+end
 
 # ------------ FLOW MODULES ----------------------------------------------------
 # None required
@@ -41,20 +47,9 @@ import Base.atan
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
-const ADFLAG = true
-
-# This line defines a concrete real for type definitions
-if ADFLAG
-  println("******** AD Activated ******************")
-  const CReal = FD.Dual{Nothing,Float64,3}    # Use this for automatic derivatives
-else
-  println("******** AD Deactivated ******************")
-  const CReal = Float64                       # Use this for fast performance
-end
-
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in []
-  include("FLOWVPM_"*header_name*".jl")
+for header_name in ["kernel", "particlefield"]
+  include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
 
