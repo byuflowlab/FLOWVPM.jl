@@ -4,13 +4,7 @@ authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
 version = "0.1.0"
 
 [deps]
-# DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
-# DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-# CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
-# JuliaDB = "a93385a2-3734-596a-9a66-3cfbb77141e6"
-# Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-# Interact = "c601a237-2ae4-5e1e-952c-7a85b0c7eef1"
-# AirfoilPrep = "008c61af-3522-4e14-81c5-9301d18a9f66"
+FLOWExaFMM = "a07d1f4e-0e34-4d8b-bfef-e5b961477d34"
 
 [compat]
 julia = "1.4"

@@ -14,13 +14,14 @@ module FLOWVPM
 # ------------ GENERIC MODULES -------------------------------------------------
 
 # ------------ FLOW CODES ------------------------------------------------------
-# None required
+import FLOWExaFMM
+const fmm = FLOWExaFMM
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in []
+for header_name in ["particlefield"]
   include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
