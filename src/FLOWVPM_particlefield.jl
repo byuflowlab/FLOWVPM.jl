@@ -20,13 +20,17 @@ mutable struct ParticleField
     # Internal properties
     bodies::fmm.Bodies                          # ExaFMM array of bodies (particles)
     np::Int                                     # Number of particles in the field
+    nt::Int                                     # Current time step number
+    t::Float64                                  # Current time
 
     ParticleField(
                       maxparticles;
-                      bodies=fmm.genBodies(maxparticles), np=0
+                      bodies=fmm.genBodies(maxparticles), np=0,
+                      nt=0, t=0.0
                  ) = new(
                       maxparticles,
-                      bodies, np
+                      bodies, np,
+                      nt, t
                  )
 end
 ##### FUNCTIONS ################################################################
@@ -140,6 +144,8 @@ function add_particle(self::ParticleField, X, Gamma, sigma; vol=0)
     return nothing
 end
 
+add_particle(self, X, Gamma, sigma, vol) = add_particle(self, X, Gamma, sigma; vol=vol)
+
 """
   `remove_particle(pfield::ParticleField, i)`
 
@@ -203,6 +209,13 @@ function set_vol(P::fmm.BodyRef, vol::Real)
     return nothing
 end
 
+function set_index(P::fmm.BodyRef, index::Int)
+    fmm.set_index(P, Int32(index))
+    return nothing
+end
+set_index(self::ParticleField, index, i) = set_index(get_particle(self, i), index)
+get_index(self::ParticleField, i) = get_index(get_particle(self, i))
+
 get_X(P::fmm.BodyRef) = fmm.get_Xref(P)
 get_Gamma(P::fmm.BodyRef) = fmm.get_qref(P)
 get_sigma(P::fmm.BodyRef) = fmm.get_sigma(P)
@@ -211,4 +224,5 @@ get_J(P::fmm.BodyRef) = fmm.get_Jref(P)
 get_dJdx1(P::fmm.BodyRef) = fmm.get_dJdx1ref(P)
 get_dJdx2(P::fmm.BodyRef) = fmm.get_dJdx2ref(P)
 get_dJdx3(P::fmm.BodyRef) = fmm.get_dJdx3ref(P)
+get_index(P::fmm.BodyRef) = fmm.get_index(P)
 ##### END OF PARTICLE FIELD#####################################################

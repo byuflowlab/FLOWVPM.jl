@@ -4,7 +4,14 @@ authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
 version = "0.1.0"
 
 [deps]
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 FLOWExaFMM = "a07d1f4e-0e34-4d8b-bfef-e5b961477d34"
 
 [compat]
 julia = "1.4"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

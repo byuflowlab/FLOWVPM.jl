@@ -11,7 +11,9 @@
         modification of this code is allowed without written consent.
 """
 module FLOWVPM
+
 # ------------ GENERIC MODULES -------------------------------------------------
+import HDF5
 
 # ------------ FLOW CODES ------------------------------------------------------
 import FLOWExaFMM
@@ -21,8 +23,8 @@ const fmm = FLOWExaFMM
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["particlefield"]
-  include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
+for header_name in ["particlefield", "utils"]
+    include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
 end # END OF MODULE
