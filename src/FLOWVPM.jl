@@ -14,6 +14,7 @@ module FLOWVPM
 
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
+import SpecialFunctions
 
 # ------------ FLOW CODES ------------------------------------------------------
 import FLOWExaFMM

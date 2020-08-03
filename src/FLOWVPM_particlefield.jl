@@ -216,7 +216,31 @@ end
 set_index(self::ParticleField, index, i) = set_index(get_particle(self, i), index)
 get_index(self::ParticleField, i) = get_index(get_particle(self, i))
 
-get_X(P::fmm.BodyRef) = fmm.get_Xref(P)
+# NOTE: Here I'm using the p (vector potential) field to store U
+function set_U(P::fmm.BodyRef, U)
+    if length(U)!=3
+        error("Invalid velocity $(U).")
+    end
+    fmm.get_pref(P)[:] .= U
+    return nothing
+end
+set_U(self::ParticleField, U, i) = set_U(get_particle(self, i), U)
+get_U(self::ParticleField, i) = get_U(get_particle(self, i))
+
+# NOTE: Here I'm using the J (vector potential Jacobian) field to store the Jacobian of U
+function set_J(P::fmm.BodyRef, J)
+    if length(J)!=9
+        error("Invalid Jacobian $(J).")
+    end
+    fmm.get_Jref(P)[:] .= J
+    return nothing
+end
+set_J(self::ParticleField, J, i) = set_J(get_particle(self, i), J)
+get_J(self::ParticleField, i) = get_J(get_particle(self, i))
+
+get_particles(self::ParticleField) = self.bodies
+
+get_X(P::fmm.BodyRef) = (fmm.get_X1(P), fmm.get_X2(P), fmm.get_X3(P))
 get_Gamma(P::fmm.BodyRef) = fmm.get_qref(P)
 get_sigma(P::fmm.BodyRef) = fmm.get_sigma(P)
 get_vol(P::fmm.BodyRef) = fmm.get_vol(P)
@@ -225,4 +249,5 @@ get_dJdx1(P::fmm.BodyRef) = fmm.get_dJdx1ref(P)
 get_dJdx2(P::fmm.BodyRef) = fmm.get_dJdx2ref(P)
 get_dJdx3(P::fmm.BodyRef) = fmm.get_dJdx3ref(P)
 get_index(P::fmm.BodyRef) = fmm.get_index(P)
+get_U(P::fmm.BodyRef) = fmm.get_pref(P)
 ##### END OF PARTICLE FIELD#####################################################
