@@ -9,6 +9,9 @@
   * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
 
+import LinearAlgebra: norm
+using PyPlot
+
 import FLOWVPM
 vpm = FLOWVPM
 
@@ -22,11 +25,11 @@ in Sullivan's *Dynamics of thin vortex rings*. Beta factor was extracted from
 Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 """
 function validation_singlevortexring(;
-                                        # kernel=kernel_gaus, UJ=UJ_fmm,
-                                        integration="rk",
+                                        kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+                                        integration=vpm.rungekutta3,
                                         # fmm = FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
-                                        Re=400,
-                                        save_path="temps/val_vortexring00/",
+                                        Re=400, viscous=false,
+                                        save_path="temps/val_vortexring04/",
                                         run_name="vortexring",
                                         paraview=true, prompt=true,
                                         verbose=true, verbose2=true,
@@ -46,13 +49,12 @@ function validation_singlevortexring(;
 
     # fmm = FMM(; p=4, ncrit=10, theta=0.4, phi=0.5)
 
-    # res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
-    run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
+    res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
                                 extra_nc=extra_nc,
                                 faux1=faux1,
                                 # SIMULATION SETUP
-                                # kernel=kernel,
-                                # UJ=UJ,
+                                kernel=kernel,
+                                UJ=UJ,
                                 # fmm=fmm,
                                 # NUMERICAL SCHEMES
                                 transposed=true,
@@ -60,6 +62,7 @@ function validation_singlevortexring(;
                                 rlxf=0.3,
                                 integration=integration,
                                 nsteps_relax=1,
+                                viscous=viscous,
                                 beta_cs=1.25,
                                 # SIMULATION OPTIONS
                                 save_path=save_path,
@@ -70,8 +73,8 @@ function validation_singlevortexring(;
                                 )
 
 
-    # res = err <= tol         # Result
-    # return res
+    res = err <= tol         # Result
+    return res
 end
 
 
@@ -99,16 +102,17 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               faux1=1.0,
                               override_nu::Union{Nothing, Real}=nothing,
                               # SIMULATION SETUP
-                              # kernel::Kernel=kernel_gaus,
-                              # UJ::Function=UJ_fmm,
+                              kernel::vpm.Kernel=vpm.kernel_wnklmns,
+                              UJ::Function=vpm.UJ_direct,
                               # fmm::FMM=FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
                               transposed=true,
                               relax=true,
                               rlxf=0.3,
-                              integration="euler",
+                              integration=vpm.rungekutta3,
                               nsteps_relax=1,
                               beta_cs=1.25,
+                              viscous=true,
                               # SIMULATION OPTIONS
                               save_path="temps/vortexring00",
                               run_name="vortexring",
@@ -125,7 +129,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     lambda = sigma/(2*pi*R/Nphi)  # Smoothing radius overlap
     smoothdeg = 180/pi*(2*atan(sigma/2,R)) # (deg) Ring's angle covered by sigma
     sgmoR = sigma/R
-    nu = override_nu==nothing ? Gamma/Re : override_nu
+    nu = viscous ? override_nu==nothing ? Gamma/Re : override_nu : 0.0
 
     beta = 0.5
     Ucore = Gamma/(4*pi*R)*(log(8/coR)-beta)  # Analytical self-induced velocity
@@ -145,14 +149,12 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
     maxparticles = 10000
-    pfield = vpm.ParticleField(maxparticles)
-    # pfield = ParticleField(nu, kernel, UJ;
-    #                         transposed=transposed,
-    #                         relax=relax,
-    #                         rlxf=rlxf,
-    #                         integration=integration,
-    #                         fmm=fmm
-    #                         )
+    pfield = vpm.ParticleField(maxparticles; nu=nu, kernel=kernel, UJ=UJ,
+                            transposed=transposed,
+                            relax=relax, rlxf=rlxf,
+                            integration=integration,
+                            # fmm=fmm
+                            )
     sgm0 = sigma                            # Default core size
     # beta_cs = 1.25                          # Maximum core size growth
 
@@ -161,7 +163,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                   extra_nc=extra_nc, lambda=lambda)
 
 
-    vpm.save(pfield, run_name; path=save_path, createpath=true)
+    # vpm.save(pfield, run_name; path=save_path, createpath=true)
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------
@@ -169,72 +171,72 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     Xs, ts = [], []
     function center_position(pfield::vpm.ParticleField, t, dt)
         Np = vpm.get_np(pfield)
-        X = sum([vpm.get_X(pfield, pi) for pi in 1:Np])
+        X = sum([P.X for P in vpm.iterator(pfield)])
         X = X/Np
         push!(Xs, X)
         push!(ts, t)
         return false
     end
 
-  # # -------------- SIMULATION --------------------------------------------------
-  # # Runs the simulation
-  # run_vpm!(pfield, dt, nsteps;  runtime_function=center_position,
-  #                               nsteps_relax=nsteps_relax,
-  #                               beta=beta_cs, sgm0=sgm0,
-  #                               save_path=save_path,
-  #                               run_name=run_name,
-  #                               prompt=prompt,
-  #                               verbose=verbose,
-  #                               verbose_nsteps=verbose_nsteps
-  #                               )
-  #
-  #
-  #
-  # # -------------- POST-PROCESSING ---------------------------------------------
-  # # Resulting self-induced velocity
-  # res_Ucore = norm(Xs[end] - Xs[1]) / (ts[end] - ts[1])
-  # err = abs( (res_Ucore - Ucore) / Ucore )          # Error to analytical
-  #
-  # # Comparison to analytical solution
-  # if verbose2
-  #   println("Vortex ring self-induced velocity verification")
-  #   println("\tAnalytical velocity: \t$(round(typeof(Ucore)!=Float64 ? Ucore.value : Ucore, digits=10))")
-  #   println("\tResulting velocity: \t$(round(typeof(res_Ucore)!=Float64 ? res_Ucore.value : res_Ucore, digits=10))")
-  #   println("\tError: \t\t\t$(round(typeof(err)!=Float64 ? (100*err).value : (100*err), digits=10)) %\n")
-  # end
-  #
-  # # Plots velocity
-  # if disp_plot
-  #
-  #   Xzs = [!(typeof(X[3]) in [Float64, Int64]) ? X[3].value : X[3] for X in Xs]
-  #   plt_Xzs = [!(typeof(Xzs[i]) in [Float64, Int64]) ? Xzs[i].value : Xzs[i] for i in 1:10:size(ts)[1]]
-  #   plt_ts = [!(typeof(ts[i]) in [Float64, Int64]) ? ts[i].value : ts[i] for i in 1:10:size(ts)[1]]
-  #   plot(plt_ts, plt_Xzs, "or", label="ADVPM", alpha=0.5)
-  #   if plot_ana; plot(ts, Ucore*ts, "k", label="Analytical Inviscid", alpha=0.9); end;
-  #   legend(loc="best")
-  #   xlabel("Time (s)")
-  #   ylabel("Ring's core position (m)")
-  #   grid(true, color="0.8", linestyle="--")
-  #   title("Single vortex ring validation")
-  #
-  #   if save_path!=nothing
-  #     savefig(joinpath(save_path, "vring.png"))
-  #   end
-  # end
-  #
-  # # --------------- VISUALIZATION --------------------------------------------
-  # if save_path!=nothing
-  #   if paraview
-  #     println("Calling Paraview...")
-  #     strn = ""
-  #     strn = strn * run_name * "...xmf;"
-  #
-  #     run(`paraview --data="$(joinpath(save_path,strn))"`)
-  #   end
-  # end
-  #
-  # push!(outs, Xs)
-  # push!(outs, ts)
-  #
-  # res_Ucore, err
+    # -------------- SIMULATION --------------------------------------------------
+    # Runs the simulation
+    vpm.run_vpm!(pfield, dt, nsteps; runtime_function=center_position,
+                                        nsteps_relax=nsteps_relax,
+                                        beta=beta_cs, sgm0=sgm0,
+                                        save_path=save_path,
+                                        run_name=run_name,
+                                        prompt=prompt,
+                                        verbose=verbose,
+                                        verbose_nsteps=verbose_nsteps
+                                        )
+
+
+
+    # -------------- POST-PROCESSING ---------------------------------------------
+    # Resulting self-induced velocity
+    res_Ucore = norm(Xs[end] - Xs[1]) / (ts[end] - ts[1])
+    err = abs( (res_Ucore - Ucore) / Ucore )          # Error to analytical
+
+    # Comparison to analytical solution
+    if verbose2
+        println("Vortex ring self-induced velocity verification")
+        println("\tAnalytical velocity: \t$(round(typeof(Ucore)!=Float64 ? Ucore.value : Ucore, digits=10))")
+        println("\tResulting velocity: \t$(round(typeof(res_Ucore)!=Float64 ? res_Ucore.value : res_Ucore, digits=10))")
+        println("\tError: \t\t\t$(round(typeof(err)!=Float64 ? (100*err).value : (100*err), digits=10)) %\n")
+    end
+
+    # Plots velocity
+    if disp_plot
+
+        Xzs = [!(typeof(X[3]) in [Float64, Int64]) ? X[3].value : X[3] for X in Xs]
+        plt_Xzs = [!(typeof(Xzs[i]) in [Float64, Int64]) ? Xzs[i].value : Xzs[i] for i in 1:10:size(ts)[1]]
+        plt_ts = [!(typeof(ts[i]) in [Float64, Int64]) ? ts[i].value : ts[i] for i in 1:10:size(ts)[1]]
+        plot(plt_ts, plt_Xzs, "or", label="FLOWVPM", alpha=0.5)
+        if plot_ana; plot(ts, Ucore*ts, "k", label="Analytical Inviscid", alpha=0.9); end;
+        legend(loc="best")
+        xlabel("Time (s)")
+        ylabel("Ring's core position (m)")
+        grid(true, color="0.8", linestyle="--")
+        title("Single vortex ring validation")
+
+        if save_path!=nothing
+            savefig(joinpath(save_path, "vring.png"))
+        end
+    end
+
+    # --------------- VISUALIZATION --------------------------------------------
+    if save_path!=nothing
+        if paraview
+            println("Calling Paraview...")
+            strn = ""
+            strn = strn * run_name * "...xmf;"
+
+            run(`paraview --data="$(joinpath(save_path,strn))"`)
+        end
+    end
+
+    push!(outs, Xs)
+    push!(outs, ts)
+
+    res_Ucore, err
 end

@@ -13,25 +13,73 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField
+mutable struct ParticleField{T}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
 
     # Internal properties
-    bodies::fmm.Bodies                          # ExaFMM array of bodies (particles)
+    particles::Array{Particle{T}, 1}            # Array of particles
+    bodies::fmm.Bodies                          # ExaFMM array of bodies
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
     t::Float64                                  # Current time
 
-    ParticleField(
-                      maxparticles;
-                      bodies=fmm.genBodies(maxparticles), np=0,
-                      nt=0, t=0.0
-                 ) = new(
-                      maxparticles,
-                      bodies, np,
-                      nt, t
-                 )
+    # Solver setting
+    nu::Float64                                 # Kinematic viscosity
+    kernel::Kernel                              # Vortex particle kernel
+    UJ::Function                                # Particle-to-particle calculation
+
+    # Optional inputs
+    Uinf::Function                              # Uniform freestream function Uinf(t)
+    transposed::Bool                            # Transposed vortex stretch scheme
+    relax::Bool                                 # Activates relaxation scheme
+    rlxf::Float64                               # Relaxation factor (fraction of dt)
+    integration::Function                         # Time integration scheme
+    # fmm::FMM
+
+
+    ParticleField{T}(
+                        maxparticles,
+                        particles, bodies;
+                        np=0, nt=0, t=0.0,
+                        nu=0.0,
+                        kernel=kernel_gauserf,
+                        UJ=UJ_fmm,
+                        Uinf=t->zeros(3),
+                        transposed=true,
+                        relax=true, rlxf=0.3,
+                        integration=rungekutta3,
+                        # fmm=FMM(),
+                 ) where {T} = new(
+                        maxparticles,
+                        particles, bodies,
+                        np, nt, t,
+                        nu,
+                        kernel,
+                        UJ,
+                        Uinf,
+                        transposed,
+                        relax, rlxf,
+                        integration,
+                        # fmm,
+                  )
+end
+
+function ParticleField(maxparticles::Int; optargs...)
+    # Memory allocation by C++
+    bodies = fmm.genBodies(maxparticles)
+
+    # Have Julia point to the same memory than C++
+    particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+
+    # Set index of each particle
+    for (i, P) in enumerate(particles)
+        P.index[1] = i
+    end
+
+    # Generate and return ParticleField
+    return ParticleField{RealFMM}(maxparticles, particles, bodies; np=0,
+                                                                    optargs...)
 end
 ##### FUNCTIONS ################################################################
 """
@@ -57,86 +105,30 @@ function get_particle(self::ParticleField, i::Int; emptyparticle=false)
                                                           " $(get_np(self)+1)")
     end
 
-    return fmm.getBody(self.bodies, i-1)
+    return self.particles[i]
 end
 
 """
-    `set_X(pfield::ParticleField, X, i)`
-
-    Set position of the i-th particle in the field.
-"""
-set_X(self::ParticleField, X, i) = set_X(get_particle(self, i), X)
-
-"""
-    `get_X(pfield::ParticleField, i)`
-
-    Returns position of the i-th particle in the field.
-"""
-get_X(self::ParticleField, i) = get_X(get_particle(self, i))
-
-"""
-    `set_Gamma(pfield::ParticleField, Gamma, i)`
-
-    Set vortex strength of the i-th particle in the field.
-"""
-set_Gamma(self::ParticleField, Gamma, i) = set_Gamma(get_particle(self, i), Gamma)
-
-"""
-    `get_Gamma(pfield::ParticleField, i)`
-
-    Returns vortex strength of the i-th particle in the field.
-"""
-get_Gamma(self::ParticleField, i) = get_Gamma(get_particle(self, i))
-
-"""
-    `set_sigma(pfield::ParticleField, sigma, i)`
-
-    Set smoothing radius of the i-th particle in the field.
-"""
-set_sigma(self::ParticleField, sigma, i) = set_sigma(get_particle(self, i), sigma)
-
-"""
-    `get_sigma(pfield::ParticleField, i)`
-
-    Returns vortex strength of the i-th particle in the field.
-"""
-get_sigma(self::ParticleField, i) = get_sigma(get_particle(self, i))
-
-"""
-    `set_vol(pfield::ParticleField, vol, i)`
-
-    Set volume of the i-th particle in the field.
-"""
-set_vol(self::ParticleField, vol, i) = set_vol(get_particle(self, i), vol)
-
-"""
-    `get_vol(pfield::ParticleField, i)`
-
-    Returns vortex strength of the i-th particle in the field.
-"""
-get_vol(self::ParticleField, i) = get_vol(get_particle(self, i))
-
-"""
-  `add_particle(self::ParticleField, particle::Particle)`
+  `add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=np)`
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField, X, Gamma, sigma; vol=0)
+function add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=-1)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
                                                             " has been reached")
     end
 
-
     # Fetch next empty particle in the field
     P = get_particle(self, get_np(self)+1; emptyparticle=true)
 
     # Populate the empty particle
-    set_X(P, X)
-    set_Gamma(P, Gamma)
-    set_sigma(P, sigma)
-    set_vol(P, vol)
+    P.X .= X
+    P.Gamma .= Gamma
+    P.sigma .= sigma
+    P.vol .= vol
+    P.index .= index==-1 ? get_np(self)+1 : index
 
     # Add particle to the field
     self.np += 1
@@ -144,15 +136,13 @@ function add_particle(self::ParticleField, X, Gamma, sigma; vol=0)
     return nothing
 end
 
-add_particle(self, X, Gamma, sigma, vol) = add_particle(self, X, Gamma, sigma; vol=vol)
-
 """
   `remove_particle(pfield::ParticleField, i)`
 
 Remove the i-th particle in the field. This is done by moving the last particle
 that entered the field into the memory slot of the target particle. To remove
 particles sequentally, you will need to go from the last particle back to the
-first one.
+first one (see documentation of `get_particleiterator` for an example).
 """
 function remove_particle(self::ParticleField, i::Int)
     if i<=0
@@ -171,83 +161,80 @@ function remove_particle(self::ParticleField, i::Int)
     return nothing
 end
 
+"""
+    `get_particleiterator(pfield::ParticleField; start_i=1, end_i=np)`
 
+Return an iterator over particles that can be used as follows
+
+```julia-repl
+julia> # Initiate particle field
+       pfield = FLOWVPM.ParticleField(10);
+
+julia> # Add particles
+       for i in 1:4
+           FLOWVPM.add_particle(pfield, (i*10^0, i*10^1, i*10^2), zeros(3), 1.0)
+       end
+
+julia> # Iterate over particles
+       for P in FLOWVPM.get_particleiterator(pfield)
+           println(P.X)
+       end
+[1.0, 10.0, 100.0]
+[2.0, 20.0, 200.0]
+[3.0, 30.0, 300.0]
+[4.0, 40.0, 400.0]
+```
+"""
+function get_particleiterator(self::ParticleField{T};
+                                        start_i::Int=1, end_i::Int=-1) where {T}
+    # ERROR CASES
+    if end_i > get_np(self)
+        error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
+                                                    " particles in the field.")
+    end
+
+    return view( self.particles, start_i:(end_i==-1 ? get_np(self) : end_i)
+                )::SubArray{FLOWVPM.Particle{T},1,Array{FLOWVPM.Particle{T},1},Tuple{UnitRange{Int64}},true}
+end
+
+"Alias for `get_particleiterator`"
+iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
+
+"Alias for `get_particleiterator`"
+iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
+
+
+"""
+  `nextstep(self::ParticleField, dt; relax=false)`
+
+Steps the particle field in time by a step `dt`.
+"""
+function nextstep(self::ParticleField, dt::Real; optargs...)
+
+  # Step in time
+  self.integration(self, dt; optargs...)
+
+  # Updates time
+  self.t += dt
+  self.nt += 1
+end
 
 ##### INTERNAL FUNCTIONS #######################################################
-function set_X(P::fmm.BodyRef, X)
-    if length(X)!=3
-        error("Invalid position $(X).")
+function _reset_particles(self::ParticleField{T}) where {T}
+    tzero = zero(T)
+    for P in iterator(self)
+        P.U[1] = tzero
+        P.U[2] = tzero
+        P.U[3] = tzero
+        P.J[1, 1] = tzero
+        P.J[2, 1] = tzero
+        P.J[3, 1] = tzero
+        P.J[1, 2] = tzero
+        P.J[2, 2] = tzero
+        P.J[3, 2] = tzero
+        P.J[1, 3] = tzero
+        P.J[2, 3] = tzero
+        P.J[3, 3] = tzero
     end
-
-    fmm.get_Xref(P)[:] .= X
-
-    return nothing
 end
-
-function set_Gamma(P::fmm.BodyRef, Gamma)
-    if length(Gamma)!=3
-        error("Invalid strength $(Gamma).")
-    end
-
-    fmm.get_qref(P)[:] .= Gamma
-
-    return nothing
-end
-
-function set_sigma(P::fmm.BodyRef, sigma::Real)
-    if sigma<=0
-        error("Invalid smoothing radius $(sigma).")
-    end
-
-    fmm.set_sigma(P, sigma)
-
-    return nothing
-end
-
-function set_vol(P::fmm.BodyRef, vol::Real)
-    fmm.set_vol(P, vol)
-    return nothing
-end
-
-function set_index(P::fmm.BodyRef, index::Int)
-    fmm.set_index(P, Int32(index))
-    return nothing
-end
-set_index(self::ParticleField, index, i) = set_index(get_particle(self, i), index)
-get_index(self::ParticleField, i) = get_index(get_particle(self, i))
-
-# NOTE: Here I'm using the p (vector potential) field to store U
-function set_U(P::fmm.BodyRef, U)
-    if length(U)!=3
-        error("Invalid velocity $(U).")
-    end
-    fmm.get_pref(P)[:] .= U
-    return nothing
-end
-set_U(self::ParticleField, U, i) = set_U(get_particle(self, i), U)
-get_U(self::ParticleField, i) = get_U(get_particle(self, i))
-
-# NOTE: Here I'm using the J (vector potential Jacobian) field to store the Jacobian of U
-function set_J(P::fmm.BodyRef, J)
-    if length(J)!=9
-        error("Invalid Jacobian $(J).")
-    end
-    fmm.get_Jref(P)[:] .= J
-    return nothing
-end
-set_J(self::ParticleField, J, i) = set_J(get_particle(self, i), J)
-get_J(self::ParticleField, i) = get_J(get_particle(self, i))
-
-get_particles(self::ParticleField) = self.bodies
-
-get_X(P::fmm.BodyRef) = (fmm.get_X1(P), fmm.get_X2(P), fmm.get_X3(P))
-get_Gamma(P::fmm.BodyRef) = fmm.get_qref(P)
-get_sigma(P::fmm.BodyRef) = fmm.get_sigma(P)
-get_vol(P::fmm.BodyRef) = fmm.get_vol(P)
-get_J(P::fmm.BodyRef) = fmm.get_Jref(P)
-get_dJdx1(P::fmm.BodyRef) = fmm.get_dJdx1ref(P)
-get_dJdx2(P::fmm.BodyRef) = fmm.get_dJdx2ref(P)
-get_dJdx3(P::fmm.BodyRef) = fmm.get_dJdx3ref(P)
-get_index(P::fmm.BodyRef) = fmm.get_index(P)
-get_U(P::fmm.BodyRef) = fmm.get_pref(P)
 ##### END OF PARTICLE FIELD#####################################################
