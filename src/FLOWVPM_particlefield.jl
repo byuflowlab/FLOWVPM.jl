@@ -203,6 +203,9 @@ iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
 "Alias for `get_particleiterator`"
 iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
+get_X(self::ParticleField, i::Int) = get_particle(self, i).X
+get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).Gamma
+get_sigma(self::ParticleField, i::Int) = get_particle(self, i).sigma[1]
 
 """
   `nextstep(self::ParticleField, dt; relax=false)`

@@ -107,3 +107,5 @@ function addvortexring(       pfield::vpm.ParticleField,
 
     return nothing
 end
+
+norm(X) = sqrt(X[1]^2 + X[2]^2 + X[3]^2)

@@ -68,15 +68,15 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     if verbose
         time_beg = Dates.DateTime(Dates.now())
-        println("\t"^v_lvl*"*"^73*"\n\t"^v_lvl*"START $run_id\t$time_beg\n"*
-                "\t"^v_lvl*"*"^73)
+        println("\t"^v_lvl*"*"^(73-8*v_lvl)*"\n"*"\t"^v_lvl*"START $run_id\t$time_beg\n"*
+                "\t"^v_lvl*"*"^(73-8*v_lvl))
     end
 
     # RUN
     for i in 0:nsteps
 
         if verbose && i%verbose_nsteps==0
-            println("Time step $i out of $nsteps"*
+            println("\t"^(v_lvl+1)*"Time step $i out of $nsteps"*
             "\tParticles: $(get_np(pfield))")
         end
 
@@ -134,9 +134,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     if verbose
         time_end = Dates.DateTime(Dates.now())
         hrs,mins,secs = timeformat(time_beg, time_end)
-        println("\t"^v_lvl*"******************************************************")
+        println("\t"^v_lvl*"*"^(73-8*v_lvl))
         println("\t"^v_lvl*"END $run_id\t$time_end")
-        println("\t"^v_lvl*"******************************************************")
+        println("\t"^v_lvl*"*"^(73-8*v_lvl))
         println("\t"^v_lvl*"ELAPSED TIME: $hrs hours $mins minutes $secs seconds")
     end
 

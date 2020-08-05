@@ -9,8 +9,12 @@
   * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
 
-import LinearAlgebra: norm
-using PyPlot
+try
+    # If this variable exist, we know we are running this as a unit test
+    this_is_a_test
+catch e
+    using PyPlot
+end
 
 import FLOWVPM
 vpm = FLOWVPM
@@ -32,11 +36,11 @@ function validation_singlevortexring(;
                                         save_path="temps/val_vortexring04/",
                                         run_name="vortexring",
                                         paraview=true, prompt=true,
-                                        verbose=true, verbose2=true,
+                                        verbose=true, verbose2=true, v_lvl=0,
                                         tol=1e-2, disp_plot=true,
                                         nc=1, Nphi=200, extra_nc=0,
                                         nsteps=200, coR=0.15, nR=5, faux1=1.0,
-                                        R=1.0)
+                                        R=1.0, optargs...)
 
     # -------------- PARAMETERS ----------------------------------------------
 
@@ -68,8 +72,9 @@ function validation_singlevortexring(;
                                 save_path=save_path,
                                 run_name=run_name,
                                 paraview=paraview, prompt=prompt,
-                                verbose=verbose, verbose2=verbose2,
-                                disp_plot=disp_plot
+                                verbose=verbose, verbose2=verbose2, v_lvl=v_lvl,
+                                disp_plot=disp_plot,
+                                optargs...
                                 )
 
 
@@ -118,7 +123,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               run_name="vortexring",
                               verbose_nsteps=10,
                               paraview=true, prompt=true,
-                              verbose=true, verbose2=true,
+                              verbose=true, verbose2=true, v_lvl=0,
                               disp_plot=true, plot_ana=true,
                               outs=[]
                               )
@@ -137,12 +142,12 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     dt = nR*R/Ucore/nsteps        # Time step size
 
     if verbose2
-        println("Ring's core / R:\t\t$(round(typeof(coR)!=Float64 ? coR.value : coR, digits=3))")
-        println("Geometric core / R:\t\t$(round(typeof(rmax/R)!=Float64 ? (rmax/R).value : rmax/R, digits=3))")
-        println("Smoothing radius / R:\t\t$(round(typeof(sigma/R)!=Float64 ? (sigma/R).value : sigma/R, digits=3))")
-        println("Smoothing overlap sigma/h:\t$(round(typeof(lambda)!=Float64 ? (lambda).value : lambda, digits=3))")
-        println("Smoothing ring angle:\t\t$(round(typeof(smoothdeg)!=Float64 ? (smoothdeg).value : smoothdeg, digits=3)) deg")
-        println("dt:\t\t\t\t$(typeof(dt)!=Float64 ? (dt).value : dt)")
+        println("\t"^v_lvl*"Ring's core / R:\t\t$(round(typeof(coR)!=Float64 ? coR.value : coR, digits=3))")
+        println("\t"^v_lvl*"Geometric core / R:\t\t$(round(typeof(rmax/R)!=Float64 ? (rmax/R).value : rmax/R, digits=3))")
+        println("\t"^v_lvl*"Smoothing radius / R:\t\t$(round(typeof(sigma/R)!=Float64 ? (sigma/R).value : sigma/R, digits=3))")
+        println("\t"^v_lvl*"Smoothing overlap sigma/h:\t$(round(typeof(lambda)!=Float64 ? (lambda).value : lambda, digits=3))")
+        println("\t"^v_lvl*"Smoothing ring angle:\t\t$(round(typeof(smoothdeg)!=Float64 ? (smoothdeg).value : smoothdeg, digits=3)) deg")
+        println("\t"^v_lvl*"dt:\t\t\t\t$(typeof(dt)!=Float64 ? (dt).value : dt)")
     end
 
 
@@ -161,9 +166,6 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # Adds the ring to the field
     addvortexring(pfield, Gamma, R, Nphi, nc, rmax;
                   extra_nc=extra_nc, lambda=lambda)
-
-
-    # vpm.save(pfield, run_name; path=save_path, createpath=true)
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------
@@ -186,7 +188,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                                         save_path=save_path,
                                         run_name=run_name,
                                         prompt=prompt,
-                                        verbose=verbose,
+                                        verbose=verbose, v_lvl=v_lvl,
                                         verbose_nsteps=verbose_nsteps
                                         )
 
@@ -199,10 +201,10 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
 
     # Comparison to analytical solution
     if verbose2
-        println("Vortex ring self-induced velocity verification")
-        println("\tAnalytical velocity: \t$(round(typeof(Ucore)!=Float64 ? Ucore.value : Ucore, digits=10))")
-        println("\tResulting velocity: \t$(round(typeof(res_Ucore)!=Float64 ? res_Ucore.value : res_Ucore, digits=10))")
-        println("\tError: \t\t\t$(round(typeof(err)!=Float64 ? (100*err).value : (100*err), digits=10)) %\n")
+        println("\t"^v_lvl*"Vortex ring self-induced velocity verification")
+        println("\t"^v_lvl*"\tAnalytical velocity: \t$(round(typeof(Ucore)!=Float64 ? Ucore.value : Ucore, digits=10))")
+        println("\t"^v_lvl*"\tResulting velocity: \t$(round(typeof(res_Ucore)!=Float64 ? res_Ucore.value : res_Ucore, digits=10))")
+        println("\t"^v_lvl*"\tError: \t\t\t$(round(typeof(err)!=Float64 ? (100*err).value : (100*err), digits=10)) %\n")
     end
 
     # Plots velocity
@@ -227,7 +229,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # --------------- VISUALIZATION --------------------------------------------
     if save_path!=nothing
         if paraview
-            println("Calling Paraview...")
+            println("\t"^v_lvl*"Calling Paraview...")
             strn = ""
             strn = strn * run_name * "...xmf;"
 

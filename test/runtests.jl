@@ -104,3 +104,66 @@ println("Data structure test: Add/remove particle...")
 
     vpm.get_np(pfield)==10 && vpm.get_particle(pfield, 2).X==[4*10^0, 4*10^1, 4*10^2]
 end
+
+
+# Euler integration test
+println("Euler integration test: Single vortex ring...")
+@test begin
+    verbose = true
+    global this_is_a_test = true
+
+    examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
+    include(joinpath(examples_path, "singlevortexring.jl"))
+
+    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+                                    integration=vpm.euler,
+                                    viscous=false,
+                                    save_path=nothing,
+                                    verbose=verbose, verbose2=verbose, v_lvl=1,
+                                    tol=1e-2, disp_plot=false,
+                                    nc=0, Nphi=200,
+                                    nsteps=10, coR=0.15, nR=1, faux1=1.0,
+                                    R=1.0, verbose_nsteps=2)
+end
+
+
+# Third-order Runge-Kutta integration test
+println("Third-order Runge-Kutta integration test: Single vortex ring...")
+@test begin
+    verbose = true
+    global this_is_a_test = true
+
+    examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
+    include(joinpath(examples_path, "singlevortexring.jl"))
+
+    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+                                    integration=vpm.rungekutta3,
+                                    viscous=false,
+                                    save_path=nothing,
+                                    verbose=verbose, verbose2=verbose, v_lvl=1,
+                                    tol=1e-2, disp_plot=false,
+                                    nc=0, Nphi=200,
+                                    nsteps=10, coR=0.15, nR=1, faux1=1.0,
+                                    R=1.0, verbose_nsteps=2)
+end
+
+
+# Simulation validation
+println("Simulation validation: Single vortex ring...")
+@test begin
+    verbose = true
+    global this_is_a_test = true
+
+    examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
+    include(joinpath(examples_path, "singlevortexring.jl"))
+
+    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+                                    integration=vpm.rungekutta3,
+                                    viscous=false,
+                                    save_path=nothing,
+                                    verbose=verbose, verbose2=verbose, v_lvl=1,
+                                    tol=3e-2, disp_plot=false,
+                                    nc=1, Nphi=200,
+                                    nsteps=5, coR=0.025, nR=0.01, faux1=0.5,
+                                    R=1.0, verbose_nsteps=1)
+end
