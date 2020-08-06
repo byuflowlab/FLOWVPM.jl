@@ -35,7 +35,7 @@ const exafmm_single_precision = fmm.getPrecision()
 const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "particle", "particlefield", "UJ",
+for header_name in ["kernel", "fmm", "particle", "particlefield", "UJ",
                     "timeintegration", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end

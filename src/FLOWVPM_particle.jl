@@ -29,7 +29,7 @@ struct Particle{T}
   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
-  index::Array{Int, 1}          # Particle index (1-elem array)
+  index::Array{Int32, 1}          # Particle index (1-elem array)
 end
 
 # Empty initializer
@@ -38,7 +38,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 3), zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
-                                                      zeros(Int, 1))
+                                                      zeros(Int32, 1))
 
 """
     `Particle(body::fmm.BodyRef)`

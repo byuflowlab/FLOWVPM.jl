@@ -28,8 +28,8 @@ struct Kernel
   g::Function                           # Regularizing function g(r)
   dgdr::Function                        # Derivative of g(r)
   g_dgdr::Function                      # Efficient evaluation of g and dgdr
-  EXAFMM_P2P::Int                       # Flag for the ExaFMM P2P function to call
-  EXAFMM_L2P::Int                       # Flag for the ExaFMM L2P function to call
+  EXAFMM_P2P::Int32                     # Flag for the ExaFMM P2P function to call
+  EXAFMM_L2P::Int32                     # Flag for the ExaFMM L2P function to call
 end
 
 # Constant values

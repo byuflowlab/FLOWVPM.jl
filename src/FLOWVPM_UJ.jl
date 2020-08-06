@@ -1,6 +1,6 @@
 #=##############################################################################
 # DESCRIPTION
-    Direct particle-to-particle calculations.
+    Particle-to-particle interactions calculation.
 
 # AUTHORSHIP
   * Author    : Eduardo J Alvarez
@@ -8,6 +8,19 @@
   * Created   : Aug 2020
   * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
+
+
+"""
+  `UJ_direct(pfield)`
+
+Calculates the velocity and Jacobian that the field exerts on itself, saving U and J on the particles.
+
+NOTE: This method accumulates the calculation on the properties U and J of
+every particle without previously emptying those properties.
+"""
+function UJ_direct(pfield::ParticleField)
+  return UJ_direct(pfield, pfield)
+end
 
 """
   `UJ_direct(source, target)`
@@ -88,6 +101,12 @@ function UJ_direct(sources, targets, g_dgdr::Function)
   return nothing
 end
 
-function UJ_fmm(args...)
-    return nothing
+function UJ_fmm(pfield::ParticleField; verbose::Bool=false, rbf::Bool=false)
+
+    fmm.calculate(pfield.bodies,
+                    Int32(get_np(pfield)),
+                    Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
+                    RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
+                    Int32(pfield.kernel.EXAFMM_P2P),
+                    Int32(pfield.kernel.EXAFMM_L2P), rbf)
 end

@@ -18,7 +18,7 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
     _reset_particles(pfield)
 
     # Calculate interactions between particles: U and J
-    pfield.UJ(pfield, pfield)
+    pfield.UJ(pfield)
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 

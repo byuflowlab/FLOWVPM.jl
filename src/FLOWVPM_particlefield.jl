@@ -34,8 +34,8 @@ mutable struct ParticleField{T}
     transposed::Bool                            # Transposed vortex stretch scheme
     relax::Bool                                 # Activates relaxation scheme
     rlxf::Float64                               # Relaxation factor (fraction of dt)
-    integration::Function                         # Time integration scheme
-    # fmm::FMM
+    integration::Function                       # Time integration scheme
+    fmm::FMM                                    # Fast-multipole settings
 
 
     ParticleField{T}(
@@ -49,7 +49,7 @@ mutable struct ParticleField{T}
                         transposed=true,
                         relax=true, rlxf=0.3,
                         integration=rungekutta3,
-                        # fmm=FMM(),
+                        fmm=FMM(),
                  ) where {T} = new(
                         maxparticles,
                         particles, bodies,
@@ -61,7 +61,7 @@ mutable struct ParticleField{T}
                         transposed,
                         relax, rlxf,
                         integration,
-                        # fmm,
+                        fmm,
                   )
 end
 
