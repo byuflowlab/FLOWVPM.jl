@@ -29,16 +29,13 @@ in Sullivan's *Dynamics of thin vortex rings*. Beta factor was extracted from
 Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 """
 function validation_singlevortexring(;
-                                        kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+                                        kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
                                         integration=vpm.rungekutta3,
-                                        # fmm = FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
+                                        fmm = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
                                         Re=400, viscous=false,
-                                        save_path="temps/val_vortexring04/",
-                                        run_name="vortexring",
-                                        paraview=true, prompt=true,
-                                        verbose=true, verbose2=true, v_lvl=0,
-                                        tol=1e-2, disp_plot=true,
-                                        nc=1, Nphi=200, extra_nc=0,
+                                        save_path="temps/val_vortexring05/",
+                                        tol=1e-2,
+                                        nc=0, Nphi=200, extra_nc=0,
                                         nsteps=200, coR=0.15, nR=5, faux1=1.0,
                                         R=1.0, optargs...)
 
@@ -59,7 +56,7 @@ function validation_singlevortexring(;
                                 # SIMULATION SETUP
                                 kernel=kernel,
                                 UJ=UJ,
-                                # fmm=fmm,
+                                fmm=fmm,
                                 # NUMERICAL SCHEMES
                                 transposed=true,
                                 relax=true,
@@ -70,10 +67,6 @@ function validation_singlevortexring(;
                                 beta_cs=1.25,
                                 # SIMULATION OPTIONS
                                 save_path=save_path,
-                                run_name=run_name,
-                                paraview=paraview, prompt=prompt,
-                                verbose=verbose, verbose2=verbose2, v_lvl=v_lvl,
-                                disp_plot=disp_plot,
                                 optargs...
                                 )
 
@@ -106,10 +99,11 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               extra_nc::Int64=0,
                               faux1=1.0,
                               override_nu::Union{Nothing, Real}=nothing,
+                              maxparticles=10000,
                               # SIMULATION SETUP
                               kernel::vpm.Kernel=vpm.kernel_wnklmns,
                               UJ::Function=vpm.UJ_direct,
-                              # fmm::FMM=FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
+                              fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
                               transposed=true,
                               relax=true,
@@ -153,12 +147,11 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    maxparticles = 10000
     pfield = vpm.ParticleField(maxparticles; nu=nu, kernel=kernel, UJ=UJ,
                             transposed=transposed,
                             relax=relax, rlxf=rlxf,
                             integration=integration,
-                            # fmm=fmm
+                            fmm=fmm
                             )
     sgm0 = sigma                            # Default core size
     # beta_cs = 1.25                          # Maximum core size growth

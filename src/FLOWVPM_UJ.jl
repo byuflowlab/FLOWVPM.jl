@@ -13,7 +13,8 @@
 """
   `UJ_direct(pfield)`
 
-Calculates the velocity and Jacobian that the field exerts on itself, saving U and J on the particles.
+Calculates the velocity and Jacobian that the field exerts on itself by direct
+particle-to-particle interaction, saving U and J on the particles.
 
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
@@ -101,12 +102,51 @@ function UJ_direct(sources, targets, g_dgdr::Function)
   return nothing
 end
 
+
+"""
+  `UJ_fmm(pfield)`
+
+Calculates the velocity and Jacobian that the field exerts on itself through
+a fast-multipole approximation, saving U and J on the particles.
+
+NOTE: This method accumulates the calculation on the properties U and J of
+every particle without previously emptying those properties.
+"""
 function UJ_fmm(pfield::ParticleField; verbose::Bool=false, rbf::Bool=false)
 
+    # Calculate FMM of vector potential
     fmm.calculate(pfield.bodies,
                     Int32(get_np(pfield)),
                     Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
                     RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
                     Int32(pfield.kernel.EXAFMM_P2P),
                     Int32(pfield.kernel.EXAFMM_L2P), rbf)
+
+    # Sort particles according to index
+    # sort!(iterator(pfield); by=P->P.index[1])
+
+    aux1 = RealFMM(1/(4*pi))
+
+    for P in iterator(pfield)
+        # Velocity U = ∇ × ψ
+        P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])
+        P.U[2] += aux1*(P.Jexa[3,1] - P.Jexa[1,3])
+        P.U[3] += aux1*(P.Jexa[1,2] - P.Jexa[2,1])
+
+        # Jacobian
+        # dU1 / dxj
+        P.J[1, 1] += aux1*(P.dJdx1exa[2,3] - P.dJdx1exa[3,2])
+        P.J[1, 2] += aux1*(P.dJdx2exa[2,3] - P.dJdx2exa[3,2])
+        P.J[1, 3] += aux1*(P.dJdx3exa[2,3] - P.dJdx3exa[3,2])
+        # dU2 / dxj
+        P.J[2, 1] += aux1*(P.dJdx1exa[3,1] - P.dJdx1exa[1,3])
+        P.J[2, 2] += aux1*(P.dJdx2exa[3,1] - P.dJdx2exa[1,3])
+        P.J[2, 3] += aux1*(P.dJdx3exa[3,1] - P.dJdx3exa[1,3])
+        # dU3 / dxj
+        P.J[3, 1] += aux1*(P.dJdx1exa[1,2] - P.dJdx1exa[2,1])
+        P.J[3, 2] += aux1*(P.dJdx2exa[1,2] - P.dJdx2exa[2,1])
+        P.J[3, 3] += aux1*(P.dJdx3exa[1,2] - P.dJdx3exa[2,1])
+    end
+
+    return nothing
 end

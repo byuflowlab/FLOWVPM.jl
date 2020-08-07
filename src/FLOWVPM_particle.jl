@@ -25,7 +25,7 @@ struct Particle{T}
   J::Array{T, 2}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
 
   # ExaFMM internal variables
-  Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array)
+  Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)

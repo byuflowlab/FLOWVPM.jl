@@ -14,7 +14,7 @@ Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
 function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
 
-    # Reset U and J from previous step
+    # Reset U and J to zero
     _reset_particles(pfield)
 
     # Calculate interactions between particles: U and J
@@ -84,7 +84,7 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
         _reset_particles(pfield)
 
         # Calculates interactions between particles: U and J
-        pfield.UJ(pfield, pfield)
+        pfield.UJ(pfield)
 
         # Updates the particle field
         for (pi, p) in enumerate(iterator(pfield))
@@ -140,7 +140,7 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
         #       but in MyVPM I just used the J calculated in the last RK step
         #       and it worked just fine. So maybe I perhaps I can save computation
         #       by not calculating UJ again.
-        pfield.UJ(pfield, pfield)
+        pfield.UJ(pfield)
 
         for p in iterator(pfield)
             nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
