@@ -112,21 +112,24 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; verbose::Bool=false, rbf::Bool=false)
+function UJ_fmm(pfield::ParticleField; verbose::Bool=false,
+                                            rbf::Bool=false, sort::Bool=true)
 
-    # Calculate FMM of vector potential
-    fmm.calculate(pfield.bodies,
-                    Int32(get_np(pfield)),
-                    Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
-                    RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
-                    Int32(pfield.kernel.EXAFMM_P2P),
-                    Int32(pfield.kernel.EXAFMM_L2P), rbf)
-
-    # Sort particles according to index
-    # sort!(iterator(pfield); by=P->P.index[1])
+    try
+        # Calculate FMM of vector potential
+        fmm.calculate(pfield.bodies,
+                        Int32(get_np(pfield)),
+                        Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
+                        RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
+                        Int32(pfield.kernel.EXAFMM_P2P),
+                        Int32(pfield.kernel.EXAFMM_L2P), rbf, sort)
+    catch e
+        error("ExaFMM unexpected error: $(e)")
+    end
 
     aux1 = RealFMM(1/(4*pi))
 
+    # Build velocity and velocity Jacobian from the FMM's vector potential
     for P in iterator(pfield)
         # Velocity U = ∇ × ψ
         P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])

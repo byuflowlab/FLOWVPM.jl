@@ -175,7 +175,7 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self)]
     # h5["vol"] = [get_vol(self, pi) for pi in 1:np]
-    # h5["i"] = [get_index(self, pi) for pi in 1:np]
+    h5["i"] = [P.index[1] for P in iterate(self)]
 
     # Connectivity information
     h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
@@ -267,15 +267,15 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
               # print(xmf, "\t\t\t\t</Attribute>\n")
 
 
-              # # Attribute: index
-              # print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-              #             " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-              #             " Name=\"i\" Type=\"Scalar\">\n")
-              #   print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-              #               " Dimensions=\"", np,
-              #               "\" Format=\"HDF\" Precision=\"4\">",
-              #               h5fname, ":i</DataItem>\n")
-              # print(xmf, "\t\t\t\t</Attribute>\n")
+              # Attribute: index
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                          " Name=\"i\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 1,
+                            "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":i</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
 
             print(xmf, "\t\t\t</Grid>\n")
           print(xmf, "\t\t</Grid>\n")

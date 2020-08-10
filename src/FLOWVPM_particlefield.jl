@@ -128,7 +128,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=-1)
     P.Gamma .= Gamma
     P.sigma .= sigma
     P.vol .= vol
-    P.index .= index==-1 ? get_np(self)+1 : index
+    P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
     self.np += 1
