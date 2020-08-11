@@ -149,7 +149,7 @@ end
 
 
 # Simulation validation
-println("Simulation validation: Single vortex ring...")
+println("Direct UJ validation: Single vortex ring...")
 @test begin
     verbose = true
     global this_is_a_test = true
@@ -162,8 +162,30 @@ println("Simulation validation: Single vortex ring...")
                                     viscous=false,
                                     save_path=nothing,
                                     verbose=verbose, verbose2=verbose, v_lvl=1,
-                                    tol=3e-2, disp_plot=false,
+                                    tol=1e-2, disp_plot=false,
                                     nc=1, Nphi=200,
-                                    nsteps=5, coR=0.025, nR=0.01, faux1=0.5,
+                                    nsteps=3, coR=0.15, nR=10*5/1000, faux1=0.25,
                                     R=1.0, verbose_nsteps=1)
+end
+
+
+# Simulation validation
+println("FMM UJ validation: Single vortex ring...")
+@test begin
+    verbose = true
+    global this_is_a_test = true
+
+    examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
+    include(joinpath(examples_path, "singlevortexring.jl"))
+
+    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
+                                    integration=vpm.rungekutta3,
+                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                    viscous=false,
+                                    save_path=nothing,
+                                    verbose=verbose, verbose2=verbose, v_lvl=1,
+                                    tol=1e-2, disp_plot=false,
+                                    nc=1, Nphi=200,
+                                    nsteps=100, coR=0.15, nR=100*5/1000, faux1=0.25,
+                                    R=1.0, verbose_nsteps=10)
 end

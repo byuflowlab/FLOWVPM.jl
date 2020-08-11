@@ -29,15 +29,15 @@ Validation on vortex strenching by simulating the interaction between coaxial
 vortex rings (leapfrog). See Berdowski's *3D Lagrangian VPM-FMM for Modeling the
  Near-wake of a HAWT*, Sec. 6.2.
 """
-function validation_leapfrog(;
-                                        kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
-                                        integration=vpm.rungekutta3,
-                                        Re=400, viscous=false,
-                                        save_path="temps/val_leapfrog00/",
-                                        tol=1e-2,
-                                        nc=0, Nphi=100, extra_nc=0,
-                                        nsteps=200, coR=0.15, nR=20, faux1=1.0,
-                                        optargs...)
+function validation_leapfrog(;  kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
+                                integration=vpm.rungekutta3,
+                                fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                Re=400, viscous=false,
+                                save_path="temps/val_leapfrog03/",
+                                tol=1e-2,
+                                nc=1, Nphi=100, extra_nc=0,
+                                nsteps=200*6, nR=30, faux1=1.0,
+                                optargs...)
 
     R1, R2 = 0.5, 1.0
     Gamma1, Gamma2 = 1.0, 1.0
@@ -49,8 +49,10 @@ function validation_leapfrog(;
                                   faux1=faux1,
                                   kernel=kernel,
                                   UJ=UJ,
+                                  fmm=fmm,
                                   integration=integration,
                                   viscous=viscous,
+                                  save_path=save_path,
                                   optargs...
                                   )
 
@@ -85,7 +87,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               # SIMULATION SETUP
                               kernel::vpm.Kernel=vpm.kernel_wnklmns,
                               UJ::Function=vpm.UJ_direct,
-                              # fmm::FMM=FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
+                              fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
                               transposed=true,
                               relax=true,
@@ -137,6 +139,7 @@ function run_leapfrog(R1::Real, R2::Real,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
+                                fmm=fmm
                                 )
     sgm0 = sigma1                           # Default core size
     # beta_cs = 1.25                        # Maximum core size growth
@@ -215,8 +218,8 @@ function run_leapfrog(R1::Real, R2::Real,
         plot( data_r1[!, 1], data_r1[!, 2], "-r", label="Ring 1 Analytical")
         plot( data_r2[!, 1], data_r2[!, 2], "-b", label="Ring 2 Analytical")
 
-        plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.5)
-        plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.5)
+        plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
+        plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
 
         legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
         xlabel("Time (s)")

@@ -31,24 +31,18 @@ Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 function validation_singlevortexring(;
                                         kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
                                         integration=vpm.rungekutta3,
-                                        fmm = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                        fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
                                         Re=400, viscous=false,
-                                        save_path="temps/val_vortexring05/",
+                                        save_path="temps/val_vortexring06/",
                                         tol=1e-2,
-                                        nc=0, Nphi=200, extra_nc=0,
-                                        nsteps=200, coR=0.15, nR=5, faux1=1.0,
+                                        nc=1, Nphi=200, extra_nc=0,
+                                        nsteps=1000, coR=0.15, nR=5,
                                         R=1.0, optargs...)
 
     # -------------- PARAMETERS ----------------------------------------------
 
-    Gamma = 1.0               # Circulation
-    # R = 1.0                   # Ring radius
-    # coR = 0.15                # (core/R) ring cross section core size (radius)
-
-    # nR = 5                  # Number of R distances to solve for
-    # nsteps = 200            # Number of time steps
-
-    # fmm = FMM(; p=4, ncrit=10, theta=0.4, phi=0.5)
+    Gamma = 1.0
+    faux1 = nc==0 ? extra_nc==0 ? 1 : 0.1 : nc==1 ? 0.25 : 0.5
 
     res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
                                 extra_nc=extra_nc,
@@ -203,15 +197,15 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # Plots velocity
     if disp_plot
 
-        Xzs = [!(typeof(X[3]) in [Float64, Int64]) ? X[3].value : X[3] for X in Xs]
-        plt_Xzs = [!(typeof(Xzs[i]) in [Float64, Int64]) ? Xzs[i].value : Xzs[i] for i in 1:10:size(ts)[1]]
-        plt_ts = [!(typeof(ts[i]) in [Float64, Int64]) ? ts[i].value : ts[i] for i in 1:10:size(ts)[1]]
-        plot(plt_ts, plt_Xzs, "or", label="FLOWVPM", alpha=0.5)
+        Xzs = [!(typeof(X[3]) in [Float64, Float32, Int64]) ? X[3].value : X[3] for X in Xs]
+        plt_Xzs = [!(typeof(Xzs[i]) in [Float64, Float32, Int64]) ? Xzs[i].value : Xzs[i] for i in 1:10:size(ts)[1]]
+        plt_ts = [!(typeof(ts[i]) in [Float64, Float32, Int64]) ? ts[i].value : ts[i] for i in 1:10:size(ts)[1]]
         if plot_ana; plot(ts, Ucore*ts, "k", label="Analytical Inviscid", alpha=0.9); end;
-        legend(loc="best")
+        plot(plt_ts, plt_Xzs, "or", label="FLOWVPM", alpha=0.5)
+        legend(loc="best", frameon=false)
         xlabel("Time (s)")
-        ylabel("Ring's core position (m)")
-        grid(true, color="0.8", linestyle="--")
+        ylabel("Centroid position (m)")
+        grid(true, color="0.9", linestyle=":")
         title("Single vortex ring validation")
 
         if save_path!=nothing
