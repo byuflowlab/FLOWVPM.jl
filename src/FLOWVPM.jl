@@ -13,7 +13,7 @@
 # TODO
 * [x] Run leapfrogging test (I dind't seem to find the singuar transposed scheme to be more stable).
 * [ ] Implement the kernel that the italian group used.
-* [ ] Incorporate viscous diffusion and RBF.
+* [ ] Incorporate viscous diffusion with RBF.
 """
 module FLOWVPM
 

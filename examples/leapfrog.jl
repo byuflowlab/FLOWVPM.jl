@@ -33,10 +33,10 @@ function validation_leapfrog(;  kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
                                 integration=vpm.rungekutta3,
                                 fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
                                 Re=400, viscous=false,
-                                save_path="temps/val_leapfrog03/",
+                                save_path="temps/val_leapfrog04/",
                                 tol=1e-2,
                                 nc=1, Nphi=100, extra_nc=0,
-                                nsteps=200*6, nR=30, faux1=1.0,
+                                nsteps=200*6, nR=5*6, faux1=1.0,
                                 optargs...)
 
     R1, R2 = 0.5, 1.0
@@ -215,8 +215,8 @@ function run_leapfrog(R1::Real, R2::Real,
         data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
         data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
 
-        plot( data_r1[!, 1], data_r1[!, 2], "-r", label="Ring 1 Analytical")
-        plot( data_r2[!, 1], data_r2[!, 2], "-b", label="Ring 2 Analytical")
+        plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
+        plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
 
         plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
         plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)

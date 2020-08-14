@@ -2,6 +2,10 @@
 
 Three-dimensional viscous vortex particle code in Julia 1.4.2.
 
+
+<img src="docs/resources/vid/val_leapfrog04_2.gif" alt="Vid here" style="width: 900px;"/>
+<img src="docs/resources/vid/val_ringcollision09_1.gif" alt="Vid here" style="width: 900px;"/>
+
 ## Features
   * Fast-multipole acceleration through ExaFMM.
   * Single-node CPU parallel processing through OpenMPI.
