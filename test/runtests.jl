@@ -115,9 +115,9 @@ println("Euler integration test: Single vortex ring...")
     examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
     include(joinpath(examples_path, "singlevortexring.jl"))
 
-    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+    validation_singlevortexring(; kernel=vpm.winckelmans, UJ=vpm.UJ_direct,
                                     integration=vpm.euler,
-                                    viscous=false,
+                                    viscous=vpm.Inviscid(),
                                     save_path=nothing,
                                     verbose=verbose, verbose2=verbose, v_lvl=1,
                                     tol=1e-2, disp_plot=false,
@@ -136,9 +136,9 @@ println("Third-order Runge-Kutta integration test: Single vortex ring...")
     examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
     include(joinpath(examples_path, "singlevortexring.jl"))
 
-    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+    validation_singlevortexring(; kernel=vpm.winckelmans, UJ=vpm.UJ_direct,
                                     integration=vpm.rungekutta3,
-                                    viscous=false,
+                                    viscous=vpm.Inviscid(),
                                     save_path=nothing,
                                     verbose=verbose, verbose2=verbose, v_lvl=1,
                                     tol=1e-2, disp_plot=false,
@@ -157,9 +157,9 @@ println("Direct UJ validation: Single vortex ring...")
     examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
     include(joinpath(examples_path, "singlevortexring.jl"))
 
-    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_direct,
+    validation_singlevortexring(; kernel=vpm.winckelmans, UJ=vpm.UJ_direct,
                                     integration=vpm.rungekutta3,
-                                    viscous=false,
+                                    viscous=vpm.Inviscid(),
                                     save_path=nothing,
                                     verbose=verbose, verbose2=verbose, v_lvl=1,
                                     tol=1e-2, disp_plot=false,
@@ -178,10 +178,10 @@ println("FMM UJ validation: Single vortex ring...")
     examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples")
     include(joinpath(examples_path, "singlevortexring.jl"))
 
-    validation_singlevortexring(; kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
+    validation_singlevortexring(; kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
                                     integration=vpm.rungekutta3,
                                     fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
-                                    viscous=false,
+                                    viscous=vpm.Inviscid(),
                                     save_path=nothing,
                                     verbose=verbose, verbose2=verbose, v_lvl=1,
                                     tol=1e-2, disp_plot=false,

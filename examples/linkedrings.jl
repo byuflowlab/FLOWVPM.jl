@@ -17,18 +17,18 @@ include("vortexrings_functions.jl")
 data_path = joinpath(splitdir(@__FILE__)[1], "data")*"/"
 
 
-function validation_linkedrings(;   kernel=vpm.kernel_wnklmns, UJ=vpm.UJ_fmm,
+function validation_linkedrings(;   kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
                                     integration=vpm.rungekutta3,
                                     fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
-                                    Re=31e3, viscous=false,
+                                    Re=31e3, viscous=vpm.Inviscid(),
                                     save_path="temps/val_linkedrings00/",
-                                    tol=1e-2,
                                     nc=1, Nphi=100, extra_nc=0,
-                                    nsteps=900, nR=4,
+                                    nsteps=480, nR=2.13,
                                     optargs...)
 
     nu = 1.004e-6
-    faux1 = nc==0 ? extra_nc==0 ? 1.0 : 0.1 : nc==1 ? 0.25 : 0.5
+    # faux1 = nc==0 ? extra_nc==0 ? 1.0 : 0.1 : nc==1 ? 0.25 : 0.5
+    faux1 = nc==0 ? extra_nc==0 ? 1.0 : 0.1 : nc==1 ? 1.0 : 0.5
 
     R1, R2 = 26.7/1000, 26.7/1000
     Gamma1, Gamma2 = Re*nu, Re*nu
@@ -91,7 +91,7 @@ function run_linkedrings(R1::Real, R2::Real,
                               optargs_ring1=(),
                               optargs_ring2=(),
                               # SIMULATION SETUP
-                              kernel::vpm.Kernel=vpm.kernel_wnklmns,
+                              kernel::vpm.Kernel=vpm.winckelmans,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
@@ -100,8 +100,7 @@ function run_linkedrings(R1::Real, R2::Real,
                               rlxf=0.1,
                               integration=vpm.rungekutta3,
                               nsteps_relax=1,
-                              beta_cs=1.25,
-                              viscous=true,
+                              viscous=vpm.Inviscid(),
                               # SIMULATION OPTIONS
                               save_path="temps/linkedrings00",
                               run_name="vortexring",
@@ -122,7 +121,14 @@ function run_linkedrings(R1::Real, R2::Real,
     smoothdeg2 = 180/pi*(2*atan(sigma2/2,R2)) # (deg) Ring's angle covered by sigma
     sgmoR1 = sigma1/R1
     sgmoR2 = sigma2/R2
-    nu = viscous ? override_nu==nothing ? Gamma1/Re : override_nu : 0.0
+
+    # Set up viscous scheme
+    if vpm.isinviscid(viscous) == false
+        viscous.nu = override_nu != nothing ? override_nu : Gamma1/Re
+        if vpm.iscorespreading(viscous)
+            viscous.sgm0 = sigma1
+        end
+    end
 
     beta = 0.5
     Ucore = Gamma1/(4*pi*R1)*(log(8/coR1)-beta)  # Analytical self-induced velocity
@@ -141,14 +147,13 @@ function run_linkedrings(R1::Real, R2::Real,
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
     maxparticles = 20000
-    pfield = vpm.ParticleField(maxparticles; nu=nu, kernel=kernel, UJ=UJ,
+    pfield = vpm.ParticleField(maxparticles; viscous=viscous,
+                                kernel=kernel, UJ=UJ,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
                                 fmm=fmm
                                 )
-    sgm0 = sigma1                           # Default core size
-    # beta_cs = 1.25                        # Maximum core size growth
 
     # Adds the rings to the field
     addvortexring(pfield, Gamma1, R1, Nphi, nc, rmax1;
@@ -164,7 +169,6 @@ function run_linkedrings(R1::Real, R2::Real,
     # Runs the simulation
     vpm.run_vpm!(pfield, dt, nsteps; runtime_function=runtime_function,
                                         nsteps_relax=nsteps_relax,
-                                        beta=beta_cs, sgm0=sgm0,
                                         save_path=save_path,
                                         run_name=run_name,
                                         prompt=prompt,

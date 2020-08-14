@@ -34,24 +34,29 @@ const exafmm_single_precision = fmm.getPrecision()
 const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "fmm", "particle", "particlefield", "UJ",
-                    "timeintegration", "utils"]
+for header_name in ["kernel", "fmm", "viscous", "particle", "particlefield",
+                                               "UJ", "timeintegration", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
 # Available Kernels
-const kernel_sing = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
-const kernel_gauserf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
-const kernel_gaus = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
-const kernel_wnklmns = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
+const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
+const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
+const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
+const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
 
 # Aliases
-const kernel_singular = kernel_sing
-const kernel_gaussianerf = kernel_gauserf
-const kernel_gaussian = kernel_gaus
-const kernel_winckelmans = kernel_wnklmns
-const singular = kernel_sing
-const gaussianerf = kernel_gauserf
-const winckelmans = kernel_wnklmns
+const singular = kernel_singular
+const gaussian = kernel_gaussian
+const gaussianerf = kernel_gaussianerf
+const winckelmans = kernel_winckelmans
+
+# Compatibility between kernels and viscous schemes
+const kernel_compatibility = Dict( # Viscous scheme => kernels
+        Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
+                                        kernel_singular, kernel_gaussian,
+                                        kernel_gaussianerf, kernel_winckelmans],
+        CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
+)
 
 end # END OF MODULE

@@ -44,7 +44,7 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
         end
 
         # Viscous scheme: core spreading
-        p.sigma[1] = sqrt(p.sigma[1]^2 + 2*pfield.nu*dt)
+        p.sigma[1] = sqrt(p.sigma[1]^2 + 2*pfield.viscous.nu*dt)
 
         # Relaxation: Align vectorial circulation with local vorticity
         if relax
@@ -109,7 +109,7 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
             end
 
             ## Core growth
-            q_sgm2[pi] = a*q_sgm2[pi] + dt*2*pfield.nu
+            q_sgm2[pi] = a*q_sgm2[pi] + dt*2*pfield.viscous.nu
 
             # Updates position
             p.X[1] += b*q_U[1, pi]

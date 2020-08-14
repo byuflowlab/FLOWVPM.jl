@@ -13,19 +13,19 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{T}
+mutable struct ParticleField{T, V<:ViscousScheme}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-
-    # Internal properties
     particles::Array{Particle{T}, 1}            # Array of particles
     bodies::fmm.Bodies                          # ExaFMM array of bodies
+    viscous::V                                  # Viscous scheme
+
+    # Internal properties
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
     t::Float64                                  # Current time
 
     # Solver setting
-    nu::Float64                                 # Kinematic viscosity
     kernel::Kernel                              # Vortex particle kernel
     UJ::Function                                # Particle-to-particle calculation
 
@@ -38,23 +38,21 @@ mutable struct ParticleField{T}
     fmm::FMM                                    # Fast-multipole settings
 
 
-    ParticleField{T}(
+    ParticleField{T, V}(
                         maxparticles,
-                        particles, bodies;
+                        particles, bodies, viscous;
                         np=0, nt=0, t=0.0,
-                        nu=0.0,
-                        kernel=kernel_gauserf,
+                        kernel=gaussianerf,
                         UJ=UJ_fmm,
                         Uinf=t->zeros(3),
                         transposed=true,
                         relax=true, rlxf=0.3,
                         integration=rungekutta3,
                         fmm=FMM(),
-                 ) where {T} = new(
+                 ) where {T, V} = new(
                         maxparticles,
-                        particles, bodies,
+                        particles, bodies, viscous,
                         np, nt, t,
-                        nu,
                         kernel,
                         UJ,
                         Uinf,
@@ -65,7 +63,8 @@ mutable struct ParticleField{T}
                   )
 end
 
-function ParticleField(maxparticles::Int; optargs...)
+function ParticleField(maxparticles::Int; viscous::V=Inviscid(),
+                                            optargs...) where {V<:ViscousScheme}
     # Memory allocation by C++
     bodies = fmm.genBodies(maxparticles)
 
@@ -78,8 +77,8 @@ function ParticleField(maxparticles::Int; optargs...)
     end
 
     # Generate and return ParticleField
-    return ParticleField{RealFMM}(maxparticles, particles, bodies; np=0,
-                                                                    optargs...)
+    return ParticleField{RealFMM, V}(maxparticles, particles, bodies, viscous;
+                                                               np=0, optargs...)
 end
 ##### FUNCTIONS ################################################################
 """
@@ -206,6 +205,13 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 get_X(self::ParticleField, i::Int) = get_particle(self, i).X
 get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).Gamma
 get_sigma(self::ParticleField, i::Int) = get_particle(self, i).sigma[1]
+
+"""
+    `isinviscid(pfield::ParticleField)`
+
+Returns true if particle field is inviscid.
+"""
+isinviscid(self::ParticleField) = isinviscid(self.viscous)
 
 """
   `nextstep(self::ParticleField, dt; relax=false)`

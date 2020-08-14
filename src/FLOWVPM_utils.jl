@@ -23,8 +23,6 @@ Solves `nsteps` of the particle field with a time step of `dt`.
                               will call this function. Use this for adding
                               particles, deleting particles, etc.
 * `nsteps_relax::Int64` : Relaxes the particle field every this many time steps.
-* `beta::Real`          : Maximum core size growth σ/σ_0 before reset.
-* `sgm0::Real`          : Default core size upon reset.
 * `save_path::Any`      : Give it a string for saving VTKs of the particle
                           field. Creates the given path.
 * `run_name::String`    : Name of output files.
@@ -39,22 +37,20 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=(pfield, t, dt)->false,
                       nsteps_relax::Int64=-1,
-                      # RBF OPTIONS
-                      beta::Real=1.5,
-                      sgm0::Union{Nothing, Real}=nothing,
-                      rbf_itmax::Int64=15, rbf_tol::Real=1e-3,
-                      rbf_ign_iterror::Bool=false, rbf_verbose_warn::Bool=true,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
                       run_name::String="pfield",
                       nsteps_save::Int64=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int64=10, v_lvl=0)
 
-    run_id = save_path!=nothing ? joinpath(save_path,run_name) : ""
-
     # ERROR CASES
-    if pfield.nu!=0 && sgm0==nothing
-        error("Core Spreading activated but received no sgm0 parameter.")
+    ## Check that viscous scheme and kernel are compatible
+    compatible_kernels = kernel_compatibility[typeof(pfield.viscous).name]
+
+    if !(pfield.kernel in compatible_kernels)
+        error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
+                " $(typeof(pfield.viscous).name); compatible kernels are"*
+                " $(compatible_kernels)")
     end
 
     # Creates save path
@@ -62,9 +58,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         create_path(save_path, prompt)
     end
 
-    # Core Spreading method
-    cs_flag = pfield.nu!=0                  # CS activated flag
-    t_sgm = 0.0                             # Time since last core size reset
+    run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
 
     if verbose
         time_beg = Dates.DateTime(Dates.now())
@@ -87,34 +81,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         if i!=0
             nextstep(pfield, dt; relax=relax)
         end
-
-
-        # # If Core Spreading activated, controls core sizes
-        # if cs_flag
-        #
-        #     t_sgm += dt
-        #
-        #     # Case that core sizes grew bigger than beta*sgm0: Reset and run RBF
-        #     if t_sgm >= sgm0^2*(beta^2-1)/(2*pfield.nu)
-        #
-        #         # Evaluates vorticity at each particle
-        #         X_targ = [p.X for p in iterate(pfield)]
-        #         # TODO: Make this more efficient
-        #         omega_targ = [omega_approx(pfield, X) for X in X_targ]
-        #
-        #         # Resets core sizes
-        #         for p in iterator(pfield)
-        #             p.sigma[:] = sgm0
-        #         end
-        #
-        #         # Calculates new strengths through RBF
-        #         # TODO: Make this more efficient
-        #         rbf_cg(pfield, omega_targ, X_targ; itmax=rbf_itmax, tol=rbf_tol,
-        #         ign_iterror=rbf_ign_iterror, verbose_warn=rbf_verbose_warn)
-        #
-        #         t_sgm = 0
-        #     end
-        # end
 
         # Calls user-defined runtime function
         breakflag = runtime_function(pfield, pfield.t, dt)
