@@ -1,10 +1,8 @@
+<img src="docs/vid/val_leapfrog04_6.gif" alt="Vid here" style="width: 900px;"/>
+
 # FLOWVPM
 
 Three-dimensional viscous vortex particle code in Julia 1.4.2.
-
-
-<img src="docs/vid/val_leapfrog04_2.gif" alt="Vid here" style="width: 900px;"/>
-<img src="docs/vid/val_ringcollision09_1.gif" alt="Vid here" style="width: 900px;"/>
 
 ## Features
   * Fast-multipole acceleration through ExaFMM.
@@ -22,3 +20,5 @@ Three-dimensional viscous vortex particle code in Julia 1.4.2.
 * Copyright         : Copyrighted to Eduardo J. Alvarez and the FLOW Lab. All
     rights reserved. No licensing, use, or modification of this code is allowed
     without written consent.
+
+<img src="docs/vid/val_ringcollision09_3.gif" alt="Vid here" style="width: 900px;"/>
