@@ -24,18 +24,22 @@ struct Particle{T}
   U::Array{T, 1}                # Velocity at particle (3-elem array)
   J::Array{T, 2}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
 
+  # Internal variables
+  M::Array{T, 2}                # 3x3 array of auxiliary memory
+
   # ExaFMM internal variables
   Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
-  index::Array{Int32, 1}          # Particle index (1-elem array)
+  index::Array{Int32, 1}        # Particle index (1-elem array)
 end
 
 # Empty initializer
 Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 1),  zeros(T, 1),
                                                       zeros(T, 3), zeros(T, 3, 3),
+                                                      zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(Int32, 1))
@@ -51,6 +55,7 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 fmm.get_sigmaref(body),
                                                 fmm.get_volref(body),
                                                 zeros(RealFMM, 3),
+                                                zeros(RealFMM, 3, 3),
                                                 zeros(RealFMM, 3, 3),
                                                 fmm.get_Jref(body),
                                                 fmm.get_dJdx1ref(body),

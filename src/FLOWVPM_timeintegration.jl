@@ -73,10 +73,7 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
-    # Creates storage terms
-    q_U = zeros(T, 3, get_np(pfield))
-    q_str = zeros(T, 3, get_np(pfield))
-    q_sgm2 = zeros(T, get_np(pfield))
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
 
     for (a,b) in ((0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
 
@@ -91,38 +88,38 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
 
             # Low-storage RK step
             ## Velocity
-            q_U[1, pi] = a*q_U[1, pi] + dt*(p.U[1] + Uinf[1])
-            q_U[2, pi] = a*q_U[2, pi] + dt*(p.U[2] + Uinf[2])
-            q_U[3, pi] = a*q_U[3, pi] + dt*(p.U[3] + Uinf[3])
+            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
+            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
+            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
 
             ## Stretching
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U
-                q_str[1, pi] = a*q_str[1, pi] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
-                q_str[2, pi] = a*q_str[2, pi] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
-                q_str[3, pi] = a*q_str[3, pi] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             else
                 # Classic scheme (Γ⋅∇)U
-                q_str[1, pi] = a*q_str[1, pi] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
-                q_str[2, pi] = a*q_str[2, pi] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
-                q_str[3, pi] = a*q_str[3, pi] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             end
 
             ## Core growth
-            q_sgm2[pi] = a*q_sgm2[pi] + dt*2*pfield.viscous.nu
+            p.M[1, 3] = a*p.M[1, 3] + dt*2*pfield.viscous.nu
 
             # Updates position
-            p.X[1] += b*q_U[1, pi]
-            p.X[2] += b*q_U[2, pi]
-            p.X[3] += b*q_U[3, pi]
+            p.X[1] += b*p.M[1, 1]
+            p.X[2] += b*p.M[2, 1]
+            p.X[3] += b*p.M[3, 1]
 
             # Updates vectorial circulation
-            p.Gamma[1] += b*q_str[1, pi]
-            p.Gamma[2] += b*q_str[2, pi]
-            p.Gamma[3] += b*q_str[3, pi]
+            p.Gamma[1] += b*p.M[1, 2]
+            p.Gamma[2] += b*p.M[2, 2]
+            p.Gamma[3] += b*p.M[3, 2]
 
             # Viscous scheme: core spreading
-            p.sigma[1] = sqrt(p.sigma[1]^2 + b*q_sgm2[pi])
+            p.sigma[1] = sqrt(p.sigma[1]^2 + b*p.M[1, 3])
 
         end
 
@@ -143,9 +140,9 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
         pfield.UJ(pfield)
 
         for p in iterator(pfield)
-            nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+            nrmw = sqrt(    (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
+                            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
+                            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
             nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
             p.Gamma[1] = (1-pfield.rlxf)*p.Gamma[1] + pfield.rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
             p.Gamma[2] = (1-pfield.rlxf)*p.Gamma[2] + pfield.rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
