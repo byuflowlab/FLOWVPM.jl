@@ -88,7 +88,7 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
                         nu, sgm0, zeta;
                         beta=R(1.5),
                         itmax=R(15), tol=R(1e-3),
-                        iterror=true, v_lvl=1, verbose=false, debug=false,
+                        iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
                         rbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
@@ -98,7 +98,7 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
                         nu, sgm0, zeta,
                         beta,
                         itmax, tol,
-                        iterror, v_lvl, verbose, debug,
+                        iterror, verbose, v_lvl, debug,
                         t_sgm,
                         rbf,
                         rr0s, rrs, prev_rrs,
@@ -163,16 +163,23 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         if scheme.verbose
             println("\t"^scheme.v_lvl*
-                    "Current sigma growth: $(scheme.t_sgm)\tCritical:$(t_sgm_crit)")
+                    "Current sigma growth: $(round(scheme.t_sgm, digits=7))"*
+                    "\tCritical:$(round(t_sgm_crit, digits=7))")
         end
 
         # Reset core sizes if cores have overgrown
         if scheme.t_sgm >= t_sgm_crit
-            # Calculate velocity derivatives for target vorticity
-            pfield.UJ(pfield)
+            # Calculate approximated vorticity (stored under P.Jexa[1:3])
+            scheme.zeta(pfield)
 
-            # Reset core sizes
-            for p in iterator(pfield); p.sigma[1] = scheme.sgm0; end;
+            for p in iterator(pfield)
+                # Use approximated vorticity as target vorticity (stored under P.Jexa[7:9])
+                for i in 1:3
+                    p.M[i+6] = p.Jexa[i]
+                end
+                # Reset core sizes
+                p.sigma[1] = scheme.sgm0
+            end
 
             # Calculate new strengths through RBF to preserve original vorticity
             scheme.rbf(pfield, scheme)
@@ -197,14 +204,14 @@ See 20180818 notebook and https://en.wikipedia.org/wiki/Conjugate_gradient_metho
 function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     #= NOTES
-    * The target vorticity (`omega_targ`) is calculate from velocity Jacobian J
-        through get_W().
+    * The target vorticity (`omega_targ`) is expected to be stored in P.M[7:9]
+        (give it the basis-approximated vorticity instead of the UJ-calculated
+        one or the method will diverge).
     * The basis function evaluation (`omega_cur`) is stored in Jexa[1:3] (it
         used to be p).
     * The solution is built under P.M[1:3] (it used to be x).
     * The current residual is stored under P.M[4:6] (it used to be r).
     =#
-    W = (get_W1, get_W2, get_W3)
 
     # Initialize memory
     cs.rr0s .= 0
@@ -214,7 +221,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            P.M[i] = W[i](P)*P.vol[1]
+            P.M[i] = P.M[i+6]*P.vol[1]
             # Sets initial guess as Gamma for vorticity evaluation
             P.Gamma[i] = P.M[i]
         end
@@ -226,7 +233,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Residual of initial guess (r0=b-Ax0)
-            P.M[i+3] = W[i](P) - P.Jexa[i]    # r = omega_targ - omega_cur
+            P.M[i+3] = P.M[i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
 
             # Update coefficients
             P.Gamma[i] = P.M[i+3]             # p0 = r0
@@ -269,7 +276,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         for P in iterator(pfield)
             for i in 1:3
                 P.M[i] += cs.alphas[i]*P.Gamma[i]   # x = x + alpha*p
-                P.M[i+3] -= cs.alphas[i].*P.Jexa[i]   # r = r - alpha*Ap
+                P.M[i+3] -= cs.alphas[i].*P.Jexa[i] # r = r - alpha*Ap
                 cs.rrs[i] += P.M[i+3]^2             # Update field residual
             end
         end

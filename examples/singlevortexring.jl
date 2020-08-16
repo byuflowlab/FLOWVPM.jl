@@ -30,12 +30,12 @@ Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 """
 function validation_singlevortexring(;
                                         # kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
-                                        kernel=vpm.gaussianerf, UJ=vpm.UJ_direct,
+                                        kernel=vpm.gaussianerf, UJ=vpm.UJ_fmm,
                                         integration=vpm.rungekutta3,
-                                        fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                        fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.3),
                                         # Re=400, viscous=vpm.Inviscid(),
-                                        Re=400, viscous=vpm.CoreSpreading(0, 0, vpm.zeta_direct; beta=1.15,
-                                                                            iterror=false, verbose=true, debug=true),
+                                        Re=400, viscous=vpm.CoreSpreading(0, 0, vpm.zeta_fmm; beta=1.03, itmax=100, tol=1e-5,
+                                                                            iterror=false, verbose=true, debug=false),
                                         save_path="temps/val_vortexring00/",
                                         tol=1e-2,
                                         nc=1, Nphi=200, extra_nc=0,
