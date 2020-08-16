@@ -112,20 +112,10 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; verbose::Bool=false,
-                                            rbf::Bool=false, sort::Bool=true)
+function UJ_fmm(pfield::ParticleField; optargs...)
 
-    try
-        # Calculate FMM of vector potential
-        fmm.calculate(pfield.bodies,
-                        Int32(get_np(pfield)),
-                        Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
-                        RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
-                        Int32(pfield.kernel.EXAFMM_P2P),
-                        Int32(pfield.kernel.EXAFMM_L2P), rbf, sort)
-    catch e
-        error("ExaFMM unexpected error: $(e)")
-    end
+    # Calculate FMM of vector potential
+    call_FLOWExaFMM(pfield; optargs...)
 
     aux1 = RealFMM(1/(4*pi))
 
@@ -152,4 +142,18 @@ function UJ_fmm(pfield::ParticleField; verbose::Bool=false,
     end
 
     return nothing
+end
+
+function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
+                                            rbf::Bool=false, sort::Bool=true)
+    try
+        fmm.calculate(pfield.bodies,
+                        Int32(get_np(pfield)),
+                        Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
+                        RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
+                        Int32(pfield.kernel.EXAFMM_P2P),
+                        Int32(pfield.kernel.EXAFMM_L2P), rbf, sort)
+    catch e
+        error("ExaFMM unexpected error: $(e)")
+    end
 end

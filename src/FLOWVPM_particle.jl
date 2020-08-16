@@ -62,3 +62,8 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 fmm.get_dJdx2ref(body),
                                                 fmm.get_dJdx3ref(body),
                                                 fmm.get_indexref(body))
+
+get_W(P::Particle) = (get_W1(P), get_W2(P), get_W3(P))
+get_W1(P::Particle) = P.J[3,2]-P.J[2,3]
+get_W2(P::Particle) = P.J[1,3]-P.J[3,1]
+get_W3(P::Particle) = P.J[2,1]-P.J[1,2]

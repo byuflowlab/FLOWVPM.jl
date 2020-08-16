@@ -11,8 +11,10 @@
         modification of this code is allowed without written consent.
 
 # TODO
-* [x] Run leapfrogging test (I dind't seem to find the singuar transposed scheme to be more stable).
-* [ ] Implement the kernel that the italian group used.
+* [x] Run leapfrogging test (I dind't seem to find the singular transposed scheme to be more stable).
+* [x] Implement the kernel that the italian group used.
+* [ ] benchmark without saving hdf5s.
+* [ ] Test the speed of different kernels
 * [ ] Incorporate viscous diffusion with RBF.
 """
 module FLOWVPM

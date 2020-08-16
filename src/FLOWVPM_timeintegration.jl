@@ -22,7 +22,7 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
-    # Update the particle field
+    # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
         # Update position
@@ -43,9 +43,6 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
             p.Gamma[3] += dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Viscous scheme: core spreading
-        p.sigma[1] = sqrt(p.sigma[1]^2 + 2*pfield.viscous.nu*dt)
-
         # Relaxation: Align vectorial circulation with local vorticity
         if relax
             nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
@@ -58,6 +55,9 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
         end
 
     end
+
+    # Update the particle field: viscous diffusion
+    viscousdiffusion(pfield, dt)
 
     return nothing
 end
@@ -75,7 +75,11 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
 
-    for (a,b) in ((0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
+    # Reset storage memory to zero
+    for p in iterator(pfield); p.M .= zero(T); end;
+
+    # Runge-Kutta inner steps
+    for (a,b) in (T.((0, 1/3)), T.((-5/9, 15/16)), T.((-153/128, 8/15)))
 
         # Resets U and J from previous step
         _reset_particles(pfield)
@@ -83,8 +87,8 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
         # Calculates interactions between particles: U and J
         pfield.UJ(pfield)
 
-        # Updates the particle field
-        for (pi, p) in enumerate(iterator(pfield))
+        # Update the particle field: convection and stretching
+        for p in iterator(pfield)
 
             # Low-storage RK step
             ## Velocity
@@ -105,9 +109,6 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
                 p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             end
 
-            ## Core growth
-            p.M[1, 3] = a*p.M[1, 3] + dt*2*pfield.viscous.nu
-
             # Updates position
             p.X[1] += b*p.M[1, 1]
             p.X[2] += b*p.M[2, 1]
@@ -118,10 +119,10 @@ function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) wher
             p.Gamma[2] += b*p.M[2, 2]
             p.Gamma[3] += b*p.M[3, 2]
 
-            # Viscous scheme: core spreading
-            p.sigma[1] = sqrt(p.sigma[1]^2 + b*p.M[1, 3])
-
         end
+
+        # Update the particle field: viscous diffusion
+        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
 
     end
 

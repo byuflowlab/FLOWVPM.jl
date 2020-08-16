@@ -29,10 +29,13 @@ in Sullivan's *Dynamics of thin vortex rings*. Beta factor was extracted from
 Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 """
 function validation_singlevortexring(;
-                                        kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
+                                        # kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
+                                        kernel=vpm.gaussianerf, UJ=vpm.UJ_direct,
                                         integration=vpm.rungekutta3,
                                         fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
-                                        Re=400, viscous=vpm.Inviscid(),
+                                        # Re=400, viscous=vpm.Inviscid(),
+                                        Re=400, viscous=vpm.CoreSpreading(0, 0, vpm.zeta_direct; beta=1.15,
+                                                                            iterror=false, verbose=true, debug=true),
                                         save_path="temps/val_vortexring00/",
                                         tol=1e-2,
                                         nc=1, Nphi=200, extra_nc=0,
@@ -121,11 +124,19 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     smoothdeg = 180/pi*(2*atan(sigma/2,R)) # (deg) Ring's angle covered by sigma
     sgmoR = sigma/R
 
+    optargs_ring = []
+
     # Set up viscous scheme
     if vpm.isinviscid(viscous) == false
         viscous.nu = override_nu != nothing ? override_nu : Gamma/Re
         if vpm.iscorespreading(viscous)
             viscous.sgm0 = sigma
+
+            # Tilt the ring slightly to not be aligned with the z-axis,
+            # otherwise the RBF will fail trying to divide by zero
+            tilt = 1*pi/180
+            coord_sys = [cos(tilt) 0 sin(tilt); 0 1 0; -sin(tilt) 0 cos(tilt)]
+            push!(optargs_ring, (:ring_coord_system, coord_sys))
         end
     end
 
@@ -156,7 +167,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
 
     # Adds the ring to the field
     addvortexring(pfield, Gamma, R, Nphi, nc, rmax;
-                  extra_nc=extra_nc, lambda=lambda)
+                  extra_nc=extra_nc, lambda=lambda, optargs_ring...)
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------

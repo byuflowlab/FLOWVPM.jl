@@ -205,6 +205,8 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 get_X(self::ParticleField, i::Int) = get_particle(self, i).X
 get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).Gamma
 get_sigma(self::ParticleField, i::Int) = get_particle(self, i).sigma[1]
+get_U(self::ParticleField, i::Int) = get_particle(self, i).U
+get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
 """
     `isinviscid(pfield::ParticleField)`
