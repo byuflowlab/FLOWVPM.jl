@@ -140,7 +140,7 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self)]
-    # h5["vol"] = [get_vol(self, pi) for pi in 1:np]
+    h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
 
     # Connectivity information
@@ -222,15 +222,15 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
                             h5fname, ":sigma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
-              # # Attribute: vol
-              # print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-              #             " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-              #             " Name=\"vol\" Type=\"Scalar\">\n")
-              #   print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-              #               " Dimensions=\"", np,
-              #               "\" Format=\"HDF\" Precision=\"4\">",
-              #               h5fname, ":vol</DataItem>\n")
-              # print(xmf, "\t\t\t\t</Attribute>\n")
+              # Attribute: vol
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                          " Name=\"vol\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 1,
+                            "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":vol</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
 
 
               # Attribute: index
@@ -254,38 +254,37 @@ end
 
 
 # """
-#   `load_particlefield(pfield, h5_fname; path="")`
+#   `read(pfield, h5_fname; path="")`
 #
 # Reads an HDF5 file containing particle data created with `save()` and adds
 # all particles the the particle field `pfield`.
 # """
-# function load_particlefield(pfield::ParticleField, h5_fname::String;
+# function read(pfield::ParticleField, h5_fname::String;
 #                             path::String="", load_time::Bool=false)
 #
-#   # Opens the HDF5 file
-#   fname = h5_fname * (h5_fname[end-3:end]==".h5" ? "" : ".h5")
-#   h5 = HDF5.h5open(joinpath(path, h5_fname), "r")
+#     # Opens the HDF5 file
+#     fname = h5_fname * (h5_fname[end-3:end]==".h5" ? "" : ".h5")
+#     h5 = HDF5.h5open(joinpath(path, h5_fname), "r")
 #
-#   # Number of particles
-#   np = load(h5["np"])
+#     # Number of particles
+#     np = load(h5["np"])
 #
-#   # Data
-#   X = h5["X"]
-#   Gamma = h5["Gamma"]
-#   sigma = h5["sigma"]
-#   vol = h5["vol"]
+#     # Data
+#     X = h5["X"]
+#     Gamma = h5["Gamma"]
+#     sigma = h5["sigma"]
+#     vol = h5["vol"]
 #
-#   # Loads particles
-#   for i in 1:np
-#     p = Particle(X[1:3, i], Gamma[1:3, i], sigma[i], vol[i])
-#     addparticle(pfield, p)
-#   end
+#     # Loads particles
+#     for i in 1:np
+#         add_particle(pfield, X[1:3, i], Gamma[1:3, i], sigma[i]; vol=vol[i])
+#     end
 #
-#   # Loads time stamp
-#   if load_time
-#     pfield.t = load(h5["t"])
-#     pfield.nt = load(h5["nt"])
-#   end
+#     # Loads time stamp
+#     if load_time
+#         pfield.t = load(h5["t"])
+#         pfield.nt = load(h5["nt"])
+#     end
 # end
 
 

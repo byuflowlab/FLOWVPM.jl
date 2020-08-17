@@ -11,11 +11,10 @@
         modification of this code is allowed without written consent.
 
 # TODO
-* [x] Run leapfrogging test (I dind't seem to find the singular transposed scheme to be more stable).
-* [x] Implement the kernel that the italian group used.
-* [ ] benchmark without saving hdf5s.
-* [ ] Test the speed of different kernels
-* [ ] Incorporate viscous diffusion with RBF.
+* [ ] RBF testing: Point and ring test cases.
+* [ ] Print and save setting at beginning of simulation.
+* [ ] Feature of probing the fluid domain.
+* [ ] Optimize creating of hdf5s to speed up simulations.
 """
 module FLOWVPM
 

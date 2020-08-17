@@ -29,23 +29,28 @@ in Sullivan's *Dynamics of thin vortex rings*. Beta factor was extracted from
 Berdowski's thesis "3D Lagrangian VPM-FMM for Modeling the Near-wake of a HAWT".
 """
 function validation_singlevortexring(;
-                                        # kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
-                                        kernel=vpm.gaussianerf, UJ=vpm.UJ_fmm,
+                                        kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
                                         integration=vpm.rungekutta3,
-                                        fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.3),
-                                        # Re=400, viscous=vpm.Inviscid(),
-                                        Re=400, viscous=vpm.CoreSpreading(0, 0, vpm.zeta_fmm; beta=1.03, itmax=100, tol=1e-5,
-                                                                            iterror=false, verbose=true, debug=false),
+                                        fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                        Re=400, viscous=vpm.Inviscid(),
                                         save_path="temps/val_vortexring00/",
                                         tol=1e-2,
                                         nc=1, Nphi=200, extra_nc=0,
                                         nsteps=1000, coR=0.15, nR=5,
-                                        R=1.0, optargs...)
+                                        R=1.0,
+                                        # kernel=vpm.gaussianerf, UJ=vpm.UJ_fmm,
+                                        # integration=vpm.euler,
+                                        # fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.3),
+                                        # maxparticles=30000, nc=2,  extra_nc=3, nsteps=200, nR=1,
+                                        # Re=400, viscous=vpm.CoreSpreading(0, 0, vpm.zeta_fmm; beta=1.01, itmax=20, tol=1e-1,
+                                        #                                     iterror=false, verbose=true, debug=false),
+                                        optargs...)
 
     # -------------- PARAMETERS ----------------------------------------------
 
     Gamma = 1.0
-    faux1 = nc==0 ? extra_nc==0 ? 1 : 0.1 : nc==1 ? 0.25 : 0.5
+    # faux1 = nc==0 ? extra_nc==0 ? 1 : 0.1 : nc==1 ? 0.25 : 0.5
+    faux1 = nc==0 ? extra_nc==0 ? 1 : 0.25 : nc==1 ? 0.25 : 0.5
 
     res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
                                 extra_nc=extra_nc,
