@@ -152,14 +152,14 @@ attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
 function save(self::ParticleField{T}, file_name::String; path::String="",
-                add_num::Bool=true, num::Int64=-1, createpath=false) where {T}
+                add_num::Bool=true, num::Int64=-1, createpath::Bool=false) where {T}
 
     # Save a field with one dummy particle if field is empty
-    if get_np(pfield)==0
+    if get_np(self)==0
         dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
-                    path=path, add_num=add_num, num=num, createpath=create_path)
+                    path=path, add_num=add_num, num=num, createpath=createpath)
     end
 
     if createpath; create_path(path, true); end;
