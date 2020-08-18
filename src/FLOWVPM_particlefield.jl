@@ -151,8 +151,10 @@ function remove_particle(self::ParticleField, i::Int)
                                 " $(get_np(self)) particles in the field.")
     end
 
-    # Overwrite target particle with last particle in the field
-    fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
+    if i != get_np(self)
+        # Overwrite target particle with last particle in the field
+        fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
+    end
 
     # Remove last particle in the field
     self.np -= 1
@@ -223,7 +225,9 @@ Steps the particle field in time by a step `dt`.
 function nextstep(self::ParticleField, dt::Real; optargs...)
 
   # Step in time
-  self.integration(self, dt; optargs...)
+  if get_np(self)!=0
+      self.integration(self, dt; optargs...)
+  end
 
   # Updates time
   self.t += dt

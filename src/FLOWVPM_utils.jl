@@ -18,30 +18,41 @@ run_name="pfield", nsteps_save=1, verbose=true, prompt=true)`
 Solves `nsteps` of the particle field with a time step of `dt`.
 
 **Optional Arguments**
-* `runtime_function::Any`   : Give it a function of the form
-                              `myfun(pfield, t, dt)`. On each time step it
-                              will call this function. Use this for adding
-                              particles, deleting particles, etc.
-* `nsteps_relax::Int64` : Relaxes the particle field every this many time steps.
-* `save_path::Any`      : Give it a string for saving VTKs of the particle
-                          field. Creates the given path.
+* `runtime_function::Function`   : Give it a function of the form
+                            `myfun(pfield, t, dt)`. On each time step it
+                            will call this function. Use this for adding
+                            particles, deleting particles, etc.
+* `static_particles_function::Function`   : Give it a function of the form
+                            `myfun(pfield, t, dt)` to add static particles
+                            representing solid boundaries to the solver. This
+                            function is called at every time step right before
+                            solving the governing equations, and any new
+                            particles added by this function are immediately
+                            removed.
+* `nsteps_relax::Int`   : Relaxes the particle field every this many time steps.
+* `save_path::String`   : Give it a string for saving VTKs of the particle
+                            field. Creates the given path.
 * `run_name::String`    : Name of output files.
 * `nsteps_save::Int64`  : Saves vtks every this many time steps.
 * `prompt::Bool`        : If `save_path` already exist, it will prompt the
-                          user before overwritting the folder if true; it will
-                          directly overwrite it if false.
+                            user before overwritting the folder if true; it will
+                            directly overwrite it if false.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
 function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=(pfield, t, dt)->false,
+                      static_particles_function::Function=(pfield, t, dt)->nothing,
                       nsteps_relax::Int64=-1,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
+                      create_savepath::Bool=true,
                       run_name::String="pfield",
-                      nsteps_save::Int64=1, prompt::Bool=true,
-                      verbose::Bool=true, verbose_nsteps::Int64=10, v_lvl=0)
+                      save_code::String="",
+                      save_static_particles::Bool=true,
+                      nsteps_save::Int=1, prompt::Bool=true,
+                      verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0)
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
@@ -53,9 +64,13 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 " $(compatible_kernels)")
     end
 
-    # Creates save path
-    if save_path!=nothing
+    # Creates save path and save code
+    if save_path!=nothing && create_savepath
         create_path(save_path, prompt)
+    end
+    # Save code
+    if save_path!=nothing && save_code!=""
+        cp(save_code, save_path*"/"; force=true)
     end
 
     run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
@@ -77,18 +92,37 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         # Relaxation step
         relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
 
+        org_np = get_np(pfield)
+
         # Time step
         if i!=0
+            # Add static particles
+            static_particles_function(pfield, pfield.t, dt)
+
+            # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax)
+
+            # Remove static particles (assumes particles remained sorted)
+            if save_static_particles==false
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
+        end
+
+        # Save particle field
+        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+            save(pfield, run_name; path=save_path, add_num=true)
+        end
+
+        if i!=0 && save_static_particles==true
+            for pi in get_np(pfield):-1:(org_np+1)
+                remove_particle(pfield, pi)
+            end
         end
 
         # Calls user-defined runtime function
         breakflag = runtime_function(pfield, pfield.t, dt)
-
-        # Save
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            save(pfield, run_name; path=save_path, add_num=true)
-        end
 
         # User-indicated end of simulation
         if breakflag
@@ -119,6 +153,14 @@ visualization.
 """
 function save(self::ParticleField{T}, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath=false) where {T}
+
+    # Save a field with one dummy particle if field is empty
+    if get_np(pfield)==0
+        dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
+        add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
+        return save(dummy_pfield, file_name;
+                    path=path, add_num=add_num, num=num, createpath=create_path)
+    end
 
     if createpath; create_path(path, true); end;
 
