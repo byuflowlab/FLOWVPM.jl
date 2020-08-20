@@ -12,6 +12,10 @@ Three-dimensional viscous vortex particle code in Julia 1.4.2.
 ## Folders
   * `src`         : Source code.
 
+## Resources
+  * Theory and numerical method explained: [https://youtu.be/24sxy_hTJ9s](https://www.youtube.com/watch?v=24sxy_hTJ9s)
+  * Recommendations for rotor simulations and numerical stability: [Paper](http://flowlab.groups.et.byu.net/preprints/Alvarez2020.pdf)
+
 ## Authorship & Copyright
 * Author            : Eduardo J Alvarez
 * Created           : 2019
