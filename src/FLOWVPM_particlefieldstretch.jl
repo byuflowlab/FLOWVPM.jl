@@ -218,8 +218,6 @@ function nextstep(self::ParticleFieldStretch, dt::Real; optargs...)
         P.sigma .= sqrt( P.vol[1] / (pi*sqrt(P.l[1]^2 + P.l[2]^2 + P.l[3]^2)) )
     end
 
-    to_delete = []
-
     # Split particles
     for (pi, P) in enumerate(iterator(self; reverse=true))
 
