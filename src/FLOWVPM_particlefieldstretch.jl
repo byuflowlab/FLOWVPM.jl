@@ -13,10 +13,10 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{T, V<:ViscousScheme} <:  AbstractParticleField{T, V}
+mutable struct ParticleFieldStretch{T, V<:ViscousScheme} <: AbstractParticleField{T, V}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-    particles::Array{Particle{T}, 1}            # Array of particles
+    particles::Array{ParticleStretch{T}, 1}     # Array of particles
     bodies::fmm.Bodies                          # ExaFMM array of bodies
     viscous::V                                  # Viscous scheme
 
@@ -36,9 +36,10 @@ mutable struct ParticleField{T, V<:ViscousScheme} <:  AbstractParticleField{T, V
     rlxf::Float64                               # Relaxation factor (fraction of dt)
     integration::Function                       # Time integration scheme
     fmm::FMM                                    # Fast-multipole settings
+    splitparticles::T                           # l/l0 crit to when to split particles
 
 
-    ParticleField{T, V}(
+    ParticleFieldStretch{T, V}(
                         maxparticles,
                         particles, bodies, viscous;
                         np=0, nt=0, t=0.0,
@@ -49,6 +50,7 @@ mutable struct ParticleField{T, V<:ViscousScheme} <:  AbstractParticleField{T, V
                         relax=true, rlxf=0.3,
                         integration=rungekutta3,
                         fmm=FMM(),
+                        splitparticles=T(1.5)
                  ) where {T, V} = new(
                         maxparticles,
                         particles, bodies, viscous,
@@ -60,16 +62,17 @@ mutable struct ParticleField{T, V<:ViscousScheme} <:  AbstractParticleField{T, V
                         relax, rlxf,
                         integration,
                         fmm,
+                        splitparticles
                   )
 end
 
-function ParticleField(maxparticles::Int; viscous::V=Inviscid(),
+function ParticleFieldStretch(maxparticles::Int; viscous::V=Inviscid(),
                                             optargs...) where {V<:ViscousScheme}
     # Memory allocation by C++
     bodies = fmm.genBodies(maxparticles)
 
     # Have Julia point to the same memory than C++
-    particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+    particles = [ParticleStretch(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -77,7 +80,7 @@ function ParticleField(maxparticles::Int; viscous::V=Inviscid(),
     end
 
     # Generate and return ParticleField
-    return ParticleField{RealFMM, V}(maxparticles, particles, bodies, viscous;
+    return ParticleFieldStretch{RealFMM, V}(maxparticles, particles, bodies, viscous;
                                                                np=0, optargs...)
 end
 ##### FUNCTIONS ################################################################
@@ -86,7 +89,7 @@ end
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=-1)
+function add_particle(self::ParticleFieldStretch, X, circulation, l0, sigma; index=-1)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -98,9 +101,13 @@ function add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=-1)
 
     # Populate the empty particle
     P.X .= X
-    P.Gamma .= Gamma
+    P.circulation .= circulation
+    P.l0 .= l0
     P.sigma .= sigma
-    P.vol .= vol
+    P.vol .= pi*sigma.^2 * sqrt(P.l0[1]^2 + P.l0[2]^2 + P.l0[3]^2)
+    P.l .= l0
+    P.Gamma .= l0
+    P.Gamma .*= circulation
     P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
@@ -117,7 +124,7 @@ that entered the field into the memory slot of the target particle. To remove
 particles sequentally, you will need to go from the last particle back to the
 first one (see documentation of `get_particleiterator` for an example).
 """
-function remove_particle(self::ParticleField, i::Int)
+function remove_particle(self::ParticleFieldStretch, i::Int)
     if i<=0
         error("Requested removal of invalid particle index $i")
     elseif i>get_np(self)
@@ -129,6 +136,13 @@ function remove_particle(self::ParticleField, i::Int)
         # Overwrite target particle with last particle in the field
         fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
     end
+
+    Ptarg = get_particle(self, i)
+    Plast = get_particle(self, get_np(self))
+
+    Ptarg.circulation .= Plast.circulation
+    Ptarg.l0 .= Plast.l0
+    Ptarg.l .= Plast.l
 
     # Remove last particle in the field
     self.np -= 1
@@ -161,16 +175,20 @@ julia> # Iterate over particles
 [4.0, 40.0, 400.0]
 ```
 """
-function get_particleiterator(self::ParticleField{T};
-                                        start_i::Int=1, end_i::Int=-1) where {T}
+function get_particleiterator(self::ParticleFieldStretch{T};
+                                        start_i::Int=1, end_i::Int=-1, reverse=false) where {T}
     # ERROR CASES
     if end_i > get_np(self)
         error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
                                                     " particles in the field.")
     end
 
-    return view( self.particles, start_i:(end_i==-1 ? get_np(self) : end_i)
-                )::SubArray{FLOWVPM.Particle{T},1,Array{FLOWVPM.Particle{T},1},Tuple{UnitRange{Int64}},true}
+    strt = reverse ? (end_i==-1 ? get_np(self) : end_i) : start_i
+    stp = reverse ? -1 : 1
+    nd = reverse ? start_i : (end_i==-1 ? get_np(self) : end_i)
+
+    return view( self.particles, strt:stp:nd
+                )::SubArray{FLOWVPM.ParticleStretch{T},1,Array{FLOWVPM.ParticleStretch{T},1},Tuple{StepRange{Int64,Int64}},true}
 end
 
 """
@@ -178,20 +196,89 @@ end
 
 Steps the particle field in time by a step `dt`.
 """
-function nextstep(self::ParticleField, dt::Real; optargs...)
+function nextstep(self::ParticleFieldStretch, dt::Real; optargs...)
 
-  # Step in time
-  if get_np(self)!=0
-      self.integration(self, dt; optargs...)
-  end
+    # Convert vortex tube length into vectorial circulation
+    for P in iterator(self)
+        P.Gamma .= P.l
+        P.Gamma .*= P.circulation[1]
+    end
 
-  # Updates time
-  self.t += dt
-  self.nt += 1
+    # Step in time
+    if get_np(self)!=0
+        self.integration(self, dt; optargs...)
+    end
+
+    # Convert vectorial circulation into vortex tube length and adjust
+    # cross-sectional area
+    for P in iterator(self)
+        P.l .= P.Gamma
+        P.l ./= P.circulation[1]
+        # NOTE: This overwrites the core-speading scheme!
+        P.sigma .= sqrt( P.vol[1] / (pi*sqrt(P.l[1]^2 + P.l[2]^2 + P.l[3]^2)) )
+    end
+
+    to_delete = []
+
+    # Split particles
+    for (pi, P) in enumerate(iterator(self; reverse=true))
+
+        norml = sqrt(P.l[1]^2+P.l[2]^2+P.l[3]^2)
+        crit = norml/sqrt(P.l0[1]^2+P.l0[2]^2+P.l0[3]^2)
+        if crit >= self.splitparticles
+
+            # Number of particles that would make the length
+            # smaller than the criterion
+            nsplit = ceil(Int, crit)
+            # println("\t\tSplitting into $nsplit particles")
+
+            # Length of each section
+            lsplit = norml/nsplit
+
+            # Unit vector of vortex tube
+            ldir1 = P.l[1]/norml
+            ldir2 = P.l[2]/norml
+            ldir3 = P.l[3]/norml
+
+            # Starting and end point of vortex tube
+            Xstr1 = P.X[1] - norml/2*ldir1
+            Xstr2 = P.X[2] - norml/2*ldir2
+            Xstr3 = P.X[3] - norml/2*ldir3
+            Xend1 = P.X[1] + norml/2*ldir1
+            Xend2 = P.X[2] + norml/2*ldir2
+            Xend3 = P.X[3] + norml/2*ldir3
+
+            # Total properties to distribute
+            circulation = P.circulation[1]
+            voltot = P.vol[1]
+            sigma = P.sigma[1]
+
+            # Remove particle
+            remove_particle(self, pi)
+
+            # New properties
+            l0 = (lsplit*ldir1, lsplit*ldir2, lsplit*ldir3)
+
+            # Create new particles
+            for n in 1:nsplit
+                aux = (n-1)*lsplit + lsplit/2
+                X1 = Xstr1 + aux*ldir1
+                X2 = Xstr2 + aux*ldir2
+                X3 = Xstr3 + aux*ldir3
+                add_particle(self, (X1, X2, X3), circulation, l0, sigma)
+            end
+        end
+
+    end
+    println("\t\t\t$(get_np(self))")
+
+    # Updates time
+    self.t += dt
+    self.nt += 1
 end
 
 ##### INTERNAL FUNCTIONS #######################################################
-function _reset_particles(self::ParticleField{T}) where {T}
+function _reset_particles(self::ParticleFieldStretch{T}) where {T}
     tzero = zero(T)
     for P in iterator(self)
         P.U[1] = tzero

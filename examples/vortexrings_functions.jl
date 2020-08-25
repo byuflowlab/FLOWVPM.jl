@@ -27,7 +27,7 @@ Adds a particle discretization of a vortex ring to the particle field `pfield`.
   * `ring_coord_system`         : Local coordinate system x,y,z of the ring.
   * `lambda::Real`    : Particle overlap (sigma/h), default is 1.25.
 """
-function addvortexring(       pfield::vpm.ParticleField,
+function addvortexring(       pfield::vpm.AbstractParticleField,
                               Gamma::Real, R::Real,
                               Nphi::Int64, nc::Int64, rmax::Real;
                               extra_nc::Int64=0,
@@ -50,10 +50,21 @@ function addvortexring(       pfield::vpm.ParticleField,
     omega = Gamma / (pi*rmax^2)
 
     # Wrapper that transforms vector in the local to the global coordinate system
-    function addparticle(X, vecGamma, sigma, vol)
+    function addparticle(pfield::vpm.ParticleField, X, vecGamma, sigma, vol)
         Xglob = invM*X + C
         vecGammaglob = invM*vecGamma
         vpm.add_particle(pfield, Xglob, vecGammaglob, sigma; vol=vol)
+    end
+
+    function addparticle(pfield::vpm.ParticleFieldStretch, X, vecGamma, sigma, vol)
+        Xglob = invM*X + C
+        vecGammaglob = invM*vecGamma
+
+        norml = h
+        l = norml * vecGammaglob/norm(vecGammaglob)
+        circulation = norm(vecGammaglob)/norml
+        actual_sigma = lambda*sqrt(vol/(pi*norml))
+        vpm.add_particle(pfield, Xglob, circulation, l, actual_sigma)
     end
 
     # Torus dicretization into cross sections
@@ -70,7 +81,7 @@ function addvortexring(       pfield::vpm.ParticleField,
             X = Xc                          # Position
             vol = (pi*rl^2) * (deltaphi*R)  # Volume
             vecGamma = omega*vol*D          # Vectorial circulation
-            addparticle(X, vecGamma, sigma, vol)
+            addparticle(pfield, X, vecGamma, sigma, vol)
 
           else    # Layers
             rc = (1 + 12*n^2)/(6*n)*rl  # Center line radius
@@ -98,7 +109,7 @@ function addvortexring(       pfield::vpm.ParticleField,
               else
                 vecGamma = omega*vol*D
               end
-              addparticle(X, vecGamma, sigma, vol)
+              addparticle(pfield, X, vecGamma, sigma, vol)
             end
 
           end

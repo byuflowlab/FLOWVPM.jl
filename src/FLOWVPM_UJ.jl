@@ -19,7 +19,7 @@ particle-to-particle interaction, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_direct(pfield::ParticleField)
+function UJ_direct(pfield::AbstractParticleField)
   return UJ_direct(pfield, pfield)
 end
 
@@ -32,7 +32,7 @@ particle of  field `target`, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_direct(source::ParticleField, target::ParticleField)
+function UJ_direct(source::AbstractParticleField, target::AbstractParticleField)
   return UJ_direct(iterator(source), iterator(target), source.kernel)
 end
 
@@ -112,7 +112,7 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; optargs...)
+function UJ_fmm(pfield::AbstractParticleField; optargs...)
 
     # Calculate FMM of vector potential
     call_FLOWExaFMM(pfield; optargs...)
@@ -144,7 +144,7 @@ function UJ_fmm(pfield::ParticleField; optargs...)
     return nothing
 end
 
-function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
+function call_FLOWExaFMM(pfield::AbstractParticleField; verbose::Bool=false,
                                             rbf::Bool=false, sort::Bool=true)
     try
         fmm.calculate(pfield.bodies,

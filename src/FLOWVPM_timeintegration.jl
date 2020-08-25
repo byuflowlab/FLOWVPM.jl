@@ -12,7 +12,7 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
+function euler(pfield::AbstractParticleField, dt::Real; relax::Bool=false)
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -69,7 +69,7 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) where {T}
+function rungekutta3(pfield::AbstractParticleField{T}, dt::Real; relax::Bool=false) where {T}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 

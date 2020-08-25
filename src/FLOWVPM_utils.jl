@@ -40,7 +40,7 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
-function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
+function run_vpm!(pfield::AbstractParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=(pfield, t, dt)->false,
                       static_particles_function::Function=(pfield, t, dt)->nothing,
@@ -96,18 +96,18 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         # Time step
         if i!=0
-            # Add static particles
-            static_particles_function(pfield, pfield.t, dt)
+            # # Add static particles
+            # static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax)
 
             # Remove static particles (assumes particles remained sorted)
-            if save_static_particles==false
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
+            # if save_static_particles==false
+            #     for pi in get_np(pfield):-1:(org_np+1)
+            #         remove_particle(pfield, pi)
+            #     end
+            # end
         end
 
         # Save particle field
@@ -115,11 +115,11 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             save(pfield, run_name; path=save_path, add_num=true)
         end
 
-        if i!=0 && save_static_particles==true
-            for pi in get_np(pfield):-1:(org_np+1)
-                remove_particle(pfield, pi)
-            end
-        end
+        # if i!=0 && save_static_particles==true
+        #     for pi in get_np(pfield):-1:(org_np+1)
+        #         remove_particle(pfield, pi)
+        #     end
+        # end
 
         # Calls user-defined runtime function
         breakflag = runtime_function(pfield, pfield.t, dt)
@@ -151,12 +151,12 @@ Saves the particle field in HDF5 format and a XDMF file especifying its the
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-function save(self::ParticleField{T}, file_name::String; path::String="",
+function save(self::AbstractParticleField{T}, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false) where {T}
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
+        dummy_pfield = AbstractParticleField(1; nt=self.nt, t=self.t)
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath)
@@ -301,7 +301,7 @@ end
 # Reads an HDF5 file containing particle data created with `save()` and adds
 # all particles the the particle field `pfield`.
 # """
-# function read(pfield::ParticleField, h5_fname::String;
+# function read(pfield::AbstractParticleField, h5_fname::String;
 #                             path::String="", load_time::Bool=false)
 #
 #     # Opens the HDF5 file
