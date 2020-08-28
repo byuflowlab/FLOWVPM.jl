@@ -87,8 +87,10 @@ function run_leapfrog(R1::Real, R2::Real,
                               kernel::vpm.Kernel=vpm.winckelmans,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
-                              maxparticles=200000,
+                              maxparticles=10000,
                               splitparticles=100,
+                              FieldType=vpm.ParticleFieldStretch,
+                              morepfieldargs=[],
                               # NUMERICAL SCHEMES
                               transposed=true,
                               relax=true,
@@ -141,13 +143,12 @@ function run_leapfrog(R1::Real, R2::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    pfield = vpm.ParticleFieldStretch(maxparticles; viscous=viscous,
+    pfield = FieldType(maxparticles; viscous=viscous,
                                 kernel=kernel, UJ=UJ,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
                                 fmm=fmm,
-                                splitparticles=splitparticles
                                 )
 
     # Adds the rings to the field
@@ -165,37 +166,37 @@ function run_leapfrog(R1::Real, R2::Real,
 
     # Function for tracking the radius of each ring
     function rings_radii(pfield::vpm.AbstractParticleField, t, dt)
-        # if 2*Np!=vpm.get_np(pfield);
-        #     error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
-        # end
-        #
-        # Cs = [C1s, C2s]
-        # Rs = [R1s, R2s]
-        # intervals = [0, Np, 2Np]
-        #
-        # # Iterates over each ring
-        # for r_i in 1:2
-        #
-        #     # Calculates center of the ring
-        #     C = zeros(3)
-        #     for i in (intervals[r_i]+1):(intervals[r_i+1])
-        #         C .+= vpm.get_X(pfield, i)
-        #     end
-        #     C = C/Np
-        #
-        #     # Calculates average radius
-        #     ave_r = 0
-        #     for i in (intervals[r_i]+1):(intervals[r_i+1])
-        #         this_X = vpm.get_X(pfield, i)
-        #         this_r = norm(this_X - C)
-        #         ave_r += this_r
-        #     end
-        #     ave_r = ave_r/Np
-        #
-        #     push!(Cs[r_i], C)
-        #     push!(Rs[r_i], ave_r)
-        # end
-        # push!(ts, t)
+        if 2*Np!=vpm.get_np(pfield);
+            error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
+        end
+
+        Cs = [C1s, C2s]
+        Rs = [R1s, R2s]
+        intervals = [0, Np, 2Np]
+
+        # Iterates over each ring
+        for r_i in 1:2
+
+            # Calculates center of the ring
+            C = zeros(3)
+            for i in (intervals[r_i]+1):(intervals[r_i+1])
+                C .+= vpm.get_X(pfield, i)
+            end
+            C = C/Np
+
+            # Calculates average radius
+            ave_r = 0
+            for i in (intervals[r_i]+1):(intervals[r_i+1])
+                this_X = vpm.get_X(pfield, i)
+                this_r = norm(this_X - C)
+                ave_r += this_r
+            end
+            ave_r = ave_r/Np
+
+            push!(Cs[r_i], C)
+            push!(Rs[r_i], ave_r)
+        end
+        push!(ts, t)
 
         return false
     end
@@ -215,28 +216,28 @@ function run_leapfrog(R1::Real, R2::Real,
 
     # -------------- POST-PROCESSING ---------------------------------------------
     # Plot radii in time
-    # if disp_plot
-    #     # Loads the data extracted from Berdowski's Fig 6.6
-    #     data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
-    #     data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
-    #
-    #     plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
-    #     plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
-    #
-    #     plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
-    #     plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
-    #
-    #     legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
-    #     xlabel("Time (s)")
-    #     ylabel("Ring radius (m)")
-    #     grid(true, color="0.8", linestyle="--")
-    #     title("Leapfrogging vortex rings")
-    #     tight_layout()
-    #
-    #     if save_path!=nothing
-    #         savefig(joinpath(save_path, "leapfrog.png"))
-    #     end
-    # end
+    if disp_plot
+        # Loads the data extracted from Berdowski's Fig 6.6
+        data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
+        data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
+
+        plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
+        plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
+
+        plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
+        plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
+
+        legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
+        xlabel("Time (s)")
+        ylabel("Ring radius (m)")
+        grid(true, color="0.8", linestyle="--")
+        title("Leapfrogging vortex rings")
+        tight_layout()
+
+        if save_path!=nothing
+            savefig(joinpath(save_path, "leapfrog.png"))
+        end
+    end
 
     # --------------- VISUALIZATION --------------------------------------------
     if save_path!=nothing

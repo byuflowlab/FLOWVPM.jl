@@ -50,7 +50,7 @@ mutable struct ParticleFieldStretch{T, V<:ViscousScheme} <: AbstractParticleFiel
                         relax=true, rlxf=0.3,
                         integration=rungekutta3,
                         fmm=FMM(),
-                        splitparticles=T(1.5)
+                        splitparticles=T(99999999999.0)
                  ) where {T, V} = new(
                         maxparticles,
                         particles, bodies, viscous,
@@ -209,15 +209,6 @@ function nextstep(self::ParticleFieldStretch, dt::Real; optargs...)
         self.integration(self, dt; optargs...)
     end
 
-    # Convert vectorial circulation into vortex tube length and adjust
-    # cross-sectional area
-    for P in iterator(self)
-        P.l .= P.Gamma
-        P.l ./= P.circulation[1]
-        # NOTE: This overwrites the core-speading scheme!
-        P.sigma .= sqrt( P.vol[1] / (pi*sqrt(P.l[1]^2 + P.l[2]^2 + P.l[3]^2)) )
-    end
-
     # Split particles
     for (pi, P) in enumerate(iterator(self; reverse=true))
 
@@ -268,7 +259,7 @@ function nextstep(self::ParticleFieldStretch, dt::Real; optargs...)
         end
 
     end
-    println("\t\t\t$(get_np(self))")
+    # println("\t\t\t$(get_np(self))")
 
     # Updates time
     self.t += dt

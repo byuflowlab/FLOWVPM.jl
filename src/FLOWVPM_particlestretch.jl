@@ -46,7 +46,7 @@ Base.zero(::Type{<:ParticleStretch{T}}) where {T} = ParticleStretch(
                                                       zeros(T, 1),
                                                       zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 3), zeros(T, 3, 3),
-                                                      zeros(T, 3, 3),
+                                                      zeros(T, 3, 5),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(Int32, 1))
@@ -65,7 +65,7 @@ ParticleStretch(body::fmm.BodyRef) = ParticleStretch{RealFMM}(fmm.get_Xref(body)
                                                 fmm.get_qref(body),
                                                 zeros(RealFMM, 3),
                                                 zeros(RealFMM, 3, 3),
-                                                zeros(RealFMM, 3, 3),
+                                                zeros(RealFMM, 3, 5),
                                                 fmm.get_Jref(body),
                                                 fmm.get_dJdx1ref(body),
                                                 fmm.get_dJdx2ref(body),
