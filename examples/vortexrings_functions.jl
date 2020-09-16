@@ -63,7 +63,8 @@ function addvortexring(       pfield::vpm.AbstractParticleField,
         norml = h
         l = norml * vecGammaglob/norm(vecGammaglob)
         circulation = norm(vecGammaglob)/norml
-        actual_sigma = lambda*sqrt(vol/(pi*norml))
+        # actual_sigma = lambda*sqrt(vol/(pi*norml))
+        actual_sigma = sigma
         vpm.add_particle(pfield, Xglob, circulation, l, actual_sigma)
     end
 

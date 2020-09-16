@@ -88,7 +88,6 @@ function run_leapfrog(R1::Real, R2::Real,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               maxparticles=10000,
-                              splitparticles=100,
                               FieldType=vpm.ParticleFieldStretch,
                               morepfieldargs=[],
                               # NUMERICAL SCHEMES

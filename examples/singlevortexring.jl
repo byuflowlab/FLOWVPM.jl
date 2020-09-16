@@ -106,6 +106,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
+                              FieldType=vpm.ParticleFieldStretch,
                               transposed=true,
                               relax=true,
                               rlxf=0.3,
@@ -163,7 +164,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    pfield = vpm.ParticleField(maxparticles; viscous=viscous, kernel=kernel, UJ=UJ,
+    pfield = FieldType(maxparticles; viscous=viscous, kernel=kernel, UJ=UJ,
                             transposed=transposed,
                             relax=relax, rlxf=rlxf,
                             integration=integration,
@@ -178,7 +179,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # -------------- RUNTIME FUNCTION --------------------------------------------
     # Function for calculating center's position at each time step
     Xs, ts = [], []
-    function center_position(pfield::vpm.ParticleField, t, dt)
+    function center_position(pfield::vpm.AbstractParticleField, t, dt)
         Np = vpm.get_np(pfield)
         X = sum([P.X for P in vpm.iterator(pfield)])
         X = X/Np
@@ -228,7 +229,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
         title("Single vortex ring validation")
 
         if save_path!=nothing
-            savefig(joinpath(save_path, "vring.png"))
+            savefig(joinpath(save_path, "vring.png"), dpi=300)
         end
     end
 
