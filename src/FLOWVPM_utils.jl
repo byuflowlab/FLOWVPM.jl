@@ -52,7 +52,8 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       save_code::String="",
                       save_static_particles::Bool=true,
                       nsteps_save::Int=1, prompt::Bool=true,
-                      verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0)
+                      verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
+                      save_time=true)
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
@@ -112,7 +113,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         # Save particle field
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            save(pfield, run_name; path=save_path, add_num=true)
+            overwrite_time = save_time ? nothing : pfield.nt
+            save(pfield, run_name; path=save_path, add_num=true,
+                                        overwrite_time=overwrite_time)
         end
 
         if i!=0 && save_static_particles==true
@@ -152,14 +155,16 @@ attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
 function save(self::ParticleField{T}, file_name::String; path::String="",
-                add_num::Bool=true, num::Int64=-1, createpath::Bool=false) where {T}
+                add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
+                overwrite_time=nothing) where {T}
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
         dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
-                    path=path, add_num=add_num, num=num, createpath=createpath)
+                    path=path, add_num=add_num, num=num, createpath=createpath,
+                    overwrite_time=overwrite_time)
     end
 
     if createpath; create_path(path, true); end;
@@ -168,13 +173,17 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     h5fname = fname*".h5"
     np = get_np(self)
 
+    time = overwrite_time != nothing ? overwrite_time :
+            typeof(self.t) in [Float64, Int64] ? self.t :
+            self.t.value
+
     # Creates/overwrites HDF5 file
     h5 = HDF5.h5open(joinpath(path, h5fname), "w")
 
     # Writes parameters
     h5["np"] = np
     h5["nt"] = self.nt
-    h5["t"] = typeof(self.t) in [Float64, Int64] ? self.t : self.t.value
+    h5["t"] = time
 
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
@@ -226,7 +235,7 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
           print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
             print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
 
-        			  print(xmf, "\t\t\t\t<Time Value=\"", typeof(self.t) in [Float64, Int64] ? self.t : self.t.value, "\" />\n")
+        			  print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
 
               # Nodes: particle positions
               print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
