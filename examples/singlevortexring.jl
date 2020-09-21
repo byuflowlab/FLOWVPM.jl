@@ -64,8 +64,6 @@ function validation_singlevortexring(;
                                 fmm=fmm,
                                 # NUMERICAL SCHEMES
                                 transposed=true,
-                                relax=true,
-                                rlxf=0.3,
                                 integration=integration,
                                 nsteps_relax=1,
                                 viscous=viscous,

@@ -50,7 +50,7 @@ mutable struct ParticleFieldStretch{T, V<:ViscousScheme} <: AbstractParticleFiel
                         relax=true, rlxf=0.3,
                         integration=rungekutta3,
                         fmm=FMM(),
-                        splitparticles=T(99999999999.0)
+                        splitparticles=T(Inf)
                  ) where {T, V} = new(
                         maxparticles,
                         particles, bodies, viscous,
@@ -89,7 +89,8 @@ end
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleFieldStretch, X, circulation, l0, sigma; index=-1)
+function add_particle(self::ParticleFieldStretch, X, circulation::Real, l0,
+                                                                sigma; index=-1)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -101,13 +102,13 @@ function add_particle(self::ParticleFieldStretch, X, circulation, l0, sigma; ind
 
     # Populate the empty particle
     P.X .= X
-    P.circulation .= circulation
-    P.l0 .= l0
+    P.circulation .= abs(circulation)    # Force circulation to be positive
+    P.l0 .= sign(circulation)*l0
     P.sigma .= sigma
     P.vol .= pi*sigma.^2 * sqrt(P.l0[1]^2 + P.l0[2]^2 + P.l0[3]^2)
-    P.l .= l0
-    P.Gamma .= l0
-    P.Gamma .*= circulation
+    P.l .= P.l0
+    P.Gamma .= P.l0
+    P.Gamma .*= P.circulation[1]
     P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
@@ -210,56 +211,57 @@ function nextstep(self::ParticleFieldStretch, dt::Real; optargs...)
     end
 
     # Split particles
-    for (pi, P) in enumerate(iterator(self; reverse=true))
+    if self.splitparticles < Inf
+        for (pi, P) in enumerate(iterator(self; reverse=true))
 
-        norml = sqrt(P.l[1]^2+P.l[2]^2+P.l[3]^2)
-        crit = norml/sqrt(P.l0[1]^2+P.l0[2]^2+P.l0[3]^2)
-        if crit >= self.splitparticles
+            norml = sqrt(P.l[1]^2+P.l[2]^2+P.l[3]^2)
+            crit = norml/sqrt(P.l0[1]^2+P.l0[2]^2+P.l0[3]^2)
+            if crit >= self.splitparticles
 
-            # Number of particles that would make the length
-            # smaller than the criterion
-            nsplit = ceil(Int, crit)
-            # println("\t\tSplitting into $nsplit particles")
+                # Number of particles that would make the length
+                # smaller than the criterion
+                nsplit = ceil(Int, crit)
+                # println("\t\tSplitting into $nsplit particles")
 
-            # Length of each section
-            lsplit = norml/nsplit
+                # Length of each section
+                lsplit = norml/nsplit
 
-            # Unit vector of vortex tube
-            ldir1 = P.l[1]/norml
-            ldir2 = P.l[2]/norml
-            ldir3 = P.l[3]/norml
+                # Unit vector of vortex tube
+                ldir1 = P.l[1]/norml
+                ldir2 = P.l[2]/norml
+                ldir3 = P.l[3]/norml
 
-            # Starting and end point of vortex tube
-            Xstr1 = P.X[1] - norml/2*ldir1
-            Xstr2 = P.X[2] - norml/2*ldir2
-            Xstr3 = P.X[3] - norml/2*ldir3
-            Xend1 = P.X[1] + norml/2*ldir1
-            Xend2 = P.X[2] + norml/2*ldir2
-            Xend3 = P.X[3] + norml/2*ldir3
+                # Starting and end point of vortex tube
+                Xstr1 = P.X[1] - norml/2*ldir1
+                Xstr2 = P.X[2] - norml/2*ldir2
+                Xstr3 = P.X[3] - norml/2*ldir3
+                Xend1 = P.X[1] + norml/2*ldir1
+                Xend2 = P.X[2] + norml/2*ldir2
+                Xend3 = P.X[3] + norml/2*ldir3
 
-            # Total properties to distribute
-            circulation = P.circulation[1]
-            voltot = P.vol[1]
-            sigma = P.sigma[1]
+                # Total properties to distribute
+                circulation = P.circulation[1]
+                voltot = P.vol[1]
+                sigma = P.sigma[1]
 
-            # Remove particle
-            remove_particle(self, pi)
+                # Remove particle
+                remove_particle(self, pi)
 
-            # New properties
-            l0 = (lsplit*ldir1, lsplit*ldir2, lsplit*ldir3)
+                # New properties
+                l0 = (lsplit*ldir1, lsplit*ldir2, lsplit*ldir3)
 
-            # Create new particles
-            for n in 1:nsplit
-                aux = (n-1)*lsplit + lsplit/2
-                X1 = Xstr1 + aux*ldir1
-                X2 = Xstr2 + aux*ldir2
-                X3 = Xstr3 + aux*ldir3
-                add_particle(self, (X1, X2, X3), circulation, l0, sigma)
+                # Create new particles
+                for n in 1:nsplit
+                    aux = (n-1)*lsplit + lsplit/2
+                    X1 = Xstr1 + aux*ldir1
+                    X2 = Xstr2 + aux*ldir2
+                    X3 = Xstr3 + aux*ldir3
+                    add_particle(self, (X1, X2, X3), circulation, l0, sigma)
+                end
             end
-        end
 
+        end
     end
-    # println("\t\t\t$(get_np(self))")
 
     # Updates time
     self.t += dt
