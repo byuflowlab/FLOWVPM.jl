@@ -163,7 +163,8 @@ function save(self::AbstractParticleField{T}, file_name::String; path::String=""
         dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
-                    path=path, add_num=add_num, num=num, createpath=createpath)
+                    path=path, add_num=add_num, num=num, createpath=createpath,
+                    overwrite_time=overwrite_time)
     end
 
     if createpath; create_path(path, true); end;
@@ -172,17 +173,17 @@ function save(self::AbstractParticleField{T}, file_name::String; path::String=""
     h5fname = fname*".h5"
     np = get_np(self)
 
+    time = overwrite_time != nothing ? overwrite_time :
+            typeof(self.t) in [Float64, Int64] ? self.t :
+            self.t.value
+
     # Creates/overwrites HDF5 file
     h5 = HDF5.h5open(joinpath(path, h5fname), "w")
 
     # Writes parameters
     h5["np"] = np
     h5["nt"] = self.nt
-    if overwrite_time != nothing
-        h5["t"] = overwrite_time
-    else
-        h5["t"] = typeof(self.t) in [Float64, Int64] ? self.t : self.t.value
-    end
+    h5["t"] = time
 
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
@@ -234,7 +235,7 @@ function save(self::AbstractParticleField{T}, file_name::String; path::String=""
           print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
             print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
 
-        			  print(xmf, "\t\t\t\t<Time Value=\"", typeof(self.t) in [Float64, Int64] ? self.t : self.t.value, "\" />\n")
+        			  print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
 
               # Nodes: particle positions
               print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
