@@ -80,6 +80,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               coR1::Real, coR2::Real,
                               Nphi::Int64, nc::Int64, Re::Real,
                               nsteps::Int64, nR::Real;
+                              dXoR::Real=0.0,
                               extra_nc::Int64=0,
                               faux1=1.0,
                               override_nu::Union{Nothing, Real}=nothing,
@@ -104,6 +105,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               paraview=true, prompt=true,
                               verbose=true, verbose2=true, v_lvl=0,
                               disp_plot=true,
+                              tshift=0
                               )
 
     # Additional parameters
@@ -154,7 +156,7 @@ function run_leapfrog(R1::Real, R2::Real,
     addvortexring(pfield, Gamma1, R1, Nphi, nc, rmax1;
                         extra_nc=extra_nc, lambda=lambda1)
     addvortexring(pfield, Gamma2, R2, Nphi, nc, rmax2;
-                        extra_nc=extra_nc, lambda=lambda2)
+                        extra_nc=extra_nc, lambda=lambda2, C=[0, 0, dXoR*R2])
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------
@@ -223,8 +225,8 @@ function run_leapfrog(R1::Real, R2::Real,
         plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
         plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
 
-        plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
-        plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
+        plot(ts.+tshift, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
+        plot(ts.+tshift, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
 
         legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
         xlabel("Time (s)")

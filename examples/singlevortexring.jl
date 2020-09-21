@@ -38,6 +38,7 @@ function validation_singlevortexring(;
                                         nc=1, Nphi=200, extra_nc=0,
                                         nsteps=1000, coR=0.15, nR=5,
                                         R=1.0,
+                                        overwrite_faux1=nothing,
                                         # kernel=vpm.gaussianerf, UJ=vpm.UJ_fmm,
                                         # integration=vpm.euler,
                                         # fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.3),
@@ -51,6 +52,8 @@ function validation_singlevortexring(;
     Gamma = 1.0
     # faux1 = nc==0 ? extra_nc==0 ? 1 : 0.1 : nc==1 ? 0.25 : 0.5
     faux1 = nc==0 ? extra_nc==0 ? 1 : 0.25 : nc==1 ? 0.25 : 0.5
+
+    faux1 = overwrite_faux1 != nothing ? overwrite_faux1 : faux1
 
     res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
                                 extra_nc=extra_nc,
