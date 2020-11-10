@@ -104,7 +104,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               verbose_nsteps=10,
                               paraview=true, prompt=true,
                               verbose=true, verbose2=true, v_lvl=0,
-                              disp_plot=true,
+                              disp_plot=true, plot_exp=true,
                               tshift=0
                               )
 
@@ -130,7 +130,7 @@ function run_leapfrog(R1::Real, R2::Real,
 
     beta = 0.5
     Ucore = Gamma1/(4*pi*R1)*(log(8/coR1)-beta)  # Analytical self-induced velocity
-    dt = nR*R1/Ucore/nsteps        # Time step size
+    dt = abs(nR*R1/Ucore/nsteps)        # Time step size
 
     if verbose2
         println("\t"^v_lvl*"Ring's core #1 / R:\t\t$(round(typeof(coR1)!=Float64 ? coR1.value : coR1, digits=3))")
@@ -218,12 +218,14 @@ function run_leapfrog(R1::Real, R2::Real,
     # -------------- POST-PROCESSING ---------------------------------------------
     # Plot radii in time
     if disp_plot
-        # Loads the data extracted from Berdowski's Fig 6.6
-        data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
-        data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
+        if plot_exp
+            # Loads the data extracted from Berdowski's Fig 6.6
+            data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
+            data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
 
-        plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
-        plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
+            plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
+            plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
+        end
 
         plot(ts.+tshift, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
         plot(ts.+tshift, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
