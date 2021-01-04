@@ -36,20 +36,30 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous",
-                    "particle", "particlestretch",
-                    "particlefieldabstract", "particlefield", "particlefieldstretch",
+                    "particle", "formulation",
+                    "particlefieldabstract", "particlefield",
                     "UJ", "timeintegration",
                     "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
+
+# Available VPM formulations
+const formulation_classic = ClassicVPM{Particle{RealFMM}, RealFMM}()
+const formulation_tube_classic = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(0, 0)
+const formulation_tube_continuity = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(1/2, 0)
+const formulation_tube_momentum = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(1/4, 1/4)
+const formulation_sphere_momentum = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(0, 1/5)
+const formulation_default = formulation_sphere_momentum
+
 
 # Available Kernels
 const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
 const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
 const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
 const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
+const kernel_default = kernel_gaussianerf
 
-# Aliases
+# Kernel aliases
 const singular = kernel_singular
 const gaussian = kernel_gaussian
 const gaussianerf = kernel_gaussianerf

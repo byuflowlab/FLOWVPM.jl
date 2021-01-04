@@ -12,7 +12,8 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
+function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
+                                                 ) where {PType<:Particle, F, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -76,10 +77,17 @@ end
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleFieldStretch, dt::Real; relax::Bool=false)
+function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
+                                             ) where {PType<:ParticleTube, F, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
+
+    # Convert vortex tube length into vectorial circulation
+    for P in iterator(pfield)
+        P.Gamma .= P.l
+        P.Gamma .*= P.circulation[1]
+    end
 
     # Calculate interactions between particles: U and J
     pfield.UJ(pfield)
@@ -156,7 +164,8 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{T}, dt::Real; relax::Bool=false) where {T}
+function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
+                                relax::Bool=false) where {PType<:Particle{T}, F, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
@@ -257,15 +266,20 @@ end
 
 
 
-
-
 """
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleFieldStretch{T}, dt::Real; relax::Bool=false) where {T}
+function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
+                        relax::Bool=false) where {PType<:ParticleTube{T}, F, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
+    # Convert vortex tube length into vectorial circulation
+    for P in iterator(pfield)
+        P.Gamma .= P.l
+        P.Gamma .*= P.circulation[1]
+    end
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3], qsmg <=> p.M[2, 3], ql <=> p.M[:, 5]
 
