@@ -27,13 +27,13 @@ struct ClassicVPM{P<:AbstractParticle, R} <: Formulation{P, R} end
 
 
 ################################################################################
-# REFORMULATED VPM: PARTICLE TUBE
+# REFORMULATED VPM
 ################################################################################
-struct ParticleTubeVPM{P<:ParticleTube, R} <: Formulation{P, R}
+struct ReformulatedVPM{P<:AbstractParticle, R} <: Formulation{P, R}
     f::R                     # Re-orientation parameter
     g::R                     # Stretching-compensation parameter
     h::R                     # Stretching parameter
 
-    ParticleTubeVPM{P, R}(f, g; h=(1-3*g)/(1+3*f)) where {P, R} = new(f, g, h)
+    ReformulatedVPM{P, R}(f, g; h=(1-3*g)/(1+3*f)) where {P, R} = new(f, g, h)
 end
 ##### END OF CLASSIC VPM #######################################################

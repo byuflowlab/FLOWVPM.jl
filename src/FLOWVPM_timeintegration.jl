@@ -12,8 +12,8 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
-                                                 ) where {PType<:Particle, F, V}
+function euler(pfield::ParticleField{R1, P, ClassicVPM{P, R2}, V},
+                                dt::Real; relax::Bool=false) where {R1, P, R2, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -61,17 +61,11 @@ end
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
-                                             ) where {PType<:ParticleTube, F, V}
+function euler(pfield::ParticleField{R1, P, ReformulatedVPM{P, R2}, V},
+                              dt::Real; relax::Bool=false ) where {R1, P, R2, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
-
-    # Convert vortex tube length into vectorial circulation
-    for P in iterator(pfield)
-        P.Gamma .= P.l
-        P.Gamma .*= P.circulation[1]
-    end
 
     # Calculate interactions between particles: U and J
     pfield.UJ(pfield)
@@ -86,39 +80,39 @@ function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
         p.X[2] += dt*(p.U[2] + Uinf[2])
         p.X[3] += dt*(p.U[3] + Uinf[3])
 
-        # Store stretching under M[:, 4]
+        # Store stretching S under M[:, 1]
         if pfield.transposed
-            # Transposed scheme (Γ⋅∇')U
-            p.M[1,4] = 2/5*(p.J[1,1]*p.l[1]+p.J[2,1]*p.l[2]+p.J[3,1]*p.l[3])
-            p.M[2,4] = 2/5*(p.J[1,2]*p.l[1]+p.J[2,2]*p.l[2]+p.J[3,2]*p.l[3])
-            p.M[3,4] = 2/5*(p.J[1,3]*p.l[1]+p.J[2,3]*p.l[2]+p.J[3,3]*p.l[3])
+            # Transposed scheme S = (Γ⋅∇')U
+            p.M[1,1] = (p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
+            p.M[2,1] = (p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
+            p.M[3,1] = (p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         else
-            # Classic scheme (Γ⋅∇)U
-            p.M[1,4] = 2/5*(p.J[1,1]*p.l[1]+p.J[1,2]*p.l[2]+p.J[1,3]*p.l[3])
-            p.M[2,4] = 2/5*(p.J[2,1]*p.l[1]+p.J[2,2]*p.l[2]+p.J[2,3]*p.l[3])
-            p.M[3,4] = 2/5*(p.J[3,1]*p.l[1]+p.J[3,2]*p.l[2]+p.J[3,3]*p.l[3])
+            # Classic scheme S = (Γ⋅∇)U
+            p.M[1,1] = (p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
+            p.M[2,1] = (p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
+            p.M[3,1] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Update cross-sectional area according to stretching
-        # p.sigma[1] -= dt * ( p.sigma[1]/(2*sqrt(p.l[1]^2+p.l[2]^2+p.l[3]^2)) * sqrt(p.M[1,4]^2+p.M[2,4]^2+p.M[3,4]^2) )
-        p.sigma[1] -= dt * ( p.sigma[1]/(2*(p.l[1]^2+p.l[2]^2+p.l[3]^2)) * (p.l[1]*p.M[1,4]+p.l[2]*p.M[2,4]+p.l[3]*p.M[3,4]) )
+        # Store Z = S⋅Γ/mag(Γ)^2 under M[1, 2]
+        p.M[1,2] = (p.M[1,1]*p.Gamma[1] + p.M[2,1]*p.Gamma[2] +
+                    p.M[3,1]*p.Gamma[3]) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-        # Update vortex tube length
-        p.l[1] += dt*p.M[1,4]
-        p.l[2] += dt*p.M[2,4]
-        p.l[3] += dt*p.M[3,4]
+        # Update vectorial circulation
+        p.Gamma[1] += dt * 1/(1+3*pfield.formulation.f) * (
+                          p.M[1,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[1])
+        p.Gamma[2] += dt * 1/(1+3*pfield.formulation.f) * (
+                          p.M[2,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[2])
+        p.Gamma[3] += dt * 1/(1+3*pfield.formulation.f) * (
+                          p.M[3,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[3])
 
-        # Convert vortex tube length into vectorial circulation
-        p.Gamma .= p.l
-        p.Gamma .*= p.circulation[1]
+        # Update cross-sectional area of the tube
+        p.sigma[1] -= dt * ( p.sigma[1] *
+                            (pfield.formulation.f + pfield.formulation.g) /
+                            (1 + 3*pfield.formulation.f) * p.M[1,2] )
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
             align_strenght!(pfield.rlxf, p)
-
-            # Convert relaxed vectorial circulation back to tube length
-            p.l .= p.Gamma
-            p.l ./= p.circulation[1]
         end
 
     end
@@ -136,8 +130,8 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
-                                relax::Bool=false) where {PType<:Particle{T}, F, V}
+function rungekutta3(pfield::ParticleField{R1, <:AbstractParticle{T}, ClassicVPM{<:AbstractParticle{T}, R2}, V},
+                            dt::Real; relax::Bool=false) where {R1, T, R2, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
@@ -227,8 +221,8 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
-                        relax::Bool=false) where {PType<:ParticleTube{T}, F, V}
+function rungekutta3(pfield::ParticleField{R1, <:AbstractParticle{T}, ReformulatedVPM{<:AbstractParticle{T}, R2}, V},
+                     dt::Real; relax::Bool=false ) where {R1, T, R2, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 

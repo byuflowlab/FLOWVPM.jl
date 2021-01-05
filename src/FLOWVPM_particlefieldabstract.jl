@@ -14,7 +14,7 @@
 # ABSTRACT PARTICLE FIELD TYPE
 ################################################################################
 
-abstract type AbstractParticleField{P<:AbstractParticle, F<:Formulation, V<:ViscousScheme} end
+abstract type AbstractParticleField{R<:Real, P<:AbstractParticle, F<:Formulation, V<:ViscousScheme} end
 
 ##### FUNCTIONS ################################################################
 """
@@ -87,8 +87,8 @@ julia> # Iterate over particles
 [4.0, 40.0, 400.0]
 ```
 """
-function get_particleiterator(self::AbstractParticleField{PType, F, V}; start_i::Int=1,
-                              end_i::Int=-1, reverse=false ) where {PType, F, V}
+function get_particleiterator(self::AbstractParticleField{R, PType, F, V}; start_i::Int=1,
+                              end_i::Int=-1, reverse=false ) where {R, PType, F, V}
     # ERROR CASES
     if end_i > get_np(self)
         error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
@@ -156,7 +156,7 @@ function _remove_particle_aux(self::AbstractParticleField, i)
     error("Method not implemented!")
 end
 
-function _reset_particles(self::AbstractParticleField{<:AbstractParticle{T}, F, V}) where {T, F, V}
+function _reset_particles(self::AbstractParticleField{R, <:AbstractParticle{T}, F, V}) where {R, T, F, V}
     tzero = zero(T)
     for P in iterator(self)
         P.U[1] = tzero

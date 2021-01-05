@@ -13,8 +13,8 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{P<:AbstractParticle, F<:Formulation{PType, R},
-                             V<:ViscousScheme} <: AbstractParticleField{P, F, V}
+mutable struct ParticleField{R<:Real, P<:AbstractParticle, F<:Formulation,
+                             V<:ViscousScheme} <: AbstractParticleField{R, P, F, V}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{P, 1}                      # Array of particles
@@ -39,7 +39,7 @@ mutable struct ParticleField{P<:AbstractParticle, F<:Formulation{PType, R},
     integration::Function                       # Time integration scheme
     fmm::FMM                                    # Fast-multipole settings
 
-    ParticleField{T, V}(
+    ParticleField{R, P, F, V}(
                                 maxparticles,
                                 particles, bodies, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
@@ -50,7 +50,7 @@ mutable struct ParticleField{P<:AbstractParticle, F<:Formulation{PType, R},
                                 relax=true, rlxf=R(0.3),
                                 integration=rungekutta3,
                                 fmm=FMM()
-                         ) where {T, V} = new(
+                         ) where {R, P, F, V} = new(
                                 maxparticles,
                                 particles, bodies, formulation, viscous,
                                 np, nt, t,
@@ -65,10 +65,10 @@ mutable struct ParticleField{P<:AbstractParticle, F<:Formulation{PType, R},
 end
 
 function ParticleField(maxparticles::Int;
-                                    formulation::F=formulation_default,
+                                    formulation::Formulation{PType, R}=formulation_default,
                                     viscous::V=Inviscid(),
                                     optargs...
-                            ) where {F<:Formulation{PType, R}, V<:ViscousScheme}
+                            ) where {PType, R, V<:ViscousScheme}
     # Memory allocation by C++
     bodies = fmm.genBodies(maxparticles)
 
@@ -81,8 +81,8 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{PType, V}(maxparticles, particles, bodies, formulation,
-                                                      viscous; np=0, optargs...)
+    return ParticleField{R, PType, Formulation{PType, R}, V}(maxparticles, particles, bodies,
+                                         formulation, viscous; np=0, optargs...)
 end
 
 ##### FUNCTIONS ################################################################
@@ -91,8 +91,8 @@ end
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField{PType, F, V}, X, circulation::Real, l0,
-                      sigma; index=-1) where {PType<:ParticleTube, F, V}
+function add_particle(self::ParticleField{R, PType, F, V}, X, circulation::Real, l0,
+                      sigma; index=-1) where {R, PType<:ParticleTube, F, V}
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -108,7 +108,7 @@ function add_particle(self::ParticleField{PType, F, V}, X, circulation::Real, l0
     P.l0 .= sign(circulation)*l0
     P.sigma .= sigma
     P.vol .= pi*sigma.^2 * sqrt(P.l0[1]^2 + P.l0[2]^2 + P.l0[3]^2)
-    P.l .= P.l0
+    # P.l .= P.l0
     P.Gamma .= P.l0
     P.Gamma .*= P.circulation[1]
     P.index .= index==-1 ? get_np(self) : index
@@ -124,8 +124,8 @@ end
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField{PType, F, V}, X, Gamma, sigma; vol=0,
-                                    index=-1) where {PType<:Particle, F, V}
+function add_particle(self::ParticleField{R, PType, F, V}, X, Gamma, sigma; vol=0,
+                                    index=-1) where {R, PType<:Particle, F, V}
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -150,19 +150,19 @@ end
 
 
 ##### INTERNAL FUNCTIONS #######################################################
-function _remove_particle_aux(self::ParticleField{PType, F, V}, i
-                                                ) where {PType<:Particle, F, V}
+function _remove_particle_aux(self::ParticleField{R, PType, F, V}, i
+                                            ) where {R, PType<:Particle, F, V}
     return nothing
 end
 
-function _remove_particle_aux(self::ParticleField{PType, F, V}, i
-                                             ) where {PType<:ParticleTube, F, V}
+function _remove_particle_aux(self::ParticleField{R, PType, F, V}, i
+                                          ) where {R, PType<:ParticleTube, F, V}
     Ptarg = get_particle(self, i)
     Plast = get_particle(self, get_np(self))
 
     Ptarg.circulation .= Plast.circulation
     Ptarg.l0 .= Plast.l0
-    Ptarg.l .= Plast.l
+    # Ptarg.l .= Plast.l
 
     return nothing
 end

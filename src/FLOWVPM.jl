@@ -11,6 +11,8 @@
         modification of this code is allowed without written consent.
 
 # TODO
+* [ ] Implement reformulation on Runge-Kutta integration.
+* [ ] Reduce memory of ParticleTube: l0, l, and M.
 * [ ] RBF testing: Point and ring test cases.
 * [ ] Print and save setting at beginning of simulation.
 * [ ] Feature of probing the fluid domain.
@@ -45,10 +47,10 @@ end
 
 # Available VPM formulations
 const formulation_classic = ClassicVPM{Particle{RealFMM}, RealFMM}()
-const formulation_tube_classic = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(0, 0)
-const formulation_tube_continuity = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(1/2, 0)
-const formulation_tube_momentum = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ParticleTubeVPM{ParticleTube{RealFMM}, RealFMM}(0, 1/5)
+const formulation_tube_classic = ReformulatedVPM{Particle{RealFMM}, RealFMM}(0, 0)
+const formulation_tube_continuity = ReformulatedVPM{Particle{RealFMM}, RealFMM}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{Particle{RealFMM}, RealFMM}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{Particle{RealFMM}, RealFMM}(0, 1/5)
 const formulation_default = formulation_sphere_momentum
 
 

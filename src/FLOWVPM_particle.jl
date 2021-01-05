@@ -137,7 +137,7 @@ struct ParticleTube{T} <: AbstractParticle{T}
 
   # Properties
   vol::Array{T, 1}              # Volume (1-elem array)
-  l::Array{T, 1}                # Vortex tube length (3-elem array)
+  # l::Array{T, 1}                # Vortex tube length (3-elem array)
   Gamma::Array{T, 1}            # Vectorial circulation (3-elem array)
   U::Array{T, 1}                # Velocity at particle (3-elem array)
   J::Array{T, 2}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
@@ -159,7 +159,8 @@ Base.zero(::Type{<:ParticleTube{T}}) where {T} = ParticleTube(
                                                   zeros(T, 1), zeros(T, 3),
                                                   zeros(T, 1),
                                                   zeros(T, 1),
-                                                  zeros(T, 3), zeros(T, 3),
+                                                  # zeros(T, 3),
+                                                  zeros(T, 3),
                                                   zeros(T, 3), zeros(T, 3, 3),
                                                   zeros(T, 3, 5),
                                                   zeros(T, 3, 3), zeros(T, 3, 3),
@@ -176,7 +177,7 @@ ParticleTube(body::fmm.BodyRef) = ParticleTube{RealFMM}(fmm.get_Xref(body),
                                                 zeros(RealFMM, 1), zeros(RealFMM, 3),
                                                 fmm.get_sigmaref(body),
                                                 fmm.get_volref(body),
-                                                zeros(RealFMM, 3),
+                                                # zeros(RealFMM, 3),
                                                 fmm.get_qref(body),
                                                 zeros(RealFMM, 3),
                                                 zeros(RealFMM, 3, 3),
