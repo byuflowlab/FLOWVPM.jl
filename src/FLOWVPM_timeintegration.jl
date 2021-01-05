@@ -44,25 +44,9 @@ function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
             p.Gamma[3] += dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Relaxation: Align vectorial circulation with local vorticity
+        # Relaxation: Alig vectorial circulation to local vorticity
         if relax
-            nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-            nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
-
-            b2 =  1 - 2*(1-pfield.rlxf)*pfield.rlxf*(1 - (
-                                                            p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
-                                                            p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
-                                                            p.Gamma[3]*(p.J[2,1]-p.J[1,2])
-                                                          ) / (nrmGamma*nrmw))
-
-            p.Gamma[1] = (1-pfield.rlxf)*p.Gamma[1] + pfield.rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-            p.Gamma[2] = (1-pfield.rlxf)*p.Gamma[2] + pfield.rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-            p.Gamma[3] = (1-pfield.rlxf)*p.Gamma[3] + pfield.rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
-
-            # Normalize the direction of the new vector to maintain the same strength
-            p.Gamma ./= sqrt(b2)
+            align_strenght!(pfield.rlxf, p)
         end
 
     end
@@ -124,30 +108,18 @@ function euler(pfield::ParticleField{PType, F, V}, dt::Real; relax::Bool=false
         p.l[2] += dt*p.M[2,4]
         p.l[3] += dt*p.M[3,4]
 
-        # Relaxation: Align vectorial circulation with local vorticity
-        if relax
-            nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-            nrml = sqrt(p.l[1]^2 + p.l[2]^2 + p.l[3]^2)
-
-            b2 =  1 - 2*(1-pfield.rlxf)*pfield.rlxf*(1 - (
-                                                            p.l[1]*(p.J[3,2]-p.J[2,3]) +
-                                                            p.l[2]*(p.J[1,3]-p.J[3,1]) +
-                                                            p.l[3]*(p.J[2,1]-p.J[1,2])
-                                                          ) / (nrml*nrmw))
-
-            p.l[1] = (1-pfield.rlxf)*p.l[1] + pfield.rlxf*nrml*(p.J[3,2]-p.J[2,3])/nrmw
-            p.l[2] = (1-pfield.rlxf)*p.l[2] + pfield.rlxf*nrml*(p.J[1,3]-p.J[3,1])/nrmw
-            p.l[3] = (1-pfield.rlxf)*p.l[3] + pfield.rlxf*nrml*(p.J[2,1]-p.J[1,2])/nrmw
-
-            # Normalize the direction of the new vector to maintain the same strength
-            p.l ./= sqrt(b2)
-        end
-
         # Convert vortex tube length into vectorial circulation
         p.Gamma .= p.l
         p.Gamma .*= p.circulation[1]
+
+        # Relaxation: Alig vectorial circulation to local vorticity
+        if relax
+            align_strenght!(pfield.rlxf, p)
+
+            # Convert relaxed vectorial circulation back to tube length
+            p.l .= p.Gamma
+            p.l ./= p.circulation[1]
+        end
 
     end
 
@@ -223,7 +195,7 @@ function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
     end
 
 
-    # Relaxation: Aligns vectorial circulation with local vorticity
+    # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
         # Resets U and J from previous step
@@ -237,23 +209,8 @@ function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
         pfield.UJ(pfield)
 
         for p in iterator(pfield)
-            nrmw = sqrt(    (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-            nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
-
-            b2 =  1 - 2*(1-pfield.rlxf)*pfield.rlxf*(1 - (
-                                                            p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
-                                                            p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
-                                                            p.Gamma[3]*(p.J[2,1]-p.J[1,2])
-                                                          ) / (nrmGamma*nrmw))
-
-            p.Gamma[1] = (1-pfield.rlxf)*p.Gamma[1] + pfield.rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-            p.Gamma[2] = (1-pfield.rlxf)*p.Gamma[2] + pfield.rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-            p.Gamma[3] = (1-pfield.rlxf)*p.Gamma[3] + pfield.rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
-
-            # Normalize the direction of the new vector to maintain the same strength
-            p.Gamma ./= sqrt(b2)
+            # Align particle strength
+            align_strenght!(pfield.rlxf, p)
         end
     end
 
@@ -362,7 +319,7 @@ function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
         p.Gamma .*= p.circulation[1]
     end
 
-    # Relaxation: Aligns vectorial circulation with local vorticity
+    # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
         # Resets U and J from previous step
@@ -376,29 +333,43 @@ function rungekutta3(pfield::ParticleField{PType, F, V}, dt::Real;
         pfield.UJ(pfield)
 
         for p in iterator(pfield)
-            nrmw = sqrt(    (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                            (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                            (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-            nrml = sqrt(p.l[1]^2 + p.l[2]^2 + p.l[3]^2)
+            # Align particle strength
+            align_strenght!(pfield.rlxf, p)
 
-            b2 =  1 - 2*(1-pfield.rlxf)*pfield.rlxf*(1 - (
-                                                            p.l[1]*(p.J[3,2]-p.J[2,3]) +
-                                                            p.l[2]*(p.J[1,3]-p.J[3,1]) +
-                                                            p.l[3]*(p.J[2,1]-p.J[1,2])
-                                                          ) / (nrml*nrmw))
-
-            p.l[1] = (1-pfield.rlxf)*p.l[1] + pfield.rlxf*nrml*(p.J[3,2]-p.J[2,3])/nrmw
-            p.l[2] = (1-pfield.rlxf)*p.l[2] + pfield.rlxf*nrml*(p.J[1,3]-p.J[3,1])/nrmw
-            p.l[3] = (1-pfield.rlxf)*p.l[3] + pfield.rlxf*nrml*(p.J[2,1]-p.J[1,2])/nrmw
-
-            # Normalize the direction of the new vector to maintain the same strength
-            p.l ./= sqrt(b2)
-
-            # Convert relaxed vortex tube length into vectorial circulation
-            p.Gamma .= p.l
-            p.Gamma .*= p.circulation[1]
+            # Convert relaxed vectorial circulation back to tube length
+            p.l .= p.Gamma
+            p.l ./= p.circulation[1]
         end
     end
+
+    return nothing
+end
+
+
+"""
+    `align_strenght(rlxf::Real, p::AbstractParticle)`
+
+Relaxation scheme where the vortex strength is aligned with the local vorticity.
+"""
+function align_strenght!(rlxf::Real, p::AbstractParticle)
+
+    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
+                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
+                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+
+    b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
+                                                    p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
+                                                    p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
+                                                    p.Gamma[3]*(p.J[2,1]-p.J[1,2])
+                                                  ) / (nrmGamma*nrmw))
+
+    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+
+    # Normalize the direction of the new vector to maintain the same strength
+    p.Gamma ./= sqrt(b2)
 
     return nothing
 end
