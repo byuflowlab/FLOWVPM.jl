@@ -37,21 +37,21 @@ const exafmm_single_precision = fmm.getPrecision()
 const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "fmm", "viscous",
-                    "particle", "formulation",
-                    "particlefieldabstract", "particlefield",
+for header_name in ["kernel", "fmm", "viscous", "formulation",
+                    "particle", "particlefield",
                     "UJ", "timeintegration",
                     "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
 # Available VPM formulations
-const formulation_classic = ClassicVPM{Particle{RealFMM}, RealFMM}()
-const formulation_tube_classic = ReformulatedVPM{Particle{RealFMM}, RealFMM}(0, 0)
-const formulation_tube_continuity = ReformulatedVPM{Particle{RealFMM}, RealFMM}(1/2, 0)
-const formulation_tube_momentum = ReformulatedVPM{Particle{RealFMM}, RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ReformulatedVPM{Particle{RealFMM}, RealFMM}(0, 1/5)
+const formulation_classic = ClassicVPM{RealFMM}()
+const formulation_tube_classic = ReformulatedVPM{RealFMM}(0, 0)
+const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
 const formulation_default = formulation_sphere_momentum
+# const formulation_default = formulation_classic
 
 
 # Available Kernels

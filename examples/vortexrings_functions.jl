@@ -27,7 +27,7 @@ Adds a particle discretization of a vortex ring to the particle field `pfield`.
   * `ring_coord_system`         : Local coordinate system x,y,z of the ring.
   * `lambda::Real`    : Particle overlap (sigma/h), default is 1.25.
 """
-function addvortexring(       pfield::vpm.AbstractParticleField,
+function addvortexring(       pfield::vpm.ParticleField,
                               Gamma::Real, R::Real,
                               Nphi::Int64, nc::Int64, rmax::Real;
                               extra_nc::Int64=0,
@@ -53,19 +53,11 @@ function addvortexring(       pfield::vpm.AbstractParticleField,
     function addparticle(pfield::vpm.ParticleField, X, vecGamma, sigma, vol)
         Xglob = invM*X + C
         vecGammaglob = invM*vecGamma
-        vpm.add_particle(pfield, Xglob, vecGammaglob, sigma; vol=vol)
-    end
 
-    function addparticle(pfield::vpm.ParticleFieldStretch, X, vecGamma, sigma, vol)
-        Xglob = invM*X + C
-        vecGammaglob = invM*vecGamma
+        circulation = norm(vecGammaglob)/h
 
-        norml = h
-        l = norml * vecGammaglob/norm(vecGammaglob)
-        circulation = norm(vecGammaglob)/norml
-        # actual_sigma = lambda*sqrt(vol/(pi*norml))
-        actual_sigma = sigma
-        vpm.add_particle(pfield, Xglob, circulation, l, actual_sigma)
+        vpm.add_particle(pfield, Xglob, vecGammaglob, sigma;
+                                            vol=vol, circulation=circulation)
     end
 
     # Torus dicretization into cross sections

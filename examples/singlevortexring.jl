@@ -107,7 +107,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
-                              FieldType=vpm.ParticleFieldStretch,
+                              formulation=vpm.formulation_default,
                               transposed=true,
                               relax=true,
                               rlxf=0.3,
@@ -165,12 +165,13 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    pfield = FieldType(maxparticles; viscous=viscous, kernel=kernel, UJ=UJ,
-                            transposed=transposed,
-                            relax=relax, rlxf=rlxf,
-                            integration=integration,
-                            fmm=fmm
-                            )
+    pfield = vpm.ParticleField(maxparticles; viscous=viscous, kernel=kernel, UJ=UJ,
+                                transposed=transposed,
+                                relax=relax, rlxf=rlxf,
+                                integration=integration,
+                                fmm=fmm,
+                                formulation=formulation
+                                )
 
     # Adds the ring to the field
     addvortexring(pfield, Gamma, R, Nphi, nc, rmax;
@@ -180,7 +181,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # -------------- RUNTIME FUNCTION --------------------------------------------
     # Function for calculating center's position at each time step
     Xs, ts = [], []
-    function center_position(pfield::vpm.AbstractParticleField, t, dt)
+    function center_position(pfield::vpm.ParticleField, t, dt)
         Np = vpm.get_np(pfield)
         X = sum([P.X for P in vpm.iterator(pfield)])
         X = X/Np

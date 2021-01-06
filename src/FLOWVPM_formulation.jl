@@ -13,7 +13,7 @@
 ################################################################################
 # ABSTRACT VPM FORMULATION TYPE
 ################################################################################
-abstract type Formulation{P<:AbstractParticle, R} end
+abstract type Formulation{R} end
 ##### END OF ABSTRACT VPM FORMULATION ##########################################
 
 
@@ -21,7 +21,7 @@ abstract type Formulation{P<:AbstractParticle, R} end
 ################################################################################
 # CLASSIC VPM
 ################################################################################
-struct ClassicVPM{P<:AbstractParticle, R} <: Formulation{P, R} end
+struct ClassicVPM{R} <: Formulation{R} end
 ##### END OF CLASSIC VPM #######################################################
 
 
@@ -29,11 +29,11 @@ struct ClassicVPM{P<:AbstractParticle, R} <: Formulation{P, R} end
 ################################################################################
 # REFORMULATED VPM
 ################################################################################
-struct ReformulatedVPM{P<:AbstractParticle, R} <: Formulation{P, R}
+struct ReformulatedVPM{R} <: Formulation{R}
     f::R                     # Re-orientation parameter
     g::R                     # Stretching-compensation parameter
     h::R                     # Stretching parameter
 
-    ReformulatedVPM{P, R}(f, g; h=(1-3*g)/(1+3*f)) where {P, R} = new(f, g, h)
+    ReformulatedVPM{R}(f=R(0), g=R(1/5); h=(1-3*g)/(1+3*f)) where {R} = new(f, g, h)
 end
 ##### END OF CLASSIC VPM #######################################################

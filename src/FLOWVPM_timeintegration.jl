@@ -12,8 +12,8 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{R1, P, ClassicVPM{P, R2}, V},
-                                dt::Real; relax::Bool=false) where {R1, P, R2, V}
+function euler(pfield::ParticleField{R, <:ClassicVPM, V},
+                                dt::Real; relax::Bool=false) where {R, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -61,8 +61,8 @@ end
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{R1, P, ReformulatedVPM{P, R2}, V},
-                              dt::Real; relax::Bool=false ) where {R1, P, R2, V}
+function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
+                              dt::Real; relax::Bool=false ) where {R, V}
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -130,18 +130,18 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R1, <:AbstractParticle{T}, ClassicVPM{<:AbstractParticle{T}, R2}, V},
-                            dt::Real; relax::Bool=false) where {R1, T, R2, V}
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
+                            dt::Real; relax::Bool=false) where {R, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
 
     # Reset storage memory to zero
-    for p in iterator(pfield); p.M .= zero(T); end;
+    for p in iterator(pfield); p.M .= zero(R); end;
 
     # Runge-Kutta inner steps
-    for (a,b) in (T.((0, 1/3)), T.((-5/9, 15/16)), T.((-153/128, 8/15)))
+    for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Resets U and J from previous step
         _reset_particles(pfield)
@@ -221,8 +221,8 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R1, <:AbstractParticle{T}, ReformulatedVPM{<:AbstractParticle{T}, R2}, V},
-                     dt::Real; relax::Bool=false ) where {R1, T, R2, V}
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
+                     dt::Real; relax::Bool=false ) where {R, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
@@ -235,10 +235,10 @@ function rungekutta3(pfield::ParticleField{R1, <:AbstractParticle{T}, Reformulat
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3], qsmg <=> p.M[2, 3], ql <=> p.M[:, 5]
 
     # Reset storage memory to zero
-    for p in iterator(pfield); p.M .= zero(T); end;
+    for p in iterator(pfield); p.M .= zero(R); end;
 
     # Runge-Kutta inner steps
-    for (a,b) in (T.((0, 1/3)), T.((-5/9, 15/16)), T.((-153/128, 8/15)))
+    for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Resets U and J from previous step
         _reset_particles(pfield)
@@ -341,11 +341,11 @@ end
 
 
 """
-    `align_strenght(rlxf::Real, p::AbstractParticle)`
+    `align_strenght(rlxf::Real, p::Particle)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
-function align_strenght!(rlxf::Real, p::AbstractParticle)
+function align_strenght!(rlxf::Real, p::Particle)
 
     nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
                     (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +

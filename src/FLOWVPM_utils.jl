@@ -40,7 +40,7 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
-function run_vpm!(pfield::AbstractParticleField, dt::Real, nsteps::Int;
+function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=(pfield, t, dt)->false,
                       static_particles_function::Function=(pfield, t, dt)->nothing,
@@ -154,7 +154,7 @@ Saves the particle field in HDF5 format and a XDMF file especifying its the
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-function save(self::AbstractParticleField, file_name::String; path::String="",
+function save(self::ParticleField, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
                 overwrite_time=nothing)
 
@@ -311,7 +311,7 @@ end
 # Reads an HDF5 file containing particle data created with `save()` and adds
 # all particles the the particle field `pfield`.
 # """
-# function read(pfield::AbstractParticleField, h5_fname::String;
+# function read(pfield::ParticleField, h5_fname::String;
 #                             path::String="", load_time::Bool=false)
 #
 #     # Opens the HDF5 file

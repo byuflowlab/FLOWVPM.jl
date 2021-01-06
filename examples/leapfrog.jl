@@ -89,7 +89,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               maxparticles=10000,
-                              FieldType=vpm.ParticleFieldStretch,
+                              formulation=vpm.formulation_default,
                               morepfieldargs=[],
                               # NUMERICAL SCHEMES
                               transposed=true,
@@ -144,12 +144,13 @@ function run_leapfrog(R1::Real, R2::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    pfield = FieldType(maxparticles; viscous=viscous,
+    pfield = vpm.ParticleField(maxparticles; viscous=viscous,
                                 kernel=kernel, UJ=UJ,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
                                 fmm=fmm,
+                                formulation=formulation
                                 )
 
     # Adds the rings to the field
@@ -166,7 +167,7 @@ function run_leapfrog(R1::Real, R2::Real,
     ts = []                   # Time stamp
 
     # Function for tracking the radius of each ring
-    function rings_radii(pfield::vpm.AbstractParticleField, t, dt)
+    function rings_radii(pfield::vpm.ParticleField, t, dt)
         if 2*Np!=vpm.get_np(pfield);
             error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
         end
