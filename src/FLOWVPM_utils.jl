@@ -79,7 +79,8 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     # Initialize verbose
     (line1, line2, run_id, file_verbose,
         vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
-                                                    nsteps_relax, runtime_function,
+                                                    dt, nsteps_relax, nsteps_save,
+                                                    runtime_function,
                                                     static_particles_function, v_lvl)
 
     # RUN
@@ -427,7 +428,8 @@ function timeformat(time_beg, time_end)
 end
 
 
-function initialize_verbose(verbose, save_path, run_name, pfield, nsteps_relax,
+function initialize_verbose(verbose, save_path, run_name, pfield, dt,
+                            nsteps_relax, nsteps_save,
                             runtime_function, static_particles_function, v_lvl)
     line1 = "*"^(73-8*v_lvl)
     line2 = "-"^(length(line1))
@@ -451,11 +453,13 @@ function initialize_verbose(verbose, save_path, run_name, pfield, nsteps_relax,
     vprintln("SOLVER SETTINGS", v_lvl+1)
     vprintln(_get_settings_string(pfield; tab=v_lvl+2), v_lvl)
     vprintln("SIMULATION SETTINGS", v_lvl+1)
+    vprintln("dt:\t\t\t$(dt)", v_lvl+2)
     vprintln("nsteps_relax:\t\t$(nsteps_relax)", v_lvl+2)
-    vprintln("Runtime Function:\t"*( runtime_function==runtime_default ?
+    vprintln("Runtime function:\t"*( runtime_function==runtime_default ?
                                 "Nothing" : "$(runtime_function)"), v_lvl+2)
-    vprintln("Static Particles:\t"*( static_particles_function==static_particles_default ?
+    vprintln("Static particles:\t"*( static_particles_function==static_particles_default ?
                                 "Nothing" : "$(static_particles_function)"), v_lvl+2)
+    vprintln("nsteps_save:\t\t$(nsteps_save)", v_lvl+2)
     vprintln("", v_lvl)
     vprintln(line2, v_lvl)
 
