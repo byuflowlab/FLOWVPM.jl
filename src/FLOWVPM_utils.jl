@@ -42,8 +42,8 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 """
 function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
-                      runtime_function::Function=(pfield, t, dt)->false,
-                      static_particles_function::Function=(pfield, t, dt)->nothing,
+                      runtime_function::Function=runtime_default,
+                      static_particles_function::Function=static_particles_default,
                       nsteps_relax::Int64=-1,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
@@ -57,7 +57,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
-    compatible_kernels = kernel_compatibility[typeof(pfield.viscous).name]
+    compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
 
     if !(pfield.kernel in compatible_kernels)
         error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
@@ -65,29 +65,28 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 " $(compatible_kernels)")
     end
 
-    # Creates save path and save code
-    if save_path!=nothing && create_savepath
-        create_path(save_path, prompt)
-    end
-    # Save code
-    if save_path!=nothing && save_code!=""
-        cp(save_code, save_path*"/"; force=true)
+    if save_path!=nothing
+        # Create save path
+        if create_savepath; create_path(save_path, prompt); end;
+
+        # Save code
+        if save_code!=""; cp(save_code, save_path*"/"; force=true); end;
+
+        # Save settings
+        save_settings(pfield, run_name; path=save_path)
     end
 
-    run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
-
-    if verbose
-        time_beg = Dates.DateTime(Dates.now())
-        println("\t"^v_lvl*"*"^(73-8*v_lvl)*"\n"*"\t"^v_lvl*"START $run_id\t$time_beg\n"*
-                "\t"^v_lvl*"*"^(73-8*v_lvl))
-    end
+    # Initialize verbose
+    (line1, line2, run_id, file_verbose,
+        vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
+                                                    nsteps_relax, runtime_function,
+                                                    static_particles_function, v_lvl)
 
     # RUN
     for i in 0:nsteps
 
-        if verbose && i%verbose_nsteps==0
-            println("\t"^(v_lvl+1)*"Time step $i out of $nsteps"*
-            "\tParticles: $(get_np(pfield))")
+        if i%verbose_nsteps==0
+            vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
         end
 
         # Relaxation step
@@ -134,14 +133,8 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     end
 
-    if verbose
-        time_end = Dates.DateTime(Dates.now())
-        hrs,mins,secs = timeformat(time_beg, time_end)
-        println("\t"^v_lvl*"*"^(73-8*v_lvl))
-        println("\t"^v_lvl*"END $run_id\t$time_end")
-        println("\t"^v_lvl*"*"^(73-8*v_lvl))
-        println("\t"^v_lvl*"ELAPSED TIME: $hrs hours $mins minutes $secs seconds")
-    end
+    # Finalize verbose
+    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
     return nothing
 end
@@ -192,6 +185,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self)]
     h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
 
@@ -274,6 +268,16 @@ function save(self::ParticleField, file_name::String; path::String="",
                             h5fname, ":sigma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
+              # Attribute: circulation
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                          " Name=\"circulation\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 1,
+                            "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":circulation</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
               # Attribute: vol
               print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
                           " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
@@ -303,7 +307,52 @@ function save(self::ParticleField, file_name::String; path::String="",
     close(xmf)
 end
 
+"""
+Return a hash table with the solver settings of the particle field.
+"""
+function _get_settings(pfield::ParticleField)
+    settings = OrderedDict()
 
+    for sym in _pfield_settings
+
+        if sym in _pfield_settings_functions
+
+            fun = getproperty(pfield, sym)
+            if fun in _standardfunctions
+                settings[String(sym)] = _fun2key[fun]
+            else
+                settings[String(sym)] = _key_userfun
+            end
+
+        else
+            settings[String(sym)] = getproperty(pfield, sym)
+        end
+
+    end
+
+    return settings
+end
+
+function _get_settings_string(pfield::ParticleField; tab=0)
+    settings = _get_settings(pfield)
+
+    str = ""
+    for (key, val) in settings
+        str *= "\t"^(tab)
+
+        valstr = val in _lengthyoptions ? "$(_lengthy2key[val])" : "$(val)"
+
+        str *= Printf.@sprintf "%14.14s----> %s\n" key valstr
+    end
+
+    return str
+end
+
+function save_settings(pfield::ParticleField, file_name::String;
+                                        path::String="", suff="_settings")
+    settings = _get_settings(pfield)
+    JLD.save(joinpath(path, file_name*suff*".jld"), settings)
+end
 
 # """
 #   `read(pfield, h5_fname; path="")`
@@ -375,4 +424,57 @@ function timeformat(time_beg, time_end)
     mins = Int(floor((time_delta-hrs*60*60*1000)/1000/60))
     secs = Int(floor((time_delta-hrs*60*60*1000-mins*1000*60)/1000))
     return hrs,mins,secs
+end
+
+
+function initialize_verbose(verbose, save_path, run_name, pfield, nsteps_relax,
+                            runtime_function, static_particles_function, v_lvl)
+    line1 = "*"^(73-8*v_lvl)
+    line2 = "-"^(length(line1))
+    run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
+
+    # Set up IO streams for verbose
+    file_verbose = save_path != nothing ? joinpath(save_path, "verbose.txt") : nothing
+
+    function vprintln(str, v_lvl)
+        if verbose; println("\t"^v_lvl*str); end;
+        if file_verbose != nothing
+            f = open(file_verbose, "a")
+            println(f, "\t"^v_lvl*str)
+            close(f)
+        end
+    end
+
+    # Initial verbose
+    vprintln(line2, v_lvl)
+    vprintln("", v_lvl)
+    vprintln("SOLVER SETTINGS", v_lvl+1)
+    vprintln(_get_settings_string(pfield; tab=v_lvl+2), v_lvl)
+    vprintln("SIMULATION SETTINGS", v_lvl+1)
+    vprintln("nsteps_relax:\t\t$(nsteps_relax)", v_lvl+2)
+    vprintln("Runtime Function:\t"*( runtime_function==runtime_default ?
+                                "Nothing" : "$(runtime_function)"), v_lvl+2)
+    vprintln("Static Particles:\t"*( static_particles_function==static_particles_default ?
+                                "Nothing" : "$(static_particles_function)"), v_lvl+2)
+    vprintln("", v_lvl)
+    vprintln(line2, v_lvl)
+
+    time_beg = Dates.DateTime(Dates.now())
+    vprintln(line1, v_lvl)
+    vprintln("START $run_id", v_lvl)
+    vprintln("$time_beg", v_lvl+1)
+    vprintln(line1, v_lvl)
+
+    return line1, line2, run_id, file_verbose, vprintln, time_beg
+end
+
+
+function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    time_end = Dates.DateTime(Dates.now())
+    hrs,mins,secs = timeformat(time_beg, time_end)
+    vprintln(line1, v_lvl)
+    vprintln("END $run_id", v_lvl)
+    vprintln("$time_end", v_lvl+1)
+    vprintln(line1, v_lvl)
+    vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
 end

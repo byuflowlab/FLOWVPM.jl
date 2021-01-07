@@ -20,8 +20,11 @@ module FLOWVPM
 
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
+import JLD
 import SpecialFunctions
 import Dates
+import Printf
+import DataStructures: OrderedDict
 
 # ------------ FLOW CODES ------------------------------------------------------
 import FLOWExaFMM
@@ -42,6 +45,8 @@ for header_name in ["kernel", "fmm", "viscous", "formulation",
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
+
+# ------------ AVAILABLE SOLVER OPTIONS ----------------------------------------
 # Available VPM formulations
 const formulation_classic = ClassicVPM{RealFMM}()
 const formulation_tube_classic = ReformulatedVPM{RealFMM}(0, 0)
@@ -51,6 +56,9 @@ const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
 const formulation_default = formulation_sphere_momentum
 # const formulation_default = formulation_classic
 
+const standard_formulations = (:formulation_classic, :formulation_tube_classic,
+                               :formulation_tube_continuity, :formulation_tube_momentum,
+                               :formulation_sphere_momentum)
 
 # Available Kernels
 const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
@@ -65,12 +73,48 @@ const gaussian = kernel_gaussian
 const gaussianerf = kernel_gaussianerf
 const winckelmans = kernel_winckelmans
 
+const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
+
 # Compatibility between kernels and viscous schemes
-const kernel_compatibility = Dict( # Viscous scheme => kernels
+const _kernel_compatibility = Dict( # Viscous scheme => kernels
         Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
                                         kernel_singular, kernel_gaussian,
                                         kernel_gaussianerf, kernel_winckelmans],
         CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
 )
+
+# Default functions
+const nofreestream(t) = zeros(3)
+const Uinf_default = nofreestream
+const runtime_default(pfield, t, dt) = false
+const static_particles_default(pfield, t, dt) = nothing
+
+
+
+# ------------ INTERNAL DATA STRUCTURES ----------------------------------------
+
+# ----- Instructions on how to save and print solver settings ------------------
+# Settings that are functions
+const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel)
+
+# Hash table between functions that are solver settings and their symbol
+const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
+                                              :rungekutta3, standard_kernels...)
+const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
+const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
+const _standardfunctions = Tuple(keys(_fun2key))
+const _key_userfun = Symbol("*userfunction")
+
+# Hash table between standard options that are too lengthy to describe in print
+const _keys_lengthyoptions = (standard_formulations..., standard_kernels...)
+const _lengthy2key = Dict( (eval(sym), sym) for sym in _keys_lengthyoptions )
+const _lengthyoptions = Tuple(keys(_lengthy2key))
+
+# Relevant solver settings in a given particle field
+const _pfield_settings = (sym for sym in fieldnames(ParticleField)
+                          if !( sym in (:particles, :bodies, :np, :nt, :t, :M) )
+                        )
+
+# ------------------------------------------------------------------------------
 
 end # END OF MODULE

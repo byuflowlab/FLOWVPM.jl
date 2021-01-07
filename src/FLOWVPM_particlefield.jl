@@ -47,7 +47,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 np=0, nt=0, t=R(0.0),
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
-                                Uinf=t->zeros(3),
+                                Uinf=Uinf_default,
                                 transposed=true,
                                 relax=true, rlxf=R(0.3),
                                 integration=rungekutta3,
