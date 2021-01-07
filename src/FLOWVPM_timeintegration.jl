@@ -58,8 +58,16 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
 end
 
 
+
+
+
+
+
+
+
 """
-Steps the field forward in time by dt in a first-order Euler integration scheme.
+Steps the field forward in time by dt in a first-order Euler integration scheme
+using the VPM reformulation. See notebook 20210104.
 """
 function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
                               dt::Real; relax::Bool=false ) where {R, V}
@@ -71,6 +79,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
     pfield.UJ(pfield)
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    MM::Array{<:Real, 1} = pfield.M
 
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
@@ -80,35 +89,35 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
         p.X[2] += dt*(p.U[2] + Uinf[2])
         p.X[3] += dt*(p.U[3] + Uinf[3])
 
-        # Store stretching S under M[:, 1]
+        # Store stretching S under MM[1:3]
         if pfield.transposed
             # Transposed scheme S = (Γ⋅∇')U
-            p.M[1,1] = (p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
-            p.M[2,1] = (p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
-            p.M[3,1] = (p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
+            MM[2] = (p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
+            MM[3] = (p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         else
             # Classic scheme S = (Γ⋅∇)U
-            p.M[1,1] = (p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
-            p.M[2,1] = (p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
-            p.M[3,1] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
+            MM[2] = (p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
+            MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Store Z = S⋅Γ/mag(Γ)^2 under M[1, 2]
-        p.M[1,2] = (p.M[1,1]*p.Gamma[1] + p.M[2,1]*p.Gamma[2] +
-                    p.M[3,1]*p.Gamma[3]) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+        # Store Z = S⋅Γ/mag(Γ)^2 under MM[3, 3]
+        MM[4] = (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3]
+                 ) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-        # Update vectorial circulation
+        # Update vectorial circulation ΔΓ = Δt (1/(1+3f)) (S-3gZΓ)
         p.Gamma[1] += dt * 1/(1+3*pfield.formulation.f) * (
-                          p.M[1,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[1])
+                          MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1])
         p.Gamma[2] += dt * 1/(1+3*pfield.formulation.f) * (
-                          p.M[2,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[2])
+                          MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2])
         p.Gamma[3] += dt * 1/(1+3*pfield.formulation.f) * (
-                          p.M[3,1] - 3*pfield.formulation.g*p.M[1,2]*p.Gamma[3])
+                          MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3])
 
-        # Update cross-sectional area of the tube
+        # Update cross-sectional area of the tube σ = -Δt σ (f+g)/(1+3f)Z
         p.sigma[1] -= dt * ( p.sigma[1] *
                             (pfield.formulation.f + pfield.formulation.g) /
-                            (1 + 3*pfield.formulation.f) * p.M[1,2] )
+                            (1 + 3*pfield.formulation.f) * MM[4] )
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
@@ -122,6 +131,14 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
 
     return nothing
 end
+
+
+
+
+
+
+
+
 
 
 
@@ -143,10 +160,10 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
-        # Resets U and J from previous step
+        # Reset U and J from previous step
         _reset_particles(pfield)
 
-        # Calculates interactions between particles: U and J
+        # Calculate interactions between particles: U and J
         pfield.UJ(pfield)
 
         # Update the particle field: convection and stretching
@@ -157,6 +174,11 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
             p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
             p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
             p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+
+            # Update position
+            p.X[1] += b*p.M[1, 1]
+            p.X[2] += b*p.M[2, 1]
+            p.X[3] += b*p.M[3, 1]
 
             ## Stretching
             if pfield.transposed
@@ -171,12 +193,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
                 p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             end
 
-            # Updates position
-            p.X[1] += b*p.M[1, 1]
-            p.X[2] += b*p.M[2, 1]
-            p.X[3] += b*p.M[3, 1]
-
-            # Updates vectorial circulation
+            # Update vectorial circulation
             p.Gamma[1] += b*p.M[1, 2]
             p.Gamma[2] += b*p.M[2, 2]
             p.Gamma[3] += b*p.M[3, 2]
@@ -217,22 +234,24 @@ end
 
 
 
+
+
+
+
+
 """
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
-integration scheme. See Notebook entry 20180105.
+integration scheme using the VPM reformulation. See Notebook entry 20180105
+(RK integration) and notebook 20210104 (reformulation).
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
                      dt::Real; relax::Bool=false ) where {R, V}
 
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    MM::Array{<:Real, 1} = pfield.M
 
-    # Convert vortex tube length into vectorial circulation
-    for P in iterator(pfield)
-        P.Gamma .= P.l
-        P.Gamma .*= P.circulation[1]
-    end
-
-    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3], qsmg <=> p.M[2, 3], ql <=> p.M[:, 5]
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
+    #                      qsmg <=> p.MM[2, 3], Z <=> MM[4], S <=> MM[1:3]
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
@@ -240,10 +259,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
-        # Resets U and J from previous step
+        # Reset U and J from previous step
         _reset_particles(pfield)
 
-        # Calculates interactions between particles: U and J
+        # Calculate interactions between particles: U and J
         pfield.UJ(pfield)
 
         # Update the particle field: convection and stretching
@@ -255,50 +274,48 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
             p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
             p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
 
-            # Store stretching under M[:, 4]
-            if pfield.transposed
-                # Transposed scheme (Γ⋅∇')U
-                p.M[1,4] = 2/5*(p.J[1,1]*p.l[1]+p.J[2,1]*p.l[2]+p.J[3,1]*p.l[3])
-                p.M[2,4] = 2/5*(p.J[1,2]*p.l[1]+p.J[2,2]*p.l[2]+p.J[3,2]*p.l[3])
-                p.M[3,4] = 2/5*(p.J[1,3]*p.l[1]+p.J[2,3]*p.l[2]+p.J[3,3]*p.l[3])
-            else
-                # Classic scheme (Γ⋅∇)U
-                p.M[1,4] = 2/5*(p.J[1,1]*p.l[1]+p.J[1,2]*p.l[2]+p.J[1,3]*p.l[3])
-                p.M[2,4] = 2/5*(p.J[2,1]*p.l[1]+p.J[2,2]*p.l[2]+p.J[2,3]*p.l[3])
-                p.M[3,4] = 2/5*(p.J[3,1]*p.l[1]+p.J[3,2]*p.l[2]+p.J[3,3]*p.l[3])
-            end
-
-            ## Storage of vortex tube length stretching
-            p.M[1, 5] = a*p.M[1, 5] + dt*(p.M[1,4])
-            p.M[2, 5] = a*p.M[2, 5] + dt*(p.M[2,4])
-            p.M[3, 5] = a*p.M[3, 5] + dt*(p.M[3,4])
-
-            ## Storage of cross-sectional area
-            p.M[2, 3] = a*p.M[2, 3] - dt*(
-                        p.sigma[1]/(2*(p.l[1]^2+p.l[2]^2+p.l[3]^2)) * (p.l[1]*p.M[1,4]+p.l[2]*p.M[2,4]+p.l[3]*p.M[3,4]))
-
-            ## Storeage of Gamma stretching
-            p.M[1, 2] = a*p.M[1, 2] + dt*(p.circulation[1]*p.M[1,4])
-            p.M[2, 2] = a*p.M[2, 2] + dt*(p.circulation[1]*p.M[2,4])
-            p.M[3, 2] = a*p.M[3, 2] + dt*(p.circulation[1]*p.M[3,4])
-
-            # Updates position
+            # Update position
             p.X[1] += b*p.M[1, 1]
             p.X[2] += b*p.M[2, 1]
             p.X[3] += b*p.M[3, 1]
 
-            # Update vortex tube length
-            p.l[1] += b*p.M[1, 5]
-            p.l[2] += b*p.M[2, 5]
-            p.l[3] += b*p.M[3, 5]
+            # Store stretching S under M[1:3]
+            if pfield.transposed
+                # Transposed scheme S = (Γ⋅∇')U
+                MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
+                MM[2] = (p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
+                MM[3] = (p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            else
+                # Classic scheme (Γ⋅∇)U
+                MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
+                MM[2] = (p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
+                MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            end
 
-            # Update cross-sectional area according to stretching
-            p.sigma[1] += b*p.M[2, 3]
+            # Store Z = S⋅Γ/mag(Γ)^2 under M[4]
+            MM[4] = (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3]
+                     ) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-            # Updates vectorial circulation
+            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ, with ΔΓ = Δt (1/(1+3f)) (S-3gZΓ)
+            p.M[1, 2] = a*p.M[1, 2] + dt*(
+                        1/(1+3*pfield.formulation.f) * (MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1]))
+            p.M[2, 2] = a*p.M[2, 2] + dt*(
+                        1/(1+3*pfield.formulation.f) * (MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2]))
+            p.M[3, 2] = a*p.M[3, 2] + dt*(
+                        1/(1+3*pfield.formulation.f) * (MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3]))
+
+            # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt σ (f+g)/(1+3f)Z
+            p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] *
+                                (pfield.formulation.f + pfield.formulation.g) /
+                                (1 + 3*pfield.formulation.f) * MM[4] )
+
+            # Update vectorial circulation
             p.Gamma[1] += b*p.M[1, 2]
             p.Gamma[2] += b*p.M[2, 2]
             p.Gamma[3] += b*p.M[3, 2]
+
+            # Update cross-sectional area
+            p.sigma[1] += b*p.M[2, 3]
 
         end
 
@@ -307,11 +324,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
 
     end
 
-    # Convert vortex tube length into vectorial circulation
-    for p in iterator(pfield)
-        p.Gamma .= p.l
-        p.Gamma .*= p.circulation[1]
-    end
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
@@ -329,15 +341,17 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
         for p in iterator(pfield)
             # Align particle strength
             align_strenght!(pfield.rlxf, p)
-
-            # Convert relaxed vectorial circulation back to tube length
-            p.l .= p.Gamma
-            p.l ./= p.circulation[1]
         end
     end
 
     return nothing
 end
+
+
+
+
+
+
 
 
 """

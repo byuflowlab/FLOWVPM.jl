@@ -38,6 +38,9 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     integration::Function                       # Time integration scheme
     fmm::FMM                                    # Fast-multipole settings
 
+    # Internal memory for computation
+    M::Array{R, 1}
+
     ParticleField{R, F, V}(
                                 maxparticles,
                                 particles, bodies, formulation, viscous;
@@ -48,7 +51,8 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 transposed=true,
                                 relax=true, rlxf=R(0.3),
                                 integration=rungekutta3,
-                                fmm=FMM()
+                                fmm=FMM(),
+                                M=zeros(R, 4)
                          ) where {R, F, V} = new(
                                 maxparticles,
                                 particles, bodies, formulation, viscous,
@@ -59,7 +63,8 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 transposed,
                                 relax, rlxf,
                                 integration,
-                                fmm
+                                fmm,
+                                M
                           )
 end
 

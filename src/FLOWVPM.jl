@@ -11,8 +11,6 @@
         modification of this code is allowed without written consent.
 
 # TODO
-* [ ] Implement reformulation on Runge-Kutta integration.
-* [ ] Reduce memory of ParticleTube: l0, l, and M.
 * [ ] RBF testing: Point and ring test cases.
 * [ ] Print and save setting at beginning of simulation.
 * [ ] Feature of probing the fluid domain.
