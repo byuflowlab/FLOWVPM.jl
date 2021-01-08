@@ -32,10 +32,11 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
-    transposed::Bool                            # Transposed vortex stretch scheme
-    relax::Bool                                 # Activates relaxation scheme
-    rlxf::R                                     # Relaxation factor (fraction of dt)
     integration::Function                       # Time integration scheme
+    transposed::Bool                            # Transposed vortex stretch scheme
+    relaxation::Function                        # Relaxation scheme
+    relax::Bool                                 # Enables relaxation scheme
+    rlxf::R                                     # Relaxation factor (fraction of dt)
     fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
@@ -48,9 +49,10 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
-                                transposed=true,
-                                relax=true, rlxf=R(0.3),
                                 integration=rungekutta3,
+                                transposed=true,
+                                relaxation=relaxation_default,
+                                relax=true, rlxf=R(0.3),
                                 fmm=FMM(),
                                 M=zeros(R, 4)
                          ) where {R, F, V} = new(
@@ -60,9 +62,10 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel,
                                 UJ,
                                 Uinf,
-                                transposed,
-                                relax, rlxf,
                                 integration,
+                                transposed,
+                                relaxation,
+                                relax, rlxf,
                                 fmm,
                                 M
                           )

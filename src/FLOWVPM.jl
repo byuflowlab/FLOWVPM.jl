@@ -75,6 +75,14 @@ const winckelmans = kernel_winckelmans
 
 const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
+# Relaxation aliases
+const pedrizzetti = relaxation_pedrizzetti
+const correctedpedrizzetti = relaxation_correctedpedrizzetti
+const relaxation_default = pedrizzetti
+
+const standard_relaxations = (:pedrizzetti, :correctedpedrizzetti)
+
+
 # Compatibility between kernels and viscous schemes
 const _kernel_compatibility = Dict( # Viscous scheme => kernels
         Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
@@ -95,11 +103,13 @@ const static_particles_default(pfield, t, dt) = nothing
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
-const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel)
+const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
+                                                                    :relaxation)
 
 # Hash table between functions that are solver settings and their symbol
 const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
-                                              :rungekutta3, standard_kernels...)
+                                              :rungekutta3, standard_kernels...,
+                                              standard_relaxations...)
 const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))

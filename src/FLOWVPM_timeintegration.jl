@@ -46,7 +46,7 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
-            align_strenght!(pfield.rlxf, p)
+            pfield.relaxation(pfield.rlxf, p)
         end
 
     end
@@ -121,7 +121,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
-            align_strenght!(pfield.rlxf, p)
+            pfield.relaxation(pfield.rlxf, p)
         end
 
     end
@@ -221,7 +221,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
 
         for p in iterator(pfield)
             # Align particle strength
-            align_strenght!(pfield.rlxf, p)
+            pfield.relaxation(pfield.rlxf, p)
         end
     end
 
@@ -340,7 +340,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
 
         for p in iterator(pfield)
             # Align particle strength
-            align_strenght!(pfield.rlxf, p)
+            pfield.relaxation(pfield.rlxf, p)
         end
     end
 
@@ -352,14 +352,34 @@ end
 
 
 
-
-
 """
-    `align_strenght(rlxf::Real, p::Particle)`
+    `relaxation_Pedrizzetti(rlxf::Real, p::Particle)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
-function align_strenght!(rlxf::Real, p::Particle)
+function relaxation_pedrizzetti(rlxf::Real, p::Particle)
+
+    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
+                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
+                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+
+    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+
+    return nothing
+end
+
+
+"""
+    `relaxation_correctedPedrizzetti(rlxf::Real, p::Particle)`
+
+Relaxation scheme where the vortex strength is aligned with the local vorticity.
+This version fixes the error in Pedrizzetti's relaxation that made the strength
+to continually decrease over time. See notebook 20200921 for derivation.
+"""
+function relaxation_correctedpedrizzetti(rlxf::Real, p::Particle)
 
     nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
                     (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
