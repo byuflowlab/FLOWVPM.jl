@@ -21,6 +21,11 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
     # Calculate interactions between particles: U and J
     pfield.UJ(pfield)
 
+    # Calculate subgrid-scale contributions
+    _reset_particles_sgs(pfield)
+    pfield.sgsmodel(pfield)
+
+    # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
     # Update the particle field: convection and stretching
@@ -32,6 +37,7 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
         p.X[3] += dt*(p.U[3] + Uinf[3])
 
         # Update vectorial circulation
+        ## Vortex stretching contributions
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
             p.Gamma[1] += dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
@@ -44,7 +50,13 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
             p.Gamma[3] += dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Relaxation: Alig vectorial circulation to local vorticity
+        ## Subgrid-scale contributions
+        p.Gamma[1] += dt*(getproperty(p, _SGS)[1])
+        p.Gamma[2] += dt*(getproperty(p, _SGS)[2])
+        p.Gamma[3] += dt*(getproperty(p, _SGS)[3])
+
+
+        # Relaxation: Align vectorial circulation to local vorticity
         if relax
             pfield.relaxation(pfield.rlxf, p)
         end
@@ -78,7 +90,13 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
     # Calculate interactions between particles: U and J
     pfield.UJ(pfield)
 
+    # Calculate subgrid-scale contributions
+    _reset_particles_sgs(pfield)
+    pfield.sgsmodel(pfield)
+
+    # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
     MM::Array{<:Real, 1} = pfield.M
 
     # Update the particle field: convection and stretching
@@ -113,6 +131,11 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
                           MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2])
         p.Gamma[3] += dt * 1/(1+3*pfield.formulation.f) * (
                           MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3])
+
+        # Add subgrid-scale contributions
+        p.Gamma[1] += dt*(getproperty(p, _SGS)[1])
+        p.Gamma[2] += dt*(getproperty(p, _SGS)[2])
+        p.Gamma[3] += dt*(getproperty(p, _SGS)[3])
 
         # Update cross-sectional area of the tube σ = -Δt σ (f+g)/(1+3f)Z
         p.sigma[1] -= dt * ( p.sigma[1] *
@@ -150,9 +173,10 @@ integration scheme. See Notebook entry 20180105.
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
                             dt::Real; relax::Bool=false) where {R, V}
 
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
-
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
+
+    # Calculate freestream
+    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
@@ -165,6 +189,10 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
 
         # Calculate interactions between particles: U and J
         pfield.UJ(pfield)
+
+        # Calculate subgrid-scale contributions
+        _reset_particles_sgs(pfield)
+        pfield.sgsmodel(pfield)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
@@ -180,17 +208,17 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
             p.X[2] += b*p.M[2, 1]
             p.X[3] += b*p.M[3, 1]
 
-            ## Stretching
+            ## Stretching + SGS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] + getproperty(p, _SGS)[1])
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] + getproperty(p, _SGS)[2])
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + getproperty(p, _SGS)[3])
             else
                 # Classic scheme (Γ⋅∇)U
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] + getproperty(p, _SGS)[1])
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] + getproperty(p, _SGS)[2])
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + getproperty(p, _SGS)[3])
             end
 
             # Update vectorial circulation
@@ -247,11 +275,13 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
                      dt::Real; relax::Bool=false ) where {R, V}
 
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
-    MM::Array{<:Real, 1} = pfield.M
-
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
-    #                      qsmg <=> p.MM[2, 3], Z <=> MM[4], S <=> MM[1:3]
+    #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
+
+    # Calculate freestream
+    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
+    MM::Array{<:Real, 1} = pfield.M
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
@@ -264,6 +294,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
 
         # Calculate interactions between particles: U and J
         pfield.UJ(pfield)
+
+        # Calculate subgrid-scale contributions
+        _reset_particles_sgs(pfield)
+        pfield.sgsmodel(pfield)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
@@ -296,13 +330,17 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
             MM[4] = (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3]
                      ) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ, with ΔΓ = Δt (1/(1+3f)) (S-3gZΓ)
+            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ + SGS,
+            # with ΔΓ = Δt (1/(1+3f)) (S-3gZΓ) and SGS subgrid-scale contributions
             p.M[1, 2] = a*p.M[1, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1]))
+                        1/(1+3*pfield.formulation.f) * (MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1])
+                        + getproperty(p, _SGS)[1])
             p.M[2, 2] = a*p.M[2, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2]))
+                        1/(1+3*pfield.formulation.f) * (MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2])
+                        + getproperty(p, _SGS)[2])
             p.M[3, 2] = a*p.M[3, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3]))
+                        1/(1+3*pfield.formulation.f) * (MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3])
+                        + getproperty(p, _SGS)[3])
 
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt σ (f+g)/(1+3f)Z
             p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] *

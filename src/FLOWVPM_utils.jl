@@ -125,7 +125,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         end
 
         # Calls user-defined runtime function
-        breakflag = runtime_function(pfield, pfield.t, dt)
+        breakflag = runtime_function(pfield, pfield.t, dt;
+                                     vprintln= (str)-> i%verbose_nsteps==0 ?
+                                            vprintln(str, v_lvl+2) : nothing)
 
         # User-indicated end of simulation
         if breakflag
@@ -138,6 +140,41 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
     return nothing
+end
+
+"""
+Runtime function that plots the enthopy of the particle field throughout the
+simulation.
+"""
+function monitor_enstrophy(pfield, t, dt; save_path=nothing, run_name="",
+                                                    suff="enstrophy.log",
+                                                    vprintln=(args...)->nothing)
+
+    # Calculate enstrophy
+    enstrophy = 0
+    for P in iterator(pfield)
+        enstrophy += (P.Gamma[1]*P.Gamma[1] + P.Gamma[2]*P.Gamma[2]
+                                                    + P.Gamma[3]*P.Gamma[3])
+    end
+
+    # Print to verbose
+    vprintln("enstrophy:\t$(enstrophy)")
+
+    # Save files
+    if save_path!=nothing
+        fname = run_name*"_"^(length(run_name)!=0)*suff
+
+        # Write to log file
+        f = open(joinpath(save_path, fname), "a")
+        if t==0 || pfield.nt==0
+            println(f, "nt", ",", "t (s)", ",", "enstrophy (m^6/s^2)")
+        end
+        println(f, pfield.nt, ",", t, ",", enstrophy)
+        close(f)
+
+    end
+
+    return false
 end
 
 
@@ -436,7 +473,7 @@ function initialize_verbose(verbose, save_path, run_name, pfield, dt,
     run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
 
     # Set up IO streams for verbose
-    file_verbose = save_path != nothing ? joinpath(save_path, "verbose.txt") : nothing
+    file_verbose = save_path != nothing ? joinpath(save_path, run_name*".log") : nothing
 
     function vprintln(str, v_lvl)
         if verbose; println("\t"^v_lvl*str); end;

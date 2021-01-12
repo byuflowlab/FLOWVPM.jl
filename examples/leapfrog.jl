@@ -105,7 +105,9 @@ function run_leapfrog(R1::Real, R2::Real,
                               paraview=true, prompt=true,
                               verbose=true, verbose2=true, v_lvl=0,
                               disp_plot=true, plot_exp=true,
-                              tshift=0
+                              tshift=0,
+                              extra_runtime_function=vpm.runtime_default,
+                              pfieldargs...
                               )
 
     # Additional parameters
@@ -150,7 +152,8 @@ function run_leapfrog(R1::Real, R2::Real,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
                                 fmm=fmm,
-                                formulation=formulation
+                                formulation=formulation,
+                                pfieldargs...
                                 )
 
     # Adds the rings to the field
@@ -167,7 +170,7 @@ function run_leapfrog(R1::Real, R2::Real,
     ts = []                   # Time stamp
 
     # Function for tracking the radius of each ring
-    function rings_radii(pfield::vpm.ParticleField, t, dt)
+    function rings_radii(pfield::vpm.ParticleField, t, dt; optargs...)
         if 2*Np!=vpm.get_np(pfield);
             error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
         end
@@ -203,9 +206,12 @@ function run_leapfrog(R1::Real, R2::Real,
         return false
     end
 
+    runtime_function(args...; optargs...) = (rings_radii(args...; optargs...)
+                                                || extra_runtime_function(args...; optargs...))
+
     # -------------- SIMULATION --------------------------------------------------
     # Runs the simulation
-    vpm.run_vpm!(pfield, dt, nsteps; runtime_function=rings_radii,
+    vpm.run_vpm!(pfield, dt, nsteps; runtime_function=runtime_function,
                                         nsteps_relax=nsteps_relax,
                                         save_path=save_path,
                                         run_name=run_name,
@@ -219,6 +225,8 @@ function run_leapfrog(R1::Real, R2::Real,
     # -------------- POST-PROCESSING ---------------------------------------------
     # Plot radii in time
     if disp_plot
+        figure(run_name)
+
         if plot_exp
             # Loads the data extracted from Berdowski's Fig 6.6
             data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)

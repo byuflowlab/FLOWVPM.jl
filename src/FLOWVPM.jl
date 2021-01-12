@@ -40,7 +40,7 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "particlefield",
-                    "UJ", "timeintegration",
+                    "UJ", "sgsmodels", "timeintegration",
                     "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
@@ -78,9 +78,27 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 # Relaxation aliases
 const pedrizzetti = relaxation_pedrizzetti
 const correctedpedrizzetti = relaxation_correctedpedrizzetti
+const norelaxation(args...) = nothing
 const relaxation_default = pedrizzetti
 
-const standard_relaxations = (:pedrizzetti, :correctedpedrizzetti)
+const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti)
+
+# Subgrid-scale models
+const sgs_none(args...) = nothing
+const sgs_convection = sgs_none
+const sgs_stretching_and_convection(args...) = (sgs_stretching(args...); sgs_convection(args...); nothing)
+# const sgs_default = sgs_stretching_and_convection
+const sgs_default = sgs_none
+
+const standard_sgsmodels = (:sgs_stretching, :sgs_convection,
+                            :sgs_stretching_and_convection, :sgs_none)
+
+# Other default functions
+const nofreestream(t) = zeros(3)
+const Uinf_default = nofreestream
+# const runtime_default(pfield, t, dt) = false
+const runtime_default = monitor_enstrophy
+const static_particles_default(pfield, t, dt) = nothing
 
 
 # Compatibility between kernels and viscous schemes
@@ -89,27 +107,26 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
                                         kernel_singular, kernel_gaussian,
                                         kernel_gaussianerf, kernel_winckelmans],
         CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
-)
-
-# Default functions
-const nofreestream(t) = zeros(3)
-const Uinf_default = nofreestream
-const runtime_default(pfield, t, dt) = false
-const static_particles_default(pfield, t, dt) = nothing
+    )
 
 
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------
 
+# Field inside the Particle type where the SGS contribution is stored (make sure
+# this is consistent with ExaFMM and functions under FLOWVPM_sgsmodels.jl)
+const _SGS = :dJdx3exa
+
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
 const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
-                                                                    :relaxation)
+                                                        :relaxation, :sgsmodel)
 
 # Hash table between functions that are solver settings and their symbol
 const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
-                                              :rungekutta3, standard_kernels...,
-                                              standard_relaxations...)
+                                 :rungekutta3, standard_kernels...,
+                                               standard_relaxations...,
+                                               standard_sgsmodels...)
 const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))

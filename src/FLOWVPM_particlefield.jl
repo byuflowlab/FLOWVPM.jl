@@ -16,7 +16,7 @@
 mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-    particles::Array{Particle{R}, 1}                      # Array of particles
+    particles::Array{Particle{R}, 1}            # Array of particles
     bodies::fmm.Bodies                          # ExaFMM array of bodies
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
@@ -32,6 +32,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
+    sgsmodel::Function                          # Subgrid-scale contributions model
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Function                        # Relaxation scheme
@@ -49,6 +50,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
+                                sgsmodel=sgs_default,
                                 integration=rungekutta3,
                                 transposed=true,
                                 relaxation=relaxation_default,
@@ -62,6 +64,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel,
                                 UJ,
                                 Uinf,
+                                sgsmodel,
                                 integration,
                                 transposed,
                                 relaxation,
@@ -268,6 +271,7 @@ function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
         P.U[1] = tzero
         P.U[2] = tzero
         P.U[3] = tzero
+
         P.J[1, 1] = tzero
         P.J[2, 1] = tzero
         P.J[3, 1] = tzero
@@ -277,6 +281,13 @@ function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
         P.J[1, 3] = tzero
         P.J[2, 3] = tzero
         P.J[3, 3] = tzero
+    end
+end
+
+function _reset_particles_sgs(self::ParticleField{R, F, V}) where {R, F, V}
+    tzero = zero(R)
+    for P in iterator(self)
+        getproperty(P, _SGS) .= tzero
     end
 end
 ##### END OF PARTICLE FIELD#####################################################
