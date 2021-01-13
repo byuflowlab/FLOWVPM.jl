@@ -359,7 +359,7 @@ function _get_settings(pfield::ParticleField)
             if fun in _standardfunctions
                 settings[String(sym)] = _fun2key[fun]
             else
-                settings[String(sym)] = _key_userfun
+                settings[String(sym)] = (_key_userfun, fun)
             end
 
         else
