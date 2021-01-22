@@ -70,6 +70,15 @@ function g_dgdr_gaus(r::Real)
   return 1-aux, 3*r^2*aux
 end
 
+# Turbine kernel
+zeta_turbine(r::Real) = const3*exp(-(r/10.0)^3)
+g_turbine(r::Real) = 1-exp(-(r/10.0)^3)
+dgdr_turbine(r::Real) = 3*(r/10.0)^2*exp(-(r/10.0)r^3)
+function g_dgdr_turbine(r::Real)
+  aux = exp(-(r/10.0)^3)
+  return 1-aux, 3*(r/10.0)^2*aux
+end
+
 # Winckelmans algebraic kernel
 zeta_wnklmns(r::Real) = const4 * 7.5 / (r^2 + 1)^3.5
 g_wnklmns(r::Real) = r^3 * (r^2 + 2.5) / (r^2 + 1)^2.5

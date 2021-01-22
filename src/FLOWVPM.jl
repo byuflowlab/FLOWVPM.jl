@@ -46,18 +46,20 @@ end
 # Available Kernels
 const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
 const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
+const kernel_turbine = Kernel(zeta_turbine, g_turbine, dgdr_turbine, g_dgdr_turbine, -1, 1)
 const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
 const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
 
 # Aliases
 const singular = kernel_singular
 const gaussian = kernel_gaussian
+const turbine = kernel_turbine
 const gaussianerf = kernel_gaussianerf
 const winckelmans = kernel_winckelmans
 
 # Compatibility between kernels and viscous schemes
 const kernel_compatibility = Dict( # Viscous scheme => kernels
-        Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
+        Inviscid.body.name      => [singular, gaussian, turbine, gaussianerf, winckelmans,
                                         kernel_singular, kernel_gaussian,
                                         kernel_gaussianerf, kernel_winckelmans],
         CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
