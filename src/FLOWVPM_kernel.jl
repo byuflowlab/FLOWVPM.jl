@@ -71,10 +71,10 @@ function g_dgdr_gaus(r::Real)
 end
 
 # Rotor kernel
-zeta_gaus(r::Real) = const3*exp(-(r/10.0)^3)
-g_gaus(r::Real) = 1-exp(-(r/10.0)^3)
-dgdr_gaus(r::Real) = 3*(r/10.0)^2*exp(-(r/10.0)^3)
-function g_dgdr_gaus(r::Real)
+zeta_turbine(r::Real) = const3*exp(-(r/10.0)^3)
+g_turbine(r::Real) = 1-exp(-(r/10.0)^3)
+dgdr_turbine(r::Real) = 3*(r/10.0)^2*exp(-(r/10.0)^3)
+function g_dgdr_turbine(r::Real)
   aux = exp(-(r/10.0)^3)
   return 1-aux, 3*(r/10.0)^2*aux
 end
