@@ -46,7 +46,7 @@ end
 # Available Kernels
 const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
 const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
-const kernel_turbine = Kernel(zeta_turbine, g_turbine, dgdr_turbine, g_dgdr_turbine, 0, 1)
+const kernel_turbine = Kernel(zeta_turbine, g_turbine, dgdr_turbine, g_dgdr_turbine, 5, 1)
 const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
 const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
 

@@ -70,14 +70,15 @@ function g_dgdr_gaus(r::Real)
   return 1-aux, 3*r^2*aux
 end
 
-# Rotor kernel
-zeta_turbine(r::Real) = const3*exp(-(r/5.0)^3)
-g_turbine(r::Real) = 1-exp(-(r/5.0)^3)
-dgdr_turbine(r::Real) = 3*(r/5.0)^2*exp(-(r/5.0)^3)
+# Rotor kernel (modified gaussian erf)
+zeta_turbine(r::Real) = const1*exp(-(r/5.0)^2/2)
+g_turbine(r::Real) = SpecialFunctions.erf((r/5.0)/sqr2) - const2*(r/5.0)*exp(-(r/5.0)^2/2)
+dgdr_turbine(r::Real) = const2*(r/5.0)^2*exp(-(r/5.0)^2/2)
 function g_dgdr_turbine(r::Real)
-  aux = exp(-(r/5.0)^3)
-  return 1-aux, 3*(r/5.0)^2*aux
+  aux = const2*(r/5.0)*exp(-(r/5.0)^2/2)
+  return SpecialFunctions.erf((r/5.0)/sqr2)-aux, (r/5.0)*aux
 end
+
 
 # Winckelmans algebraic kernel
 zeta_wnklmns(r::Real) = const4 * 7.5 / (r^2 + 1)^3.5
