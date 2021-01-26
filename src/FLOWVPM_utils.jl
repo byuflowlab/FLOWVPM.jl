@@ -359,7 +359,7 @@ function _get_settings(pfield::ParticleField)
             if fun in _standardfunctions
                 settings[String(sym)] = _fun2key[fun]
             else
-                settings[String(sym)] = (_key_userfun, fun)
+                settings[String(sym)] = (_key_userfun, "$fun")
             end
 
         else
@@ -493,9 +493,9 @@ function initialize_verbose(verbose, save_path, run_name, pfield, dt,
     vprintln("dt:\t\t\t$(dt)", v_lvl+2)
     vprintln("nsteps_relax:\t\t$(nsteps_relax)", v_lvl+2)
     vprintln("Runtime function:\t"*( runtime_function==runtime_default ?
-                                "Nothing" : "$(runtime_function)"), v_lvl+2)
+                                "Nothing" : "Yes"), v_lvl+2)
     vprintln("Static particles:\t"*( static_particles_function==static_particles_default ?
-                                "Nothing" : "$(static_particles_function)"), v_lvl+2)
+                                "Nothing" : "Yes"), v_lvl+2)
     vprintln("nsteps_save:\t\t$(nsteps_save)", v_lvl+2)
     vprintln("", v_lvl)
     vprintln(line2, v_lvl)
