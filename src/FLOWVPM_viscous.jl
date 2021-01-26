@@ -349,7 +349,7 @@ function zeta_direct(sources, targets, zeta::Function)
             dX3 = Pi.X[3] - Pj.X[3]
             r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
 
-            zeta_sgm = 1/Pj.sigma[1]*zeta(r/Pj.sigma[1])
+            zeta_sgm = 1/Pj.sigma[1]^3*zeta(r/Pj.sigma[1])
 
             Pi.Jexa[1] += Pj.Gamma[1]*zeta_sgm
             Pi.Jexa[2] += Pj.Gamma[2]*zeta_sgm
