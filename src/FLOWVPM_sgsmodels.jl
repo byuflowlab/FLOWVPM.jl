@@ -44,9 +44,12 @@ function sgs_stretching(sources, targets, zeta, transposed)
                 # getproperty(p, _SGS)[1, 1] -= zeta_sgm*S1
                 # getproperty(p, _SGS)[2, 1] -= zeta_sgm*S2
                 # getproperty(p, _SGS)[3, 1] -= zeta_sgm*S3
-                getproperty(p, _SGS)[1, 1] -= q.vol[1]*zeta_sgm*S1
-                getproperty(p, _SGS)[2, 1] -= q.vol[1]*zeta_sgm*S2
-                getproperty(p, _SGS)[3, 1] -= q.vol[1]*zeta_sgm*S3
+                # getproperty(p, _SGS)[1, 1] -= q.vol[1]*zeta_sgm*S1
+                # getproperty(p, _SGS)[2, 1] -= q.vol[1]*zeta_sgm*S2
+                # getproperty(p, _SGS)[3, 1] -= q.vol[1]*zeta_sgm*S3
+                add_SGS1(p, -q.vol[1]*zeta_sgm*S1)
+                add_SGS2(p, -q.vol[1]*zeta_sgm*S2)
+                add_SGS3(p, -q.vol[1]*zeta_sgm*S3)
             end
         end
     end

@@ -85,10 +85,18 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
 
 ##### FUNCTIONS ################################################################
 get_U(P::Particle) = P.U
+
 get_W(P::Particle) = (get_W1(P), get_W2(P), get_W3(P))
 get_W1(P::Particle) = P.J[3,2]-P.J[2,3]
 get_W2(P::Particle) = P.J[1,3]-P.J[3,1]
 get_W3(P::Particle) = P.J[2,1]-P.J[1,2]
+
+get_SGS1(P::Particle{T}) where {T} = getproperty(P, _SGS)[1]::T
+get_SGS2(P::Particle{T}) where {T} = getproperty(P, _SGS)[2]::T
+get_SGS3(P::Particle{T}) where {T} = getproperty(P, _SGS)[3]::T
+add_SGS1(P::Particle{T}, val) where {T} = getproperty(P, _SGS)[1]::T += val
+add_SGS2(P::Particle{T}, val) where {T} = getproperty(P, _SGS)[2]::T += val
+add_SGS3(P::Particle{T}, val) where {T} = getproperty(P, _SGS)[3]::T += val
 
 ##### INTERNAL FUNCTIONS #######################################################
 nothing

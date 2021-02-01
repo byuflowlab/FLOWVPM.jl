@@ -287,7 +287,7 @@ end
 function _reset_particles_sgs(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
     for P in iterator(self)
-        getproperty(P, _SGS) .= tzero
+        getproperty(P, _SGS)::Array{R, 2} .= tzero
     end
 end
 ##### END OF PARTICLE FIELD#####################################################
