@@ -81,8 +81,8 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
-                              dt::Real; relax::Bool=false ) where {R, V}
+function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
+                              dt::Real; relax::Bool=false ) where {R, V, R2}
 
     # Reset U and J to zero
     _reset_particles(pfield)
@@ -98,6 +98,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
     MM::Array{<:Real, 1} = pfield.M
+    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
 
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
@@ -120,27 +121,20 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM, V},
             MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Store Z = S⋅Γ/mag(Γ)^2 under MM[3, 3]
-        MM[4] = (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3]
-                 ) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+        # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2
+        MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
+        MM[4] += f/(1+3*f) * (getproperty(p, _SGS)[1]*p.Gamma[1]
+                                + getproperty(p, _SGS)[2]*p.Gamma[2]
+                                + getproperty(p, _SGS)[3]*p.Gamma[3])
+        MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
-        # Update vectorial circulation ΔΓ = Δt (1/(1+3f)) (S-3gZΓ)
-        p.Gamma[1] += dt * 1/(1+3*pfield.formulation.f) * (
-                          MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1])
-        p.Gamma[2] += dt * 1/(1+3*pfield.formulation.f) * (
-                          MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2])
-        p.Gamma[3] += dt * 1/(1+3*pfield.formulation.f) * (
-                          MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3])
+        # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ + M3)
+        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] + getproperty(p, _SGS)[1])
+        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] + getproperty(p, _SGS)[2])
+        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] + getproperty(p, _SGS)[3])
 
-        # Add subgrid-scale contributions
-        p.Gamma[1] += dt*(getproperty(p, _SGS)[1])
-        p.Gamma[2] += dt*(getproperty(p, _SGS)[2])
-        p.Gamma[3] += dt*(getproperty(p, _SGS)[3])
-
-        # Update cross-sectional area of the tube σ = -Δt σ (f+g)/(1+3f)Z
-        p.sigma[1] -= dt * ( p.sigma[1] *
-                            (pfield.formulation.f + pfield.formulation.g) /
-                            (1 + 3*pfield.formulation.f) * MM[4] )
+        # Update cross-sectional area of the tube σ = -Δt*σ*Z
+        p.sigma[1] -= dt * ( p.sigma[1] * MM[4] )
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
@@ -272,8 +266,8 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
-                     dt::Real; relax::Bool=false ) where {R, V}
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
+                     dt::Real; relax::Bool=false ) where {R, V, R2}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
     #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
@@ -282,6 +276,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
     MM::Array{<:Real, 1} = pfield.M
+    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
@@ -326,26 +321,21 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM, V},
                 MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             end
 
-            # Store Z = S⋅Γ/mag(Γ)^2 under M[4]
-            MM[4] = (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3]
-                     ) / (p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+            # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2
+            MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
+            MM[4] += f/(1+3*f) * (getproperty(p, _SGS)[1]*p.Gamma[1]
+                                    + getproperty(p, _SGS)[2]*p.Gamma[2]
+                                    + getproperty(p, _SGS)[3]*p.Gamma[3])
+            MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
-            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ + SGS,
-            # with ΔΓ = Δt (1/(1+3f)) (S-3gZΓ) and SGS subgrid-scale contributions
-            p.M[1, 2] = a*p.M[1, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[1] - 3*pfield.formulation.g*MM[4]*p.Gamma[1])
-                        + getproperty(p, _SGS)[1])
-            p.M[2, 2] = a*p.M[2, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[2] - 3*pfield.formulation.g*MM[4]*p.Gamma[2])
-                        + getproperty(p, _SGS)[2])
-            p.M[3, 2] = a*p.M[3, 2] + dt*(
-                        1/(1+3*pfield.formulation.f) * (MM[3] - 3*pfield.formulation.g*MM[4]*p.Gamma[3])
-                        + getproperty(p, _SGS)[3])
+            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
+            # with ΔΓ = Δt*( S - 3ZΓ + M3 )
+            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] + getproperty(p, _SGS)[1])
+            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] + getproperty(p, _SGS)[2])
+            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] + getproperty(p, _SGS)[3])
 
-            # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt σ (f+g)/(1+3f)Z
-            p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] *
-                                (pfield.formulation.f + pfield.formulation.g) /
-                                (1 + 3*pfield.formulation.f) * MM[4] )
+            # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
+            p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
 
             # Update vectorial circulation
             p.Gamma[1] += b*p.M[1, 2]
