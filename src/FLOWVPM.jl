@@ -87,13 +87,12 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 
 # Subgrid-scale models
 const sgs_none(args...) = nothing
-const sgs_convection = sgs_none
-const sgs_stretching_and_convection(args...) = (sgs_stretching(args...); sgs_convection(args...); nothing)
+# const sgs_convection = sgs_none
+# const sgs_stretching_and_convection(args...) = (sgs_stretching(args...); sgs_convection(args...); nothing)
 # const sgs_default = sgs_stretching_and_convection
 const sgs_default = sgs_none
 
-const standard_sgsmodels = (:sgs_stretching, :sgs_convection,
-                            :sgs_stretching_and_convection, :sgs_none)
+const standard_sgsmodels = (:sgs_none, :sgs_stretching_direct, :sgs_stretching_fmm)
 
 # Other default functions
 const nofreestream(t) = zeros(3)
@@ -117,7 +116,7 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
 
 # Field inside the Particle type where the SGS contribution is stored (make sure
 # this is consistent with ExaFMM and functions under FLOWVPM_sgsmodels.jl)
-const _SGS = :dJdx3exa
+const _SGS = :Jexa
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions

@@ -9,12 +9,12 @@
   * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
 
-function sgs_stretching(pfield::ParticleField)
-  return sgs_stretching(iterator(pfield), iterator(pfield),
+function sgs_stretching_direct(pfield::ParticleField)
+  return sgs_stretching_direct(iterator(pfield), iterator(pfield),
                                         pfield.kernel.zeta, pfield.transposed)
 end
 
-function sgs_stretching(sources, targets, zeta, transposed)
+function sgs_stretching_direct(sources, targets, zeta, transposed)
 
     for p in targets
         for q in sources
@@ -47,10 +47,15 @@ function sgs_stretching(sources, targets, zeta, transposed)
                 # getproperty(p, _SGS)[1, 1] -= q.vol[1]*zeta_sgm*S1
                 # getproperty(p, _SGS)[2, 1] -= q.vol[1]*zeta_sgm*S2
                 # getproperty(p, _SGS)[3, 1] -= q.vol[1]*zeta_sgm*S3
-                add_SGS1(p, -q.vol[1]*zeta_sgm*S1)
-                add_SGS2(p, -q.vol[1]*zeta_sgm*S2)
-                add_SGS3(p, -q.vol[1]*zeta_sgm*S3)
+                add_SGS1(p, -zeta_sgm*S1)
+                add_SGS2(p, -zeta_sgm*S2)
+                add_SGS3(p, -zeta_sgm*S3)
             end
         end
     end
+end
+
+function sgs_stretching_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
+    call_FLOWExaFMM(pfield; reset=false, reset_sgs=reset_sgs, sgs=true,
+                            transposed_sgs=pfield.transposed, optargs...)
 end

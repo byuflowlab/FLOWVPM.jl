@@ -28,6 +28,8 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    zeta0::R = pfield.kernel.zeta(0)
+
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
@@ -51,9 +53,9 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
         end
 
         ## Subgrid-scale contributions
-        p.Gamma[1] += dt*get_SGS1(p)
-        p.Gamma[2] += dt*get_SGS2(p)
-        p.Gamma[3] += dt*get_SGS3(p)
+        p.Gamma[1] += dt*get_SGS1(p)*(p.sigma[1]^3/zeta0)
+        p.Gamma[2] += dt*get_SGS2(p)*(p.sigma[1]^3/zeta0)
+        p.Gamma[3] += dt*get_SGS3(p)*(p.sigma[1]^3/zeta0)
 
 
         # Relaxation: Align vectorial circulation to local vorticity
@@ -99,6 +101,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
     MM::Array{<:Real, 1} = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
+    zeta0::R = pfield.kernel.zeta(0)
 
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
@@ -121,17 +124,17 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
         end
 
-        # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2
+        # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2, and M3=(M2+E)/zeta_sgmp(0)
         MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
         MM[4] += f/(1+3*f) * (get_SGS1(p)*p.Gamma[1]
                                 + get_SGS2(p)*p.Gamma[2]
-                                + get_SGS3(p)*p.Gamma[3])
+                                + get_SGS3(p)*p.Gamma[3])*(p.sigma[1]^3/zeta0)
         MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
         # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ + M3)
-        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] + get_SGS1(p))
-        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] + get_SGS2(p))
-        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] + get_SGS3(p))
+        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] + get_SGS1(p)*(p.sigma[1]^3/zeta0))
+        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] + get_SGS2(p)*(p.sigma[1]^3/zeta0))
+        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] + get_SGS3(p)*(p.sigma[1]^3/zeta0))
 
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
         p.sigma[1] -= dt * ( p.sigma[1] * MM[4] )
@@ -172,6 +175,8 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    zeta0::R = pfield.kernel.zeta(0)
+
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
 
@@ -205,14 +210,14 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
             ## Stretching + SGS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] + get_SGS1(p))
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] + get_SGS2(p))
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + get_SGS3(p))
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] + get_SGS1(p)*(p.sigma[1]^3/zeta0))
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] + get_SGS2(p)*(p.sigma[1]^3/zeta0))
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + get_SGS3(p)*(p.sigma[1]^3/zeta0))
             else
                 # Classic scheme (Γ⋅∇)U
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] + get_SGS1(p))
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] + get_SGS2(p))
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + get_SGS3(p))
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] + get_SGS1(p)*(p.sigma[1]^3/zeta0))
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] + get_SGS2(p)*(p.sigma[1]^3/zeta0))
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] + get_SGS3(p)*(p.sigma[1]^3/zeta0))
             end
 
             # Update vectorial circulation
@@ -277,6 +282,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
     MM::Array{<:Real, 1} = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
+    zeta0::R = pfield.kernel.zeta(0)
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
@@ -321,18 +327,18 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
                 MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
             end
 
-            # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2
+            # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2 and M3=(M2+E)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
             MM[4] += f/(1+3*f) * (get_SGS1(p)*p.Gamma[1]
                                     + get_SGS2(p)*p.Gamma[2]
-                                    + get_SGS3(p)*p.Gamma[3])
+                                    + get_SGS3(p)*p.Gamma[3])*(p.sigma[1]^3/zeta0)
             MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ + M3 )
-            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] + get_SGS1(p))
-            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] + get_SGS2(p))
-            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] + get_SGS3(p))
+            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] + get_SGS1(p)*(p.sigma[1]^3/zeta0))
+            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] + get_SGS2(p)*(p.sigma[1]^3/zeta0))
+            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] + get_SGS3(p)*(p.sigma[1]^3/zeta0))
 
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
             p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
