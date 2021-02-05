@@ -94,6 +94,11 @@ const sgs_default = sgs_none
 
 const standard_sgsmodels = (:sgs_none, :sgs_stretching1_direct, :sgs_stretching1_fmm)
 
+# Subgrid-scale scaling functions
+const sgs_scaling_none(args...) = 1
+const sgs_scaling_default = sgs_scaling_none
+const standard_sgsscalings = (:sgs_scaling_none, )
+
 # Other default functions
 const nofreestream(t) = zeros(3)
 const Uinf_default = nofreestream
@@ -121,13 +126,14 @@ const _SGS = :Jexa
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
 const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
-                                                        :relaxation, :sgsmodel)
+                                            :relaxation, :sgsmodel, :sgsscaling)
 
 # Hash table between functions that are solver settings and their symbol
 const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
                                  :rungekutta3, standard_kernels...,
                                                standard_relaxations...,
-                                               standard_sgsmodels...)
+                                               standard_sgsmodels...,
+                                               standard_sgsscalings...)
 const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))

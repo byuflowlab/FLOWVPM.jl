@@ -360,6 +360,7 @@ function _get_settings(pfield::ParticleField)
                 settings[String(sym)] = _fun2key[fun]
             else
                 settings[String(sym)] = (_key_userfun, "$fun")
+                # settings[String(sym)] = _key_userfun
             end
 
         else

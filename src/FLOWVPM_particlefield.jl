@@ -33,6 +33,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
     sgsmodel::Function                          # Subgrid-scale contributions model
+    sgsscaling::Function                        # Subgrid-scale contributions model
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Function                        # Relaxation scheme
@@ -51,6 +52,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
                                 sgsmodel=sgs_default,
+                                sgsscaling=sgs_scaling_default,
                                 integration=rungekutta3,
                                 transposed=true,
                                 relaxation=relaxation_default,
@@ -65,6 +67,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 UJ,
                                 Uinf,
                                 sgsmodel,
+                                sgsscaling,
                                 integration,
                                 transposed,
                                 relaxation,

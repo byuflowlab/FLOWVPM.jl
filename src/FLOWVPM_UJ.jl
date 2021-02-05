@@ -145,7 +145,7 @@ function UJ_fmm(pfield::ParticleField; optargs...)
 end
 
 function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                            rbf::Bool=false, sgs::Bool=false, sgs_type=-1,
+                            rbf::Bool=false, sgs::Bool=false, sgs_type::Int=-1,
                             transposed_sgs::Bool=true,
                             reset::Bool=true, reset_sgs::Bool=false,
                             sort::Bool=true)

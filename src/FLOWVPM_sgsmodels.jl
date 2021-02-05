@@ -49,7 +49,72 @@ function sgs_stretching1_direct(sources, targets, zeta, transposed)
     end
 end
 
+
+function sgs_stretching2_direct(pfield::ParticleField)
+  return sgs_stretching2_direct(iterator(pfield), iterator(pfield),
+                                        pfield.kernel.zeta, pfield.transposed)
+end
+
+function sgs_stretching2_direct(sources, targets, zeta, transposed)
+
+    for p in targets
+        for q in sources
+
+            # Stretching term
+            if transposed
+                # Transposed scheme (Γq⋅∇')(Up - Uq)
+                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[2,1] - q.J[2,1])*q.Gamma[2]+(p.J[3,1] - q.J[3,1])*q.Gamma[3]
+                S2 = (p.J[1,2] - q.J[1,2])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[3,2] - q.J[3,2])*q.Gamma[3]
+                S3 = (p.J[1,3] - q.J[1,3])*q.Gamma[1]+(p.J[2,3] - q.J[2,3])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
+            else
+                # Classic scheme (Γq⋅∇)(Up - Uq)
+                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[1,2] - q.J[1,2])*q.Gamma[2]+(p.J[1,3] - q.J[1,3])*q.Gamma[3]
+                S2 = (p.J[2,1] - q.J[2,1])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[2,3] - q.J[2,3])*q.Gamma[3]
+                S3 = (p.J[3,1] - q.J[3,1])*q.Gamma[1]+(p.J[3,2] - q.J[3,2])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
+            end
+
+            dX1 = p.X[1] - q.X[1]
+            dX2 = p.X[2] - q.X[2]
+            dX3 = p.X[3] - q.X[3]
+            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+            zeta_sgm = 1/q.sigma[1]^3*zeta(r/q.sigma[1])
+
+            # Add -ζ_σ (Γq⋅∇)(Up - Uq)
+            add_SGS1(p, -zeta_sgm*S1)
+            add_SGS2(p, -zeta_sgm*S2)
+            add_SGS3(p, -zeta_sgm*S3)
+        end
+
+        if (p.Gamma[1]*get_SGS1(p) + p.Gamma[2]*get_SGS2(p) + p.Gamma[3]*get_SGS3(p)) >= 0 # Backscattering filtering criterion
+            add_SGS1(p, -get_SGS1(p))
+            add_SGS2(p, -get_SGS2(p))
+            add_SGS3(p, -get_SGS3(p))
+        end
+    end
+end
+
+function sgs_stretching0_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
+    call_FLOWExaFMM(pfield; reset=false, sgs=true, sgs_type=0, reset_sgs=reset_sgs,
+                            transposed_sgs=pfield.transposed, optargs...)
+end
+
 function sgs_stretching1_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
     call_FLOWExaFMM(pfield; reset=false, sgs=true, sgs_type=1, reset_sgs=reset_sgs,
                             transposed_sgs=pfield.transposed, optargs...)
+end
+
+function sgs_stretching2_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
+    call_FLOWExaFMM(pfield; reset=false, sgs=true, sgs_type=2, reset_sgs=reset_sgs,
+                            transposed_sgs=pfield.transposed, optargs...)
+end
+
+function sgs_M2_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
+    call_FLOWExaFMM(pfield; reset=false, sgs=true, sgs_type=5, reset_sgs=reset_sgs,
+                            transposed_sgs=pfield.transposed, optargs...)
+end
+
+function sgs_stretching3_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
+    sgs_M2_fmm(pfield; reset_sgs=true, optargs...)
+    sgs_M2_fmm(pfield; reset_sgs=false, optargs...)
 end
