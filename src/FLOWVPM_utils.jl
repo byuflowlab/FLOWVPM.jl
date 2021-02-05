@@ -50,7 +50,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       create_savepath::Bool=true,
                       run_name::String="pfield",
                       save_code::String="",
-                      save_static_particles::Bool=true,
                       nsteps_save::Int=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
                       save_time=true)
@@ -104,21 +103,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             nextstep(pfield, dt; relax=relax)
 
             # Remove static particles (assumes particles remained sorted)
-            if save_static_particles==false
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
-        end
-
-        # Save particle field
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                        overwrite_time=overwrite_time)
-        end
-
-        if i!=0 && save_static_particles==true
             for pi in get_np(pfield):-1:(org_np+1)
                 remove_particle(pfield, pi)
             end
@@ -128,6 +112,13 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         breakflag = runtime_function(pfield, pfield.t, dt;
                                      vprintln= (str)-> i%verbose_nsteps==0 ?
                                             vprintln(str, v_lvl+2) : nothing)
+
+        # Save particle field
+        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+            overwrite_time = save_time ? nothing : pfield.nt
+            save(pfield, run_name; path=save_path, add_num=true,
+                                        overwrite_time=overwrite_time)
+        end
 
         # User-indicated end of simulation
         if breakflag
@@ -148,7 +139,8 @@ simulation.
 """
 function monitor_enstrophy(pfield, t, dt; save_path=nothing, run_name="",
                                                     suff="enstrophy.log",
-                                                    vprintln=(args...)->nothing)
+                                                    vprintln=(args...)->nothing,
+                                                    out=[])
 
     # Calculate enstrophy
     enstrophy = 0
@@ -173,6 +165,9 @@ function monitor_enstrophy(pfield, t, dt; save_path=nothing, run_name="",
         close(f)
 
     end
+
+    # Push to output array
+    push!(out, enstrophy)
 
     return false
 end
