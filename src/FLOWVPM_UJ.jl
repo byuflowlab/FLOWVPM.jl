@@ -145,7 +145,7 @@ function UJ_fmm(pfield::ParticleField; optargs...)
 end
 
 function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                            rbf::Bool=false, sgs::Bool=false,
+                            rbf::Bool=false, sgs::Bool=false, sgs_type=-1,
                             transposed_sgs::Bool=true,
                             reset::Bool=true, reset_sgs::Bool=false,
                             sort::Bool=true)
@@ -156,6 +156,7 @@ function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
                         RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
                         Int32(pfield.kernel.EXAFMM_P2P),
                         Int32(pfield.kernel.EXAFMM_L2P),
+                        Int32(sgs_type),
                         rbf, sgs, transposed_sgs,
                         reset, reset_sgs, sort)
     catch e

@@ -92,7 +92,7 @@ const sgs_none(args...) = nothing
 # const sgs_default = sgs_stretching_and_convection
 const sgs_default = sgs_none
 
-const standard_sgsmodels = (:sgs_none, :sgs_stretching_direct, :sgs_stretching_fmm)
+const standard_sgsmodels = (:sgs_none, :sgs_stretching1_direct, :sgs_stretching1_fmm)
 
 # Other default functions
 const nofreestream(t) = zeros(3)
