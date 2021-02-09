@@ -69,7 +69,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         if create_savepath; create_path(save_path, prompt); end;
 
         # Save code
-        if save_code!=""; cp(save_code, save_path*"/"; force=true); end;
+        if save_code!=""
+            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
+        end
 
         # Save settings
         save_settings(pfield, run_name; path=save_path)
