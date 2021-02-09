@@ -33,7 +33,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
     sgsmodel::Function                          # Subgrid-scale contributions model
-    sgsscaling::Function                        # Subgrid-scale contributions model
+    sgsscaling::Function                        # Scaling factor of SGS contributions
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Function                        # Relaxation scheme
@@ -233,16 +233,19 @@ function remove_particle(self::ParticleField, i::Int)
                                 " $(get_np(self)) particles in the field.")
     end
 
+    Plast = get_particle(self, get_np(self))
+
     if i != get_np(self)
         # Overwrite target particle with last particle in the field
         fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
 
         Ptarg = get_particle(self, i)
-        Plast = get_particle(self, get_np(self))
         Ptarg.circulation .= Plast.circulation
     end
 
     # Remove last particle in the field
+    _reset_particle(Plast)
+    _reset_particle_sgs(Plast)
     self.np -= 1
 
     return nothing
@@ -271,26 +274,36 @@ end
 function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
     for P in iterator(self)
-        P.U[1] = tzero
-        P.U[2] = tzero
-        P.U[3] = tzero
-
-        P.J[1, 1] = tzero
-        P.J[2, 1] = tzero
-        P.J[3, 1] = tzero
-        P.J[1, 2] = tzero
-        P.J[2, 2] = tzero
-        P.J[3, 2] = tzero
-        P.J[1, 3] = tzero
-        P.J[2, 3] = tzero
-        P.J[3, 3] = tzero
+        _reset_particle(P, tzero)
     end
 end
+
+function _reset_particle(P::Particle{T}, tzero::T) where {T}
+    P.U[1] = tzero
+    P.U[2] = tzero
+    P.U[3] = tzero
+
+    P.J[1, 1] = tzero
+    P.J[2, 1] = tzero
+    P.J[3, 1] = tzero
+    P.J[1, 2] = tzero
+    P.J[2, 2] = tzero
+    P.J[3, 2] = tzero
+    P.J[1, 3] = tzero
+    P.J[2, 3] = tzero
+    P.J[3, 3] = tzero
+end
+_reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 
 function _reset_particles_sgs(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
     for P in iterator(self)
-        getproperty(P, _SGS)::Array{R, 2} .= tzero
+        _reset_particle_sgs(P, tzero)
     end
 end
+
+function _reset_particle_sgs(P::Particle{T}, tzero::T) where {T}
+    getproperty(P, _SGS)::Array{T, 2} .= tzero
+end
+_reset_particle_sgs(P::Particle{T}) where {T} = _reset_particle_sgs(P, zero(T))
 ##### END OF PARTICLE FIELD#####################################################
