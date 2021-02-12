@@ -56,7 +56,6 @@ const formulation_tube = formulation_tube_continuity
 const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
 const formulation_sphere = formulation_sphere_momentum
 const formulation_default = formulation_sphere_momentum
-# const formulation_default = formulation_classic
 
 const standard_formulations = (:formulation_classic, :formulation_tube_classic,
                                :formulation_tube_continuity, :formulation_tube_momentum,
@@ -87,12 +86,15 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 
 # Subgrid-scale models
 const sgs_none(args...) = nothing
-# const sgs_convection = sgs_none
-# const sgs_stretching_and_convection(args...) = (sgs_stretching(args...); sgs_convection(args...); nothing)
-# const sgs_default = sgs_stretching_and_convection
+const sgs_stretching1_fmm_directionlow = generate_sgs_directionfiltered(generate_sgs_lowfiltered(sgs_stretching1_fmm))
 const sgs_default = sgs_none
 
-const standard_sgsmodels = (:sgs_none, :sgs_stretching1_direct, :sgs_stretching1_fmm)
+const standard_sgsmodels = (:sgs_none,
+                            :sgs_stretching1_direct, :sgs_stretching1_fmm,
+                            :sgs_stretching2_direct, :sgs_stretching2_fmm,
+                            # This one won't be recognized by save_settings due to scope of definition
+                            # :sgs_stretching1_fmm_directionlow
+                            )
 
 # Subgrid-scale scaling functions
 const sgs_scaling_none(args...) = 1

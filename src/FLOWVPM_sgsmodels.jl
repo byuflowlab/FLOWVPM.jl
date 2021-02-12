@@ -118,3 +118,158 @@ function sgs_stretching3_fmm(pfield::ParticleField; reset_sgs=true, optargs...)
     sgs_M2_fmm(pfield; reset_sgs=true, optargs...)
     sgs_M2_fmm(pfield; reset_sgs=false, optargs...)
 end
+
+"""
+    Generate a filtered SGS model such that the resulting SGS model never flips
+the vortex strength direction in an Euler step. See notebook 20210211.
+"""
+function generate_sgs_lowfiltered(SGS::Function)
+
+    function lowfiltered_sgs(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V};
+                                                    optargs...) where {R, V, R2}
+
+        # Evaluate original SGS model
+        SGS(pfield; optargs...)
+
+        # Estimate Δ𝑡
+        if pfield.nt == 0
+            return nothing
+        else
+            deltat::R = pfield.t / pfield.nt
+        end
+
+        f::R2 = pfield.formulation.f
+        zeta0::R = pfield.kernel.zeta(0)
+
+        for p in iterator(pfield)
+
+            aux = (1+3*f)*(zeta0/p.sigma[1]^3) / deltat
+            aux += (get_SGS1(p)*p.Gamma[1] + get_SGS2(p)*p.Gamma[2] + get_SGS3(p)*p.Gamma[3]
+                    ) / (p.Gamma[1]*p.Gamma[1] + p.Gamma[2]*p.Gamma[2] + p.Gamma[3]*p.Gamma[3])
+
+            # f_p filter criterion
+            if aux < 0
+                add_SGS1(p, -aux*p.Gamma[1])
+                add_SGS2(p, -aux*p.Gamma[2])
+                add_SGS3(p, -aux*p.Gamma[3])
+            end
+        end
+    end
+
+    function lowfiltered_sgs(pfield::ParticleField{R, <:ClassicVPM, V};
+                                                        optargs...) where {R, V}
+
+        # Evaluate original SGS model
+        SGS(pfield; optargs...)
+
+        # Estimate Δ𝑡
+        if pfield.nt == 0
+            return nothing
+        else
+            dt::R = pfield.t / pfield.nt
+        end
+
+        zeta0::R = pfield.kernel.zeta(0)
+
+        # Filter the SGS contribution at every particle
+        for p in iterator(pfield)
+
+            aux = (zeta0/p.sigma[1]^3) / dt
+            aux += (get_SGS1(p)*p.Gamma[1] + get_SGS2(p)*p.Gamma[2] + get_SGS3(p)*p.Gamma[3]
+                    ) / (p.Gamma[1]*p.Gamma[1] + p.Gamma[2]*p.Gamma[2] + p.Gamma[3]*p.Gamma[3])
+
+            # f_p filter criterion
+            if aux < 0
+                add_SGS1(p, -aux*p.Gamma[1])
+                add_SGS2(p, -aux*p.Gamma[2])
+                add_SGS3(p, -aux*p.Gamma[3])
+            end
+        end
+    end
+
+    return lowfiltered_sgs
+end
+
+
+function generate_sgs_stronglowfiltered(SGS::Function)
+
+    function strong_lowfiltered_sgs(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V};
+                                                    optargs...) where {R, V, R2}
+
+        # Evaluate original SGS model
+        SGS(pfield; optargs...)
+
+        # Estimate Δ𝑡
+        if pfield.nt == 0
+            return nothing
+        else
+            deltat::R = pfield.t / pfield.nt
+        end
+
+        f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
+        zeta0::R = pfield.kernel.zeta(0)
+
+        for p in iterator(pfield)
+
+            # Calculate stretching
+            if pfield.transposed
+                # Transposed scheme (Γ⋅∇')U
+                S1 = p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
+                S2 = p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
+                S3 = p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            else
+                # Classic scheme (Γ⋅∇)U
+                S1 = p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
+                S2 = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
+                S3 = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            end
+
+            S1 *= (1-3*g)*(zeta0/p.sigma[1]^3)
+            S2 *= (1-3*g)*(zeta0/p.sigma[1]^3)
+            S3 *= (1-3*g)*(zeta0/p.sigma[1]^3)
+
+            aux = (S1+get_SGS1(p))*p.Gamma[1] + (S2+get_SGS2(p))*p.Gamma[2] + (S3+get_SGS3(p))*p.Gamma[3]
+            aux /= (p.Gamma[1]*p.Gamma[1] + p.Gamma[2]*p.Gamma[2] + p.Gamma[3]*p.Gamma[3])
+            aux += (1+3*f)*(zeta0/p.sigma[1]^3) / deltat
+
+            # f_p filter criterion
+            if aux < 0
+                add_SGS1(p, -aux*p.Gamma[1])
+                add_SGS2(p, -aux*p.Gamma[2])
+                add_SGS3(p, -aux*p.Gamma[3])
+            end
+        end
+    end
+
+
+    return strong_lowfiltered_sgs
+end
+
+"""
+    Generate a filtered SGS model such that the resulting SGS model does not
+reorient the vortex strength but only affects its magnitude.
+See notebook 20210211.
+"""
+function generate_sgs_directionfiltered(SGS::Function)
+
+    function directionfiltered_sgs(pfield::ParticleField; optargs...)
+
+        # Evaluate original SGS model
+        SGS(pfield; optargs...)
+
+        for p in iterator(pfield)
+            aux = get_SGS1(p)*p.Gamma[1] + get_SGS2(p)*p.Gamma[2] + get_SGS3(p)*p.Gamma[3]
+            aux /= (p.Gamma[1]*p.Gamma[1] + p.Gamma[2]*p.Gamma[2] + p.Gamma[3]*p.Gamma[3])
+
+            # Replaces old SGS with the direcional filtered SGS
+            if aux < 0
+                add_SGS1(p, -get_SGS1(p) + aux*p.Gamma[1])
+                add_SGS2(p, -get_SGS2(p) + aux*p.Gamma[2])
+                add_SGS3(p, -get_SGS3(p) + aux*p.Gamma[3])
+            end
+        end
+    end
+
+
+    return directionfiltered_sgs
+end
