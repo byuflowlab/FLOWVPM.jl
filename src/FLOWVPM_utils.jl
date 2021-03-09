@@ -340,6 +340,8 @@ function save(self::ParticleField, file_name::String; path::String="",
     print(xmf, "</Xdmf>\n")
 
     close(xmf)
+
+    return fname*".xmf;"
 end
 
 """
@@ -390,39 +392,120 @@ function save_settings(pfield::ParticleField, file_name::String;
     JLD.save(joinpath(path, file_name*suff*".jld"), settings)
 end
 
-# """
-#   `read(pfield, h5_fname; path="")`
-#
-# Reads an HDF5 file containing particle data created with `save()` and adds
-# all particles the the particle field `pfield`.
-# """
-# function read(pfield::ParticleField, h5_fname::String;
-#                             path::String="", load_time::Bool=false)
-#
-#     # Opens the HDF5 file
-#     fname = h5_fname * (h5_fname[end-3:end]==".h5" ? "" : ".h5")
-#     h5 = HDF5.h5open(joinpath(path, h5_fname), "r")
-#
-#     # Number of particles
-#     np = load(h5["np"])
-#
-#     # Data
-#     X = h5["X"]
-#     Gamma = h5["Gamma"]
-#     sigma = h5["sigma"]
-#     vol = h5["vol"]
-#
-#     # Loads particles
-#     for i in 1:np
-#         add_particle(pfield, X[1:3, i], Gamma[1:3, i], sigma[i]; vol=vol[i])
-#     end
-#
-#     # Loads time stamp
-#     if load_time
-#         pfield.t = load(h5["t"])
-#         pfield.nt = load(h5["nt"])
-#     end
-# end
+function read_settings(fname::String; path::String="")
+    # Read settings as a dictionary with String keys
+    settings_dict = JLD.load(joinpath(path, fname))
+
+    # Convert into dictionary with Symbol keys and get rid of user functions
+    settings_args = Dict( (Symbol(key), typeof(val)==Symbol ? eval(val) : val)
+                                                for (key, val) in settings_dict)
+
+    return settings_args
+end
+
+function _overwrite_settings!(settings, overwrite_settings)
+    for (key, val) in overwrite_settings
+        settings[Symbol(key)] = val
+    end
+end
+
+function _check_userfun(settings)
+    userfuns = [(key, val[2]) for (key, val) in settings
+                                if typeof(key)!=Symbol && val[1]==_key_userfun]
+
+    if length(userfuns)!=0
+        error("Reading VPM settings: The following user-defined functions are"*
+                " missing: $(userfuns)."*
+                "Please overwrite with read(h5_fname, settings_fname;"*
+                " overwrite_settings=( (:arg1, val1), (:arg2, val2), ...))")
+    end
+end
+
+function generate_particlefield(settings_fname::String;
+                                        path::String="",
+                                        overwrite_settings=(),
+                                        check_userfun=true)
+
+    # Open settings file
+    setfname = settings_fname * (settings_fname[end-3:end]==".jld" ? "" : ".jld")
+    settings = read_settings(setfname; path=path)
+
+    # Overwrite settings requested by user
+    _overwrite_settings!(settings, overwrite_settings)
+
+    # Check that no user-defined function is missing
+    if check_userfun; _check_userfun(settings); end;
+
+    # Initiate particle field
+    maxparticles = pop!(settings, :maxparticles)
+    pfield = ParticleField(maxparticles; settings...)
+
+    return pfield
+end
+
+function read(h5_fname::String, settings_fname::String; optargs...)
+    # Initiate particle field
+    pfield = generate_particlefield(settings_fname; optargs...)
+
+    # Load field from file
+    return read!(pfield, h5_fname; optargs...)
+end
+
+"""
+  `read(h5_fname; path="")`
+
+Reads an HDF5 file containing a particle field created with `save(pfield)`.
+"""
+function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
+                                        path::String="",
+                                        overwrite::Bool=true,
+                                        load_time::Bool=true) where{R<:Real, F, V}
+
+    # Delete existing particles
+    if overwrite
+        for i in get_np(pfield):-1:1
+            remove_particle(pfield, i)
+        end
+    end
+
+    maxparticles = pfield.maxparticles
+
+    # Open HDF5 file
+    h5fname = h5_fname * (h5_fname[end-2:end]==".h5" ? "" : ".h5")
+    h5 = HDF5.h5open(joinpath(path, h5fname), "r")
+
+    # Number of particles in field
+    np = HDF5.read(h5["np"])
+
+    # Error case: Particle overflow
+    if np>maxparticles
+        error("The field to be read ($(h5_fname)) contains $(np) particles"*
+                " but max number of particles in settings $(settings_fname) is"*
+                " $(maxparticles)."*
+                " Please overwrite with read(h5_fname, settings_fname;"*
+                " overwrite_settings=( (:maxparticles, $(np)), ))")
+    end
+
+    # Use time stamp
+    if load_time
+        pfield.t = HDF5.read(h5["t"])
+        pfield.nt = HDF5.read(h5["nt"])
+    end
+
+    X = h5["X"][:, :]
+    Gamma = h5["Gamma"][:, :]
+    sigma = h5["sigma"][:]
+    circulation = h5["circulation"][:]
+    vol = h5["vol"][:]
+
+    # Loads particles
+    for i in 1:np
+        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
+                            circulation=circulation[i], vol=vol[i])
+    end
+
+    return pfield
+end
 
 
 """
