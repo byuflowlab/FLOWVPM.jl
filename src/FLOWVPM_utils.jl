@@ -411,12 +411,12 @@ end
 
 function _check_userfun(settings)
     userfuns = [(key, val[2]) for (key, val) in settings
-                                if typeof(key)!=Symbol && val[1]==_key_userfun]
+                                if isa(val, Tuple) && length(val)>1 && val[1]==_key_userfun]
 
     if length(userfuns)!=0
         error("Reading VPM settings: The following user-defined functions are"*
                 " missing: $(userfuns)."*
-                "Please overwrite with read(h5_fname, settings_fname;"*
+                " Please overwrite with read(h5_fname, settings_fname;"*
                 " overwrite_settings=( (:arg1, val1), (:arg2, val2), ...))")
     end
 end
@@ -443,9 +443,12 @@ function generate_particlefield(settings_fname::String;
     return pfield
 end
 
-function read(h5_fname::String, settings_fname::String; optargs...)
+function read(h5_fname::String, settings_fname::String; overwrite_settings=(),
+                                                                     optargs...)
     # Initiate particle field
-    pfield = generate_particlefield(settings_fname; optargs...)
+    pfield = generate_particlefield(settings_fname;
+                                    overwrite_settings=overwrite_settings,
+                                                                     optargs...)
 
     # Load field from file
     return read!(pfield, h5_fname; optargs...)
