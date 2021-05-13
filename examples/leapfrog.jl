@@ -14,6 +14,7 @@ try
     this_is_a_test
 catch e
     import CSV
+    import DataFrames
     using PyPlot
 end
 
@@ -229,8 +230,8 @@ function run_leapfrog(R1::Real, R2::Real,
 
         if plot_exp
             # Loads the data extracted from Berdowski's Fig 6.6
-            data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
-            data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
+            data_r1 = CSV.read(data_path*"leapfrogring2.csv", DataFrames.DataFrame; datarow=1)
+            data_r2 = CSV.read(data_path*"leapfrogring1.csv", DataFrames.DataFrame; datarow=1)
 
             plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
             plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
