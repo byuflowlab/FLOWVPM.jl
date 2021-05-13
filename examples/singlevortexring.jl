@@ -181,7 +181,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # -------------- RUNTIME FUNCTION --------------------------------------------
     # Function for calculating center's position at each time step
     Xs, ts = [], []
-    function center_position(pfield::vpm.ParticleField, t, dt)
+    function center_position(pfield::vpm.ParticleField, t, dt; optargs...)
         Np = vpm.get_np(pfield)
         X = sum([P.X for P in vpm.iterator(pfield)])
         X = X/Np
