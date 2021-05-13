@@ -105,24 +105,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             nextstep(pfield, dt; relax=relax)
 
             # Remove static particles (assumes particles remained sorted)
-<<<<<<< HEAD
-            if save_static_particles==false
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
-        end
-
-        # Save particle field
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                        overwrite_time=overwrite_time)
-        end
-
-        if i!=0 && save_static_particles==true
-=======
->>>>>>> generalized-reformulation
             for pi in get_np(pfield):-1:(org_np+1)
                 remove_particle(pfield, pi)
             end
@@ -200,15 +182,9 @@ Saves the particle field in HDF5 format and a XDMF file especifying its the
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-<<<<<<< HEAD
-function save(self::ParticleField{T}, file_name::String; path::String="",
-                add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing) where {T}
-=======
 function save(self::ParticleField, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
                 overwrite_time=nothing)
->>>>>>> generalized-reformulation
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
