@@ -113,6 +113,7 @@ function run_ringcollision(R1::Real, R2::Real,
                               optargs_ring1=(),
                               optargs_ring2=(),
                               # SIMULATION SETUP
+                              FieldType=vpm.ParticleFieldStretch,
                               kernel::vpm.Kernel=vpm.winckelmans,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
@@ -169,7 +170,7 @@ function run_ringcollision(R1::Real, R2::Real,
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
     maxparticles = 20000
-    pfield = vpm.ParticleField(maxparticles; viscous=viscous,
+    pfield = FieldType(maxparticles; viscous=viscous,
                                 kernel=kernel, UJ=UJ,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,

@@ -14,6 +14,7 @@ try
     this_is_a_test
 catch e
     import CSV
+    import DataFrames
     using PyPlot
 end
 
@@ -33,9 +34,9 @@ function validation_leapfrog(;  kernel=vpm.winckelmans, UJ=vpm.UJ_fmm,
                                 integration=vpm.rungekutta3,
                                 fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
                                 Re=400, viscous=vpm.Inviscid(),
-                                save_path="temps/val_leapfrog00/",
+                                save_path="temps/val_leapfrog-stretch00/",
                                 nc=1, Nphi=100, extra_nc=0,
-                                nsteps=200*5, nR=5*5, faux1=1.0,
+                                nsteps=200*7, nR=5*7, faux1=1.0,
                                 optargs...)
 
     R1, R2 = 0.5, 1.0
@@ -80,6 +81,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               coR1::Real, coR2::Real,
                               Nphi::Int64, nc::Int64, Re::Real,
                               nsteps::Int64, nR::Real;
+                              dXoR::Real=0.0,
                               extra_nc::Int64=0,
                               faux1=1.0,
                               override_nu::Union{Nothing, Real}=nothing,
@@ -87,6 +89,9 @@ function run_leapfrog(R1::Real, R2::Real,
                               kernel::vpm.Kernel=vpm.winckelmans,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
+                              maxparticles=10000,
+                              formulation=vpm.formulation_default,
+                              morepfieldargs=[],
                               # NUMERICAL SCHEMES
                               transposed=true,
                               relax=true,
@@ -100,7 +105,10 @@ function run_leapfrog(R1::Real, R2::Real,
                               verbose_nsteps=10,
                               paraview=true, prompt=true,
                               verbose=true, verbose2=true, v_lvl=0,
-                              disp_plot=true,
+                              disp_plot=true, plot_exp=true,
+                              tshift=0,
+                              extra_runtime_function=vpm.runtime_default,
+                              pfieldargs...
                               )
 
     # Additional parameters
@@ -125,7 +133,7 @@ function run_leapfrog(R1::Real, R2::Real,
 
     beta = 0.5
     Ucore = Gamma1/(4*pi*R1)*(log(8/coR1)-beta)  # Analytical self-induced velocity
-    dt = nR*R1/Ucore/nsteps        # Time step size
+    dt = abs(nR*R1/Ucore/nsteps)        # Time step size
 
     if verbose2
         println("\t"^v_lvl*"Ring's core #1 / R:\t\t$(round(typeof(coR1)!=Float64 ? coR1.value : coR1, digits=3))")
@@ -139,20 +147,21 @@ function run_leapfrog(R1::Real, R2::Real,
 
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
-    maxparticles = 20000
     pfield = vpm.ParticleField(maxparticles; viscous=viscous,
                                 kernel=kernel, UJ=UJ,
                                 transposed=transposed,
                                 relax=relax, rlxf=rlxf,
                                 integration=integration,
-                                fmm=fmm
+                                fmm=fmm,
+                                formulation=formulation,
+                                pfieldargs...
                                 )
 
     # Adds the rings to the field
     addvortexring(pfield, Gamma1, R1, Nphi, nc, rmax1;
                         extra_nc=extra_nc, lambda=lambda1)
     addvortexring(pfield, Gamma2, R2, Nphi, nc, rmax2;
-                        extra_nc=extra_nc, lambda=lambda2)
+                        extra_nc=extra_nc, lambda=lambda2, C=[0, 0, dXoR*R2])
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------
@@ -162,7 +171,7 @@ function run_leapfrog(R1::Real, R2::Real,
     ts = []                   # Time stamp
 
     # Function for tracking the radius of each ring
-    function rings_radii(pfield::vpm.ParticleField, t, dt)
+    function rings_radii(pfield::vpm.ParticleField, t, dt; optargs...)
         if 2*Np!=vpm.get_np(pfield);
             error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
         end
@@ -198,9 +207,12 @@ function run_leapfrog(R1::Real, R2::Real,
         return false
     end
 
+    runtime_function(args...; optargs...) = (rings_radii(args...; optargs...)
+                                                || extra_runtime_function(args...; optargs...))
+
     # -------------- SIMULATION --------------------------------------------------
     # Runs the simulation
-    vpm.run_vpm!(pfield, dt, nsteps; runtime_function=rings_radii,
+    vpm.run_vpm!(pfield, dt, nsteps; runtime_function=runtime_function,
                                         nsteps_relax=nsteps_relax,
                                         save_path=save_path,
                                         run_name=run_name,
@@ -214,15 +226,19 @@ function run_leapfrog(R1::Real, R2::Real,
     # -------------- POST-PROCESSING ---------------------------------------------
     # Plot radii in time
     if disp_plot
-        # Loads the data extracted from Berdowski's Fig 6.6
-        data_r1 = CSV.read(data_path*"leapfrogring2.csv"; datarow=1)
-        data_r2 = CSV.read(data_path*"leapfrogring1.csv"; datarow=1)
+        figure(run_name)
 
-        plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
-        plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
+        if plot_exp
+            # Loads the data extracted from Berdowski's Fig 6.6
+            data_r1 = CSV.read(data_path*"leapfrogring2.csv", DataFrames.DataFrame; datarow=1)
+            data_r2 = CSV.read(data_path*"leapfrogring1.csv", DataFrames.DataFrame; datarow=1)
 
-        plot(ts, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
-        plot(ts, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
+            plot( data_r1[!, 1], data_r1[!, 2], "--r", label="Ring 1 Analytical")
+            plot( data_r2[!, 1], data_r2[!, 2], "--b", label="Ring 2 Analytical")
+        end
+
+        plot(ts.+tshift, R1s, ".r", label="FLOWVPM Ring 1", alpha=0.1)
+        plot(ts.+tshift, R2s, ".b", label="FLOWVPM Ring 2", alpha=0.1)
 
         legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
         xlabel("Time (s)")

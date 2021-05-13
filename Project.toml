@@ -5,8 +5,11 @@ version = "0.1.0"
 
 [deps]
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+JLD = "4138dd39-2aa7-5051-a626-17a0bb65d9c8"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 FLOWExaFMM = "a07d1f4e-0e34-4d8b-bfef-e5b961477d34"
 
 [compat]

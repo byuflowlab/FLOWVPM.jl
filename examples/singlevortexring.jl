@@ -38,6 +38,7 @@ function validation_singlevortexring(;
                                         nc=1, Nphi=200, extra_nc=0,
                                         nsteps=1000, coR=0.15, nR=5,
                                         R=1.0,
+                                        overwrite_faux1=nothing,
                                         # kernel=vpm.gaussianerf, UJ=vpm.UJ_fmm,
                                         # integration=vpm.euler,
                                         # fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.3),
@@ -52,6 +53,8 @@ function validation_singlevortexring(;
     # faux1 = nc==0 ? extra_nc==0 ? 1 : 0.1 : nc==1 ? 0.25 : 0.5
     faux1 = nc==0 ? extra_nc==0 ? 1 : 0.25 : nc==1 ? 0.25 : 0.5
 
+    faux1 = overwrite_faux1 != nothing ? overwrite_faux1 : faux1
+
     res_Ucore, err = run_singlevortexring(R, Gamma, coR, Nphi, nc, Re, nsteps, nR;
                                 extra_nc=extra_nc,
                                 faux1=faux1,
@@ -61,8 +64,6 @@ function validation_singlevortexring(;
                                 fmm=fmm,
                                 # NUMERICAL SCHEMES
                                 transposed=true,
-                                relax=true,
-                                rlxf=0.3,
                                 integration=integration,
                                 nsteps_relax=1,
                                 viscous=viscous,
@@ -106,6 +107,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
                               UJ::Function=vpm.UJ_direct,
                               fmm=vpm.FMM(; p=4, ncrit=10, theta=0.4, phi=0.5),
                               # NUMERICAL SCHEMES
+                              formulation=vpm.formulation_default,
                               transposed=true,
                               relax=true,
                               rlxf=0.3,
@@ -164,11 +166,12 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
     # -------------- PARTICLE FIELD-----------------------------------------------
     # Creates the field
     pfield = vpm.ParticleField(maxparticles; viscous=viscous, kernel=kernel, UJ=UJ,
-                            transposed=transposed,
-                            relax=relax, rlxf=rlxf,
-                            integration=integration,
-                            fmm=fmm
-                            )
+                                transposed=transposed,
+                                relax=relax, rlxf=rlxf,
+                                integration=integration,
+                                fmm=fmm,
+                                formulation=formulation
+                                )
 
     # Adds the ring to the field
     addvortexring(pfield, Gamma, R, Nphi, nc, rmax;
@@ -228,7 +231,7 @@ function run_singlevortexring(R::Real, Gamma::Real, coR::Real,
         title("Single vortex ring validation")
 
         if save_path!=nothing
-            savefig(joinpath(save_path, "vring.png"))
+            savefig(joinpath(save_path, "vring.png"), dpi=300)
         end
     end
 
