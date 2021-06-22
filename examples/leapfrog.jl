@@ -168,7 +168,11 @@ function run_leapfrog(R1::Real, R2::Real,
     Np=(1+4*nc*(nc+1))*Nphi   # Number of particles per ring
     C1s, C2s = [], []         # Center of the ring
     R1s, R2s = [], []         # Radius of the ring
+    a1s, a2s = [], []         # Cross-sectional radius of the ring
     ts = []                   # Time stamp
+
+    filename = nothing
+    f = nothing
 
     # Function for tracking the radius of each ring
     function rings_radii(pfield::vpm.ParticleField, t, dt; optargs...)
@@ -176,8 +180,24 @@ function run_leapfrog(R1::Real, R2::Real,
             error("Logic error!\n2Np:$(2*Np)\nnp:$(vpm.get_np(pfield))")
         end
 
+        if save_path != nothing && pfield.nt == 0
+            filename = joinpath(save_path, run_name*"-leapfrog.csv")
+            f = open(filename, "w")
+            print(f, "t")
+            for r_i in 1:2
+                print(f, ",R$(r_i)")
+                for dim in ["x", "y", "z"]
+                    print(f, ",C$(dim)$(r_i)")
+                end
+                print(f, ",a$(r_i)")
+            end
+            print(f, "\n")
+            close(f)
+        end
+
         Cs = [C1s, C2s]
         Rs = [R1s, R2s]
+        as = [a1s, a2s]
         intervals = [0, Np, 2Np]
 
         # Iterates over each ring
@@ -192,17 +212,36 @@ function run_leapfrog(R1::Real, R2::Real,
 
             # Calculates average radius
             ave_r = 0
+            ave_a = 0
             for i in (intervals[r_i]+1):(intervals[r_i+1])
                 this_X = vpm.get_X(pfield, i)
                 this_r = norm(this_X - C)
                 ave_r += this_r
+                ave_a += vpm.get_particle(pfield, i).sigma[1]
             end
             ave_r = ave_r/Np
+            ave_a = ave_a/Np
 
             push!(Cs[r_i], C)
             push!(Rs[r_i], ave_r)
+            push!(as[r_i], ave_a)
+
         end
         push!(ts, t)
+
+        if save_path != nothing
+            f = open(filename, "a")
+            print(f, "$(ts[end])")
+            for r_i in 1:2
+                print(f, ",$(Rs[r_i][end])")
+                for dim in 1:3
+                    print(f, ",$(Cs[r_i][end][dim])")
+                end
+                print(f, ",$(as[r_i][end])")
+            end
+            print(f, "\n")
+            close(f)
+        end
 
         return false
     end
