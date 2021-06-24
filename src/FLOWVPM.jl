@@ -128,7 +128,7 @@ const _SGS = :Jexa
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
 const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
-                                            :relaxation, :sgsmodel, :sgsscaling)
+                                            :relaxation, :sgsmodel, :sgsscaling, :viscous)
 
 # Hash table between functions that are solver settings and their symbol
 const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,

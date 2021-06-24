@@ -108,6 +108,7 @@ function run_leapfrog(R1::Real, R2::Real,
                               disp_plot=true, plot_exp=true,
                               tshift=0,
                               extra_runtime_function=vpm.runtime_default,
+                              runfunoptargs=[],
                               pfieldargs...
                               )
 
@@ -206,18 +207,18 @@ function run_leapfrog(R1::Real, R2::Real,
             # Calculates center of the ring
             C = zeros(3)
             for i in (intervals[r_i]+1):(intervals[r_i+1])
-                C .+= vpm.get_X(pfield, i)
+                P = vpm.get_particle(pfield, i)
+                C .+= P.X
             end
-            C = C/Np
+            C ./= Np
 
             # Calculates average radius
             ave_r = 0
             ave_a = 0
             for i in (intervals[r_i]+1):(intervals[r_i+1])
-                this_X = vpm.get_X(pfield, i)
-                this_r = norm(this_X - C)
-                ave_r += this_r
-                ave_a += vpm.get_particle(pfield, i).sigma[1]
+                P = vpm.get_particle(pfield, i)
+                ave_r += sqrt((P.X[1] - C[1])^2 + (P.X[2] - C[2])^2 + (P.X[3] - C[3])^2)
+                ave_a += P.sigma[1]
             end
             ave_r = ave_r/Np
             ave_a = ave_a/Np
@@ -231,13 +232,13 @@ function run_leapfrog(R1::Real, R2::Real,
 
         if save_path != nothing
             f = open(filename, "a")
-            print(f, "$(ts[end])")
+            print(f, ts[end])
             for r_i in 1:2
-                print(f, ",$(Rs[r_i][end])")
+                print(f, ",", Rs[r_i][end])
                 for dim in 1:3
-                    print(f, ",$(Cs[r_i][end][dim])")
+                    print(f, ",", Cs[r_i][end][dim])
                 end
-                print(f, ",$(as[r_i][end])")
+                print(f, ",", as[r_i][end])
             end
             print(f, "\n")
             close(f)
@@ -257,7 +258,8 @@ function run_leapfrog(R1::Real, R2::Real,
                                         run_name=run_name,
                                         prompt=prompt,
                                         verbose=verbose, v_lvl=v_lvl,
-                                        verbose_nsteps=verbose_nsteps
+                                        verbose_nsteps=verbose_nsteps,
+                                        runfunoptargs...
                                         )
 
 

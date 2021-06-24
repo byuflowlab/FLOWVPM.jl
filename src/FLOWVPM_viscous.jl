@@ -213,6 +213,12 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     * The current residual is stored under P.M[4:6] (it used to be r).
     =#
 
+    if cs.debug
+        println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
+                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1).M[7:9], digits=8))\n")
+    end
+
     # Initialize memory
     cs.rr0s .= 0
     cs.rrs .= 0
@@ -245,7 +251,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     cs.rrs .= cs.rr0s                         # Current field residuals
     for i in 1:3                              # Iteration flag of each dimension
-        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol && sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
 
     # Run Conjugate Gradient algorithm
@@ -310,8 +316,12 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
 
         if cs.debug
-            println("\t"^(cs.v_lvl+1)*
-                        "Iteration $(it)\tError: $(sqrt.(cs.rrs ./ cs.rr0s))")
+            println(
+                    "\t"^(cs.v_lvl+1)*"Iteration $(it) / $(cs.itmax) max\n"*
+                    "\t"^(cs.v_lvl+2)*"Error: $(sqrt.(cs.rrs ./ cs.rr0s))\n"*
+                    "\t"^(cs.v_lvl+2)*"Flags: $(cs.flags)\n"*
+                    "\t"^(cs.v_lvl+2)*"Sol Particle 1: $(round.(get_particle(pfield, 1).M[1:3], digits=8))"
+                    )
         end
 
     end
@@ -321,6 +331,15 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         for i in 1:3
             P.Gamma[i] = P.M[i]
         end
+    end
+
+    if cs.debug
+        # Evaluate current vorticity
+        cs.zeta(pfield)
+        println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
+                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_particle(pfield, 1).Jexa[1:3], digits=8))")
+        println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
     end
 
     return nothing
