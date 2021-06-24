@@ -166,7 +166,8 @@ function run_leapfrog(R1::Real, R2::Real,
 
 
     # -------------- RUNTIME FUNCTION --------------------------------------------
-    Np=(1+4*nc*(nc+1))*Nphi   # Number of particles per ring
+    # Np=(1+4*nc*(nc+1))*Nphi   # Number of particles per ring
+    Np=Int(vpm.get_np(pfield) / 2)
     C1s, C2s = [], []         # Center of the ring
     R1s, R2s = [], []         # Radius of the ring
     a1s, a2s = [], []         # Cross-sectional radius of the ring
