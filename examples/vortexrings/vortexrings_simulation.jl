@@ -65,12 +65,14 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
         @printf "%sTime step:\t\t\t\t%1.5e s\n"                       "\t"^(v_lvl+1) dt
     end
 
-    gt.create_path(save_path, prompt)
+    if save_path != nothing
+        gt.create_path(save_path, prompt)
+    end
 
 
     # Generate monitors
     monitor_enstrophy(args...; optargs...) = vpm.monitor_enstrophy(args...; save_path=save_path, optargs...)
-    monitor_vortexring = generate_monitor_vortexring(nrings, Nphis; save_path=save_path,
+    monitor_vortexring = generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs; save_path=save_path,
                                                                     fname_pref=run_name, ringmon_optargs...)
 
     monitors(args...; optargs...) = monitor_enstrophy(args...; optargs...) || monitor_vortexring(args...; optargs...)

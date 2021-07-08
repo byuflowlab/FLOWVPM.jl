@@ -16,6 +16,16 @@ cross(A, B) = [A[2]*B[3] - A[3]*B[2], A[3]*B[1] - A[1]*B[3], A[1]*B[2] - A[2]*B[
 "Number of particles used to discretized a ring"
 number_particles(Nphi, nc; extra_nc=0) = Int( Nphi * ( 1 + 8*sum(1:(nc+extra_nc)) ) )
 
+"Intervals of each ring"
+function calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
+    intervals = [0]
+    for ri in 1:nrings
+        Np = number_particles(Nphis[ri], ncs[ri]; extra_nc=extra_ncs[ri])
+        push!(intervals, intervals[end] + Np)
+    end
+    return intervals
+end
+
 "Analytic self-induced velocity of an inviscid ring"
 Uring(circulation, R, Rcross, beta) = circulation/(4*pi*R) * ( log(8*R/Rcross) - beta )
 
@@ -185,6 +195,139 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
 end
 
 
+
+"""
+Calculate centroid, radius, and cross-section radius of all rings from the
+position of all (unweighted) particles.
+"""
+function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
+
+    # Iterate over each ring
+    for ri in 1:nrings
+
+        Np = intervals[ri+1] - intervals[ri]
+
+        # Calculate centroid
+        outZ[ri] .= 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+            outZ[ri] .+= P.X
+
+        end
+        outZ[ri] ./= Np
+
+        # Calculate ring radius and cross-section radius
+        outR[ri], outsgm[ri] = 0, 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+
+            outR[ri] += sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
+            outsgm[ri] += P.sigma[1]
+
+        end
+        outR[ri] /= Np
+        outsgm[ri] /= Np
+
+    end
+
+    return nothing
+end
+
+
+"""
+Calculate centroid, radius, and cross-section radius of all rings from the
+position of particles weighted by vortex strength.
+"""
+function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
+
+    # Iterate over each ring
+    for ri in 1:nrings
+
+        # Calculate centroid
+        outZ[ri] .= 0
+        magGammatot = 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+            normGamma = norm(P.Gamma)
+            magGammatot += normGamma
+
+            for i in 1:3
+                outZ[ri][i] += normGamma*P.X[i]
+            end
+
+        end
+        outZ[ri] ./= magGammatot
+
+        # Calculate ring radius and cross-section radius
+        outR[ri], outsgm[ri] = 0, 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+            normGamma = norm(P.Gamma)
+
+            outR[ri] += normGamma*sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
+            outsgm[ri] += normGamma*P.sigma[1]
+
+        end
+        outR[ri] /= magGammatot
+        outsgm[ri] /= magGammatot
+
+    end
+
+    return nothing
+end
+
+
+"""
+Calculate ring radius in x and y from all rings from the position of particles
+weighted by vortex strength in y and x, respectively.
+"""
+function calc_elliptic_radius(outRm, outRp, Z, pfield, nrings, intervals;
+                                                   unitx=(1,0,0), unity=(0,1,0))
+
+    # Iterate over each ring
+    for ri in 1:nrings
+
+        outRm[ri] .= 0             # - directions
+        outRp[ri] .= 0             # + directions
+        weightxmtot, weightymtot = 0, 0
+        weightxptot, weightyptot = 0, 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+            weightx = dot(P.Gamma, unity)
+            weighty = dot(P.Gamma, unitx)
+
+            if P.X[1]-Z[ri][1] < 0
+                outRm[ri][1] -= abs(weightx*P.X[1])
+                weightxmtot += abs(weightx)
+            else
+                outRp[ri][1] += abs(weightx*P.X[1])
+                weightxptot += abs(weightx)
+            end
+
+            if P.X[2]-Z[ri][2] < 0
+                outRm[ri][2] -= abs(weighty*P.X[2])
+                weightymtot += abs(weighty)
+            else
+                outRp[ri][2] += abs(weighty*P.X[2])
+                weightyptot += abs(weighty)
+            end
+
+        end
+        outRm[ri][1] /= weightxmtot
+        outRm[ri][2] /= weightymtot
+        outRp[ri][1] /= weightxptot
+        outRp[ri][2] /= weightyptot
+
+    end
+
+    return nothing
+end
+
 """
     Generate a runtime function for monitoring ring metrics. This monitor
 outputs the centroid position, ring radius, and core radius calculated through
@@ -192,7 +335,8 @@ three different approaches: (1) Average of all particles, (2) weighted by the
 strength of every particles, and (3) weighted by the strength in each
 transversal direction.
 """
-function generate_monitor_vortexring(nrings, Nphis; save_path=nothing,
+function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
+                                        save_path=nothing,
                                         fname_pref="vortexring",
                                         unitx=(1,0,0), unity=(0,1,0),
                                         out1=nothing, out2=nothing, out3=nothing)
@@ -202,11 +346,14 @@ function generate_monitor_vortexring(nrings, Nphis; save_path=nothing,
                                       for fi in 1:(save_path!=nothing ? 3 : -1))
 
     # Pre-allocate memory
-    Z1 = zeros(3)
-    Z2 = zeros(3)
-    R3p = zeros(2)
-    R3m = zeros(2)
+    Z1, Z2 = [zeros(3) for ri in 1:nrings], [zeros(3) for ri in 1:nrings]
+    R1, R2 = zeros(nrings), zeros(nrings)
+    sgm1, sgm2 = zeros(nrings), zeros(nrings)
+    R3p = [zeros(2) for ri in 1:nrings]
+    R3m = [zeros(2) for ri in 1:nrings]
     outs = (out1, out2, out3)
+
+    intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
 
     function monitor_vortexring(pfield, t, args...; optargs...)
 
@@ -235,115 +382,40 @@ function generate_monitor_vortexring(nrings, Nphis; save_path=nothing,
             fs = Tuple(open(fname, "a") for fname in fnames)
         end
 
-        np = vpm.get_np(pfield)   # Number of particles in field
-        Np = Int(np/nrings)       # Number of particles per ring
-        nphi = Int(Np / Nphi)     # Number of particles per cross section
+        # Calculate the centroid, radius, and thickness of the ring through
+        # two approaches:
+        # (1) From the position of all (unweighted) particles
+        # (2) From the position of particles weighted by vortex strength
+        calc_rings_unweighted!(Z1, R1, sgm1, pfield, nrings, intervals)
+        calc_rings_weighted!(Z2, R2, sgm2, pfield, nrings, intervals)
 
-        intervals = Tuple(ri*Np for ri in 0:nrings)  # Intervals of each ring
+        # Calculate ring radius in x and y from particles weighted by
+        # vortex strength in y and x, respectively
+        calc_elliptic_radius(R3m, R3p, Z2, pfield, nrings, intervals;
+                                                       unitx=unitx, unity=unity)
 
-        # Iterate over each ring
-        for ri in 1:nrings
-
-            # Calculate the centroid of the ring through two approaches:
-            # (1) From the position of all (unweighted) particles
-            # (2) From the position of particles weighted by vortex strength
-            Z1 .= 0
-            Z2 .= 0
-            magGammatot = 0
-            for pi in (intervals[ri]+1):(intervals[ri+1])
-
-                P = vpm.get_particle(pfield, pi)
-                normGamma = norm(P.Gamma)
-                magGammatot += normGamma
-
-                Z1 .+= P.X
-
-                for i in 1:3
-                    Z2[i] += normGamma*P.X[i]
-                end
-
-            end
-            Z1 ./= Np
-            Z2 ./= magGammatot
-
-            # Calculate ring radius and particle smoothing through two approaches:
-            # (1) From all (unweighted) particles
-            # (2) From all particles weighted by vortex strength
-            R1, sgm1 = 0, 0
-            R2, sgm2 = 0, 0
-            for pi in (intervals[ri]+1):(intervals[ri+1])
-
-                P = vpm.get_particle(pfield, pi)
-                normGamma = norm(P.Gamma)
-
-                R1 += sqrt((P.X[1] - Z1[1])^2 + (P.X[2] - Z1[2])^2 + (P.X[3] - Z1[3])^2)
-                sgm1 += P.sigma[1]
-
-                R2 += normGamma*sqrt((P.X[1] - Z2[1])^2 + (P.X[2] - Z2[2])^2 + (P.X[3] - Z2[3])^2)
-                sgm2 += normGamma*P.sigma[1]
-
-            end
-            R1 /= Np
-            sgm1 /= Np
-            R2 /= magGammatot
-            sgm2 /= magGammatot
-
-            # Calculate ring radius in x and y from particles weighted by
-            # vortex strength in y and x, respectively
-            R3m .= 0             # - directions
-            R3p .= 0             # + directions
-            weightxmtot, weightymtot = 0, 0
-            weightxptot, weightyptot = 0, 0
-            for pi in (intervals[ri]+1):(intervals[ri+1])
-
-                P = vpm.get_particle(pfield, pi)
-                weightx = dot(P.Gamma, unity)
-                weighty = dot(P.Gamma, unitx)
-
-                if P.X[1]-Z2[1] < 0
-                    R3m[1] -= abs(weightx*P.X[1])
-                    weightxmtot += abs(weightx)
-                else
-                    R3p[1] += abs(weightx*P.X[1])
-                    weightxptot += abs(weightx)
-                end
-
-                if P.X[2]-Z2[2] < 0
-                    R3m[2] -= abs(weighty*P.X[2])
-                    weightymtot += abs(weighty)
-                else
-                    R3p[2] += abs(weighty*P.X[2])
-                    weightyptot += abs(weighty)
-                end
-
-            end
-            R3m[1] /= weightxmtot
-            R3m[2] /= weightymtot
-            R3p[1] /= weightxptot
-            R3p[2] /= weightyptot
-
-            # Write ring to file and/or save to output arrays
-            for (fi, Z, R, a) in ((1, Z1, R1, sgm1), (2, Z2, R2, sgm2), (3, Z2, (R3m, R3p), sgm2))
-                if save_path != nothing
-                    f = fs[fi]
-                    if ri==1; print(f, t); end;
-                    for dim in 1:3; print(f, ",", Z[dim]); end;
+        # Write ring to file and/or save to output arrays
+        for (fi, Z, R, a) in ((1, Z1, R1, sgm1), (2, Z2, R2, sgm2), (3, Z2, (R3m, R3p), sgm2))
+            if save_path != nothing
+                f = fs[fi]
+                print(f, t)
+                for ri in 1:nrings
+                    for dim in 1:3; print(f, ",", Z[ri][dim]); end;
                     if fi==1 || fi==2
-                        print(f, ",", R)
+                        print(f, ",", R[ri])
                     else
-                        for dim in 1:2; print(f, ",", R[1][dim]); end;
-                        for dim in 1:2; print(f, ",", R[2][dim]); end;
+                        for dim in 1:2; print(f, ",", R[1][ri][dim]); end;
+                        for dim in 1:2; print(f, ",", R[2][ri][dim]); end;
                     end
-                    print(f, ",", a)
-                    if ri==nrings; print(f, "\n"); end;
+                    print(f, ",", a[ri])
                 end
-
-                if outs[fi] != nothing
-                    if ri==1; push!(outs[fi], [t]); end;
-                    push!(outs[fi][end], Z, R, a)
-                end
+                print(f, "\n")
             end
 
+            if outs[fi] != nothing
+                push!(outs[fi], [t])
+                push!(outs[fi][end], Z, R, a)
+            end
         end
 
         # Close output files

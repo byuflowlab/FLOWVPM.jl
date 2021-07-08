@@ -41,7 +41,7 @@ function plot_dynamics1n2(read_path;
     plot_grid = [size(to_plot, 1), size(to_plot, 2)]
     plot_gridt = [size(to_plot, 2), size(to_plot, 1)]
 
-    fig = figure(figname, figsize=figsize.*plot_grid)
+    fig = plt.figure(figname, figsize=figsize.*plot_grid)
     axs = fig.subplots(plot_gridt...)
     if length(to_plot)==1; axs = [axs]; end;
 
