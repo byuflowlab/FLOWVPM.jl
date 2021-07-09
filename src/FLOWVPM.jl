@@ -55,6 +55,7 @@ const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
 const formulation_tube = formulation_tube_continuity
 const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
 const formulation_sphere = formulation_sphere_momentum
+const formulation_reclassic = formulation_tube_classic
 const formulation_default = formulation_sphere_momentum
 
 const standard_formulations = (:formulation_classic, :formulation_tube_classic,

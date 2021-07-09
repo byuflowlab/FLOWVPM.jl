@@ -16,15 +16,16 @@ function plot_dynamics1n2(read_path;
                             filename="vortexring-dynamics1.csv",
                             cols_per_ring=5,
                             to_plot=[#  ((label_x, index_x, scale_x), (label_y, index_y, scale_y))
-                                        (("Time (s)", "t", 1.0), (L"Ring radius $R$ (m)", 4, 1.0))
-                                        (("Time (s)", "t", 1.0), (L"Ring centroid $Z$ (m)", 3, 1.0))
-                                        (("Time (s)", "t", 1.0), (L"Cross-sectional radius $a$ (m)", 5, 1.0))
+                                        (("Time (s)", "t", 1.0), ("Ring radius R (m)", 4, 1.0))
+                                        (("Time (s)", "t", 1.0), ("Ring centroid Z (m)", 3, 1.0))
+                                        (("Time (s)", "t", 1.0), ("Cross-sectional radius a (m)", 5, 1.0))
                                     ],
                             figname="vortexrings", figsize=[7,5]*7/9,
                             plot_vpm=true,
-                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.75,
+                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10,
                             plot_ana=true, ana_args=[], ana_optargs=[],
                             ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0,
+                            sidelegend=false
                             )
 
     data = CSV.read(joinpath(read_path, filename), DataFrames.DataFrame)
@@ -74,8 +75,11 @@ function plot_dynamics1n2(read_path;
                 ax.set_ylabel(label_y)
                 ax.grid(true, color="0.8", linestyle=":")
                 if ploti == length(to_plot)
-                    # ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
-                    ax.legend(loc="best", frameon=true, fontsize=10)
+                    if sidelegend
+                        ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
+                    else
+                        ax.legend(loc="best", frameon=true, fontsize=10)
+                    end
                 end
             end
 

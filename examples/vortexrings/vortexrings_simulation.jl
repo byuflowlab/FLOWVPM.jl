@@ -26,6 +26,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         nsteps=1000,    # Number of time steps in simulation
                                         Rtot=10.0,      # Runs the simulation for this long (in radii distances)
                                         beta=0.5,       # Parameter for theoretical velocity
+                                        faux=1.0,       # Shrinks the discretized core by this factor
                                         runtime_function=(args...; optargs...)->false,
                                         # ------- OUTPUT OPTIONS ---------------
                                         save_path=nothing,      # Where to save the simulation
@@ -34,6 +35,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         verbose=true,           # Enable verbose
                                         v_lvl=0,
                                         verbose_nsteps=100,
+                                        calc_monitors=true,
                                         ringmon_optargs=[],
                                         optargs...
                                         )
@@ -49,7 +51,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
     # Add vortex rings to particle field
     for ri in 1:nrings
         addvortexring(pfield, circulations[ri],
-                        Rs[ri], ARs[ri], Rcrosss[ri],
+                        Rs[ri], ARs[ri], faux*Rcrosss[ri],
                         Nphis[ri], ncs[ri], sigmas[ri]; extra_nc=extra_ncs[ri],
                         O=Os[ri],
                         Oaxis=Oaxiss[ri]
@@ -66,16 +68,24 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
     end
 
     if save_path != nothing
-        gt.create_path(save_path, prompt)
+        vpm.create_path(save_path, prompt)
     end
 
 
     # Generate monitors
-    monitor_enstrophy(args...; optargs...) = vpm.monitor_enstrophy(args...; save_path=save_path, optargs...)
-    monitor_vortexring = generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs; save_path=save_path,
-                                                                    fname_pref=run_name, ringmon_optargs...)
+    if calc_monitors
+        monitor_enstrophy(args...; optargs...) = vpm.monitor_enstrophy(args...; save_path=save_path, optargs...)
+        monitor_vortexring = generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs; save_path=save_path,
+                                                                        fname_pref=run_name, ringmon_optargs...)
+    end
 
-    monitors(args...; optargs...) = monitor_enstrophy(args...; optargs...) || monitor_vortexring(args...; optargs...)
+    function monitors(args...; optargs...)
+        if calc_monitors
+            return monitor_enstrophy(args...; optargs...) || monitor_vortexring(args...; optargs...)
+        else
+            return false
+        end
+    end
 
     # Define runtime function
     this_runtime_function(args...; optargs...) = monitors(args...; optargs...) || runtime_function(args...; optargs...)
@@ -86,10 +96,12 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         create_savepath=false,
                                         run_name=run_name,
                                         prompt=prompt,
-                                        verbose=verbose, v_lvl=v_lvl+1,
+                                        verbose=verbose, v_lvl=v_lvl,
                                         verbose_nsteps=verbose_nsteps,
                                         optargs...
                                         )
+
+    return pfield
 end
 
 
