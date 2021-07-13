@@ -429,10 +429,10 @@ function relaxation_correctedpedrizzetti(rlxf::Real, p::Particle)
     nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
     b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
-                                                    p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
-                                                    p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
-                                                    p.Gamma[3]*(p.J[2,1]-p.J[1,2])
-                                                  ) / (nrmGamma*nrmw))
+                                    p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
+                                    p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
+                                    p.Gamma[3]*(p.J[2,1]-p.J[1,2])
+                                   ) / (nrmGamma*nrmw))
 
     p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
     p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw

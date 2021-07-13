@@ -22,8 +22,8 @@ function plot_dynamics1n2(read_path;
                                     ],
                             figname="vortexrings", figsize=[7,5]*7/9,
                             plot_vpm=true,
-                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10,
-                            plot_ana=true, ana_args=[], ana_optargs=[],
+                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10, vpm_optargs=[],
+                            plot_ana=false, ana_args=[], ana_optargs=[],
                             ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0,
                             sidelegend=false
                             )
@@ -50,8 +50,12 @@ function plot_dynamics1n2(read_path;
 
         for ri in 1:nrings
 
-            xs = index_x=="t" ? ts : data[!, 1 + cols_per_ring*(ri - 1) + index_x]
-            ys = index_y=="t" ? ts : data[!, 1 + cols_per_ring*(ri - 1) + index_y]
+            xs =         index_x=="t" ? ts :
+                 index_x isa Function ? index_x(data, ri, cols_per_ring) :
+                                        data[!, 1 + cols_per_ring*(ri - 1) + index_x]
+            ys =         index_y=="t" ? ts :
+                 index_y isa Function ? index_y(data, ri, cols_per_ring) :
+                                        data[!, 1 + cols_per_ring*(ri - 1) + index_y]
 
             ax = axs[ploti]
 
@@ -67,7 +71,7 @@ function plot_dynamics1n2(read_path;
             if plot_vpm
                 ax.plot(scale_x*xs, scale_y*ys, vpm_stl;
                         label="Ring $(ri)"*vpm_lbl, color="$(clrs[ri])",
-                        alpha=vpm_alpha)
+                        alpha=vpm_alpha, vpm_optargs...)
             end
 
             if ri == nrings

@@ -41,7 +41,7 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "particlefield",
                     "UJ", "sgsmodels", "timeintegration",
-                    "utils"]
+                    "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
@@ -106,6 +106,7 @@ const standard_sgsscalings = (:sgs_scaling_none, )
 const nofreestream(t) = zeros(3)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
+const monitor_enstrophy = monitor_enstrophy_Gamma2
 const runtime_default = monitor_enstrophy
 const static_particles_default(pfield, t, dt) = nothing
 
@@ -117,6 +118,9 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
                                         kernel_gaussianerf, kernel_winckelmans],
         CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
     )
+
+
+# Default enstrophy monitor
 
 
 

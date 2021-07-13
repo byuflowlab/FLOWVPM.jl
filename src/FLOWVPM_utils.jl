@@ -136,46 +136,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 end
 
 """
-Runtime function that plots the enthopy of the particle field throughout the
-simulation.
-"""
-function monitor_enstrophy(pfield, t, dt; save_path=nothing, run_name="",
-                                                    suff="enstrophy.log",
-                                                    vprintln=(args...)->nothing,
-                                                    out=[])
-
-    # Calculate enstrophy
-    enstrophy = 0
-    for P in iterator(pfield)
-        enstrophy += (P.Gamma[1]*P.Gamma[1] + P.Gamma[2]*P.Gamma[2]
-                                                    + P.Gamma[3]*P.Gamma[3])
-    end
-
-    # Print to verbose
-    vprintln("enstrophy:\t$(enstrophy)")
-
-    # Save files
-    if save_path!=nothing
-        fname = run_name*"_"^(length(run_name)!=0)*suff
-
-        # Write to log file
-        f = open(joinpath(save_path, fname), "a")
-        if t==0 || pfield.nt==0
-            println(f, "nt", ",", "t (s)", ",", "enstrophy (m^6/s^2)")
-        end
-        println(f, pfield.nt, ",", t, ",", enstrophy)
-        close(f)
-
-    end
-
-    # Push to output array
-    push!(out, enstrophy)
-
-    return false
-end
-
-
-"""
   `save(pfield, file_name; path="")`
 
 Saves the particle field in HDF5 format and a XDMF file especifying its the
