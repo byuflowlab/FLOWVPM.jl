@@ -25,7 +25,7 @@ function plot_dynamics1n2(read_path;
                             vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10, vpm_optargs=[],
                             plot_ana=false, ana_args=[], ana_optargs=[],
                             ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0,
-                            sidelegend=false
+                            sidelegend=false, _fig=nothing, _axs=nothing
                             )
 
     data = CSV.read(joinpath(read_path, filename), DataFrames.DataFrame)
@@ -42,9 +42,10 @@ function plot_dynamics1n2(read_path;
     plot_grid = [size(to_plot, 1), size(to_plot, 2)]
     plot_gridt = [size(to_plot, 2), size(to_plot, 1)]
 
-    fig = plt.figure(figname, figsize=figsize.*plot_grid)
-    axs = fig.subplots(plot_gridt...)
-    if length(to_plot)==1; axs = [axs]; end;
+    fig = _fig == nothing ? plt.figure(figname, figsize=figsize.*plot_grid) : _fig
+    axs = _axs == nothing ? fig.subplots(plot_gridt...) : _axs
+
+    if length(to_plot)==1 && _axs==nothing; axs = [axs]; end;
 
     for (ploti, ((label_x, index_x, scale_x), (label_y, index_y, scale_y))) in enumerate(to_plot)
 
@@ -60,8 +61,12 @@ function plot_dynamics1n2(read_path;
             ax = axs[ploti]
 
             if plot_ana
-                xs_ana = index_x=="t" ? ts_ana : data_ana[index_x][ri]
-                ys_ana = index_y=="t" ? ts_ana : data_ana[index_y][ri]
+                xs_ana =     index_x=="t" ? ts_ana :
+                     index_x isa Function ? index_x(data_ana, ri, cols_per_ring; ana=true, ts_ana=ts_ana) :
+                                            data_ana[index_x][ri]
+                ys_ana =     index_y=="t" ? ts_ana :
+                     index_y isa Function ? index_y(data_ana, ri, cols_per_ring; ana=true, ts_ana=ts_ana) :
+                                            data_ana[index_y][ri]
 
                 ax.plot(scale_x*xs_ana, scale_y*ys_ana, ana_stl;
                             label="Ring $(ri)"*ana_lbl, color="$(clrs[ri])",
@@ -213,4 +218,7 @@ dGdZi(Ri, Zi, Rj, Zj; h=1e-5) = (Gwrap(Ri, Zi+h, Rj, Zj) - Gwrap(Ri, Zi, Rj, Zj)
 dGdRi(Ri, Zi, Rj, Zj; h=1e-5) = (Gwrap(Ri+h, Zi, Rj, Zj) - Gwrap(Ri, Zi, Rj, Zj)) / h
 
 # NOTE: I'm assuming that Winckelmans' kernel leads to Delta - 1/2 = -0.5. Is that right?
+# Hollow ring:            Delta - 0.5 = -0.5       (=> Delta = 0)
+# Uniform distribution:   Delta - 0.5 = -0.25      (=> Delta = 0.25)
+# Gaussian distribution:  Delta - 0.5 = -0.558     (=> Delta = -0.058)
 Vz(Gamma, R, a, Delta) = Gamma/(4*pi*R) * (log(8*R/a) - 1/2 + Delta)

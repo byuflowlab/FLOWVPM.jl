@@ -13,6 +13,14 @@ dot(A, B) = A[1]*B[1] + A[2]*B[2] + A[3]*B[3]
 norm(X) = sqrt(dot(X, X))
 cross(A, B) = [A[2]*B[3] - A[3]*B[2], A[3]*B[1] - A[1]*B[3], A[1]*B[2] - A[2]*B[1]]
 
+function mean(X)
+    val = 0
+    for x in X
+        val += x
+    end
+    return val/length(X)
+end
+
 "Number of particles used to discretized a ring"
 number_particles(Nphi, nc; extra_nc=0) = Int( Nphi * ( 1 + 8*sum(1:(nc+extra_nc)) ) )
 
@@ -73,7 +81,9 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
                                         # Non-dimensional arc length from 0 to a given value <=1
     fun_s(phi, a, b) = fun_S(phi, a, b)/fun_S(2*pi, a, b)
                                         # Angle associated to a given non-dimensional arc length
-    fun_phi(s, a, b) = Roots.fzero( phi -> fun_s(phi, a, b) - s, (0, 2*pi-eps()), atol=1e-16, rtol=1e-16)
+    fun_phi(s, a, b) = abs(s) <= eps() ? 0 :
+                     abs(s-1) <= eps() ? 2*pi :
+                     Roots.fzero( phi -> fun_s(phi, a, b) - s, (0, 2*pi-eps()), atol=1e-16, rtol=1e-16)
 
                                         # Length of a given filament in a
                                         # cross section cell
@@ -427,4 +437,120 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
     end
 
     return monitor_vortexring
+end
+
+
+function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
+                                    Gamma=1e-10, sigma=1, zdir=3)
+
+    # Original number of particles
+    org_np = vpm.get_np(pfield)
+
+    nprobes = length(xoRs)
+
+    X = zeros(3)
+
+    # Add probes
+    for ri in 1:nrings
+        for pi in 1:nprobes
+
+            X .= Z[ri]
+            for i in 1:3; X[i] += xoRs[pi]*R[ri]*probedir[i]; end;
+
+            vpm.add_particle(pfield, X, Gamma, sigma)
+        end
+    end
+
+    # Evaluate UJ
+    vpm._reset_particles(pfield)
+    pfield.UJ(pfield)
+
+    # Save vorticity at probes
+    for ri in 1:nrings
+        for pi in 1:nprobes
+            P = vpm.get_particle(pfield, org_np + nprobes*(ri-1) + pi)
+
+            ws[1, pi, ri] = vpm.get_W1(P)
+            ws[2, pi, ri] = vpm.get_W2(P)
+            ws[3, pi, ri] = vpm.get_W3(P)
+            Xs[:, pi, ri] .= P.X
+        end
+    end
+
+    # Remove probes
+    for pi in vpm.get_np(pfield):-1:org_np+1
+        vpm.remove_particle(pfield, pi)
+    end
+
+end
+
+"""
+    Generate a runtime function for monitoring vorticity distribution along
+lines of probes centered around each ring.
+"""
+function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
+                                            nprobes=100,
+                                            linefactor=1.5, probedir=[1,0,0],
+                                            save_path=nothing, fname_pref="vortexring",
+                                            outs=nothing)
+
+    # File names
+    fnames = [joinpath(save_path, fname_pref*"-vorticity-ring$(ri)") for ri in 1:nrings]
+
+    # Position of probe line
+    xoRs = linefactor*range(-1, 1, length=nprobes)
+
+    # Pre-allocate memory
+    Z = [zeros(3) for ri in 1:nrings]            # Centroid of each ring
+    R = zeros(nrings)                            # Radius of each ring
+    sgm = zeros(nrings)                          # Average smoothing of each ring
+    ws = zeros(3, nprobes, nrings)               # Probed vorticity on each ring
+    Xs = zeros(3, nprobes, nrings)               # Probe position on each ring
+
+    # VTK-related memory
+    points = [[view(Xs, 1:3, pi, ri) for pi in 1:nprobes] for ri in 1:nrings]
+    lines = [[collect(0:nprobes-1)] for ri in 1:nrings]
+    data = [[
+            Dict(
+                  "field_name" => "W",
+                  "field_type" => "vector",
+                  "field_data" => [view(ws, 1:3, pi, ri) for pi in 1:nprobes]
+                )
+            ] for ri in 1:nrings]
+
+    # Particle-count intervals of each ring
+    intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
+
+    function monitor_ringvorticity(pfield, t, args...; optargs...)
+
+        # Calculate the centroid, radius, and thickness of the rings
+        calc_rings_weighted!(Z, R, sgm, pfield, nrings, intervals)
+
+        # Calculate vorticity vectors
+        calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir; sigma=mean(sgm))
+
+        # Write output vtk file and/or save to output arrays
+        for ri in 1:nrings
+
+            # Save to VTK file
+            if save_path != nothing
+
+                gt.generateVTK(fnames[ri], points[ri];
+                                    lines=lines[ri], point_data=data[ri],
+                                    path=save_path, num=pfield.nt)
+            end
+
+            # Save to array
+            if outs != nothing
+                push!(outs[1], deepcopy(Xs))
+                push!(outs[2], deepcopy(ws))
+            end
+
+        end
+
+        return false
+
+    end
+
+    return monitor_ringvorticity
 end

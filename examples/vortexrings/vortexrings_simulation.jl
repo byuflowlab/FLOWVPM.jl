@@ -37,6 +37,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         verbose_nsteps=100,
                                         calc_monitors=true,
                                         mon_enstrophy=vpm.monitor_enstrophy,
+                                        monitor_others=(args...; optargs...) -> false,
                                         ringmon_optargs=[],
                                         optargs...
                                         )
@@ -82,7 +83,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
 
     function monitors(args...; optargs...)
         if calc_monitors
-            return monitor_enstrophy_this(args...; optargs...) || monitor_vortexring(args...; optargs...)
+            return monitor_enstrophy_this(args...; optargs...) || monitor_vortexring(args...; optargs...) || monitor_others(args...; optargs...)
         else
             return false
         end
