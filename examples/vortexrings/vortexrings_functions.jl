@@ -11,7 +11,16 @@
 
 dot(A, B) = A[1]*B[1] + A[2]*B[2] + A[3]*B[3]
 norm(X) = sqrt(dot(X, X))
-cross(A, B) = [A[2]*B[3] - A[3]*B[2], A[3]*B[1] - A[1]*B[3], A[1]*B[2] - A[2]*B[1]]
+function cross(A,B)
+    out = zeros(3)
+    cross!(out, A, B)
+    return out
+end
+function cross!(out, A, B)
+    out[1] = A[2]*B[3] - A[3]*B[2]
+    out[2] = A[3]*B[1] - A[1]*B[3]
+    out[3] = A[1]*B[2] - A[2]*B[1]
+end
 
 function mean(X)
     val = 0
@@ -443,11 +452,8 @@ end
 function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
                                     Gamma=1e-10, sigma=1, zdir=3)
 
-    # Original number of particles
-    org_np = vpm.get_np(pfield)
-
+    org_np = vpm.get_np(pfield)        # Original number of particles
     nprobes = length(xoRs)
-
     X = zeros(3)
 
     # Add probes
