@@ -81,10 +81,8 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
     this_monitor_others(args...; optargs...) = monitor_others(args...; optargs...) || monitor_ringvorticity(args...; optargs...)
 
     return run_vortexring_simulation(pfield, dt,
-                                            nrings, circulations,
-                                            Rs, ARs, Rcrosss,
-                                            Nphis, zeros(nrings), zeros(nrings), sigmas,
-                                            Os, Oaxiss;
+                                            nrings,
+                                            Nphis, zeros(nrings), zeros(nrings);
                                             save_path=save_path,
                                             verbose=verbose,
                                             v_lvl=v_lvl,

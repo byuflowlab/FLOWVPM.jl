@@ -17,10 +17,8 @@ isolation and inviscid flow (calculated through the function `Uring(...)`).
 The time step `dt` is then calculated as `dt = (Rtot/Uring) / nsteps`
 """
 function run_vortexring_simulation(pfield::vpm.ParticleField, dt::Real,
-                                        nrings::Int, circulations,
-                                        Rs, ARs, Rcrosss,
-                                        Nphis, ncs, extra_ncs, sigmas,
-                                        Os, Oaxiss;
+                                        nrings::Int,
+                                        Nphis, ncs, extra_ncs;
                                         # ------- SIMULATION OPTIONS -----------
                                         runtime_function=(args...; optargs...)->false,
                                         # ------- OUTPUT OPTIONS ---------------
@@ -123,10 +121,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
     end
 
     return run_vortexring_simulation(pfield, dt,
-                                            nrings, circulations,
-                                            Rs, ARs, Rcrosss,
-                                            Nphis, ncs, extra_ncs, sigmas,
-                                            Os, Oaxiss;
+                                            nrings, Nphis, ncs, extra_ncs;
                                             verbose=verbose,
                                             v_lvl=v_lvl,
                                             optargs...

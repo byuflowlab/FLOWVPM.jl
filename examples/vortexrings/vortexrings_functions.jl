@@ -432,8 +432,8 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
             end
 
             if outs[fi] != nothing
-                push!(outs[fi], [t])
-                push!(outs[fi][end], Z, R, a)
+                push!(outs[fi], Any[t])
+                push!(outs[fi][end], deepcopy(Z), deepcopy(R), deepcopy(a))
             end
         end
 
@@ -501,7 +501,8 @@ function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
                                             outs=nothing)
 
     # File names
-    fnames = [joinpath(save_path, fname_pref*"-vorticity-ring$(ri)") for ri in 1:nrings]
+    fnames = [joinpath(save_path, fname_pref*"-vorticity-ring$(ri)")
+                                for ri in 1:(save_path!=nothing ? nrings : -1)]
 
     # Position of probe line
     xoRs = linefactor*range(-1, 1, length=nprobes)
