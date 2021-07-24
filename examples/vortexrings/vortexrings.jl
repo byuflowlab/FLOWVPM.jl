@@ -56,6 +56,7 @@ end
 
 header_path = splitdir(@__FILE__)[1]      # Path to this header
 
-for header_name in ["functions", "simulation", "postprocessing"]
+for header_name in ["functions", "simulation", "postprocessing",
+                    "functions_grid", "simulation_grid"]
     include(joinpath( header_path, "vortexrings_"*header_name*".jl" ))
 end
