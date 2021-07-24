@@ -38,7 +38,7 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
                             R::Real, AR::Real, Rcross::Real,
                             dxoRcross::Real, sigma::Real, minmagGamma::Real;
                             O::Vector{<:Real}=zeros(3), Oaxis=I,
-                            fx=1.25, fy=1.25, fz=1.75,
+                            fx=3.00, fy=3.00, fz=1.75,
                             zeta=(r,Rcross) -> 1/(pi*Rcross^2) * exp(-r^2/Rcross^2),
                             verbose=true, v_lvl=0
                             )
@@ -61,8 +61,8 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
     Xlo, Xup, Xc, X = zeros(3), zeros(3), zeros(3), zeros(3)
 
     # Define grid
-    Lx = fx*2*(a+Rcross)
-    Ly = fy*2*(b+Rcross)
+    Lx = fx*2*Rcross + 2*a
+    Ly = fy*2*Rcross + 2*b
     Lz = fz*2*Rcross
 
     dx = dxoRcross*Rcross
