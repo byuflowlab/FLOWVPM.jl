@@ -301,6 +301,69 @@ end
 
 
 """
+Calculate centroid, radius, and cross-section radius of all rings from the
+position of particles weighted by local vorticity.
+"""
+function calc_rings_weightedW2!(outZ, outR, outsgm, pfield, nrings, intervals; zdir=3)
+
+    # Iterate over each ring
+    for ri in 1:nrings
+
+        # Calculate centroid
+        outZ[ri] .= 0
+        magW2tot = 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+            W2 = vpm.get_W1(P)^2 + vpm.get_W2(P)^2 + vpm.get_W3(P)^2
+            magW2tot += W2
+
+            for i in 1:3
+                outZ[ri][i] += W2*P.X[i]
+            end
+
+        end
+        outZ[ri] ./= magW2tot
+
+        # Calculate the ring's first and second radial moment radius
+        # NOTE: This assumes that the ring travels in the z-direction
+        outR[ri]= 0
+        Wthttot = 0
+        R22 = 0
+        for pi in (intervals[ri]+1):(intervals[ri+1])
+
+            P = vpm.get_particle(pfield, pi)
+
+            r = 0
+            for i in 1:3; r += (i!=zdir)*(P.X[i] - outZ[ri][i])^2; end;
+            r = sqrt(r)
+
+            tht = zdir==1 ? atan(P.X[3], P.X[2]) :
+                  zdir==2 ? atan(P.X[1], P.X[3]) :
+                            atan(P.X[2], P.X[1])
+
+            Wtht = zdir==1 ? vpm.get_W2(P)*cos(tht) + vpm.get_W3(P)*sin(tht) :
+                   zdir==2 ? vpm.get_W3(P)*cos(tht) + vpm.get_W1(P)*sin(tht) :
+                             vpm.get_W1(P)*cos(tht) + vpm.get_W2(P)*sin(tht)
+
+            Wthttot += Wtht
+
+            outR[ri] += r*Wtht
+            R22 += r^2*Wtht
+        end
+        outR[ri] /= Wthttot
+        R22 /= Wthttot
+
+        # Calculate the ring's w-weighted core size
+        outsgm[ri] = sqrt(2*abs(R22 - outR[ri]^2))
+
+    end
+
+    return nothing
+end
+
+
+"""
 Calculate ring radius in x and y from all rings from the position of particles
 weighted by vortex strength in y and x, respectively.
 """
@@ -358,19 +421,20 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
                                         save_path=nothing,
                                         fname_pref="vortexring",
                                         unitx=(1,0,0), unity=(0,1,0),
-                                        out1=nothing, out2=nothing, out3=nothing)
+                                        out1=nothing, out2=nothing,
+                                        out3=nothing, out4=nothing)
 
     # File names
     fnames = Tuple(joinpath(save_path, fname_pref*"-dynamics$(fi).csv")
-                                      for fi in 1:(save_path!=nothing ? 3 : -1))
+                                      for fi in 1:(save_path!=nothing ? 4 : -1))
 
     # Pre-allocate memory
-    Z1, Z2 = [zeros(3) for ri in 1:nrings], [zeros(3) for ri in 1:nrings]
-    R1, R2 = zeros(nrings), zeros(nrings)
-    sgm1, sgm2 = zeros(nrings), zeros(nrings)
+    Z1, Z2, Z4 = ([zeros(3) for ri in 1:nrings] for i in 1:3)
+    R1, R2, R4 = (zeros(nrings) for i in 1:3)
+    sgm1, sgm2, sgm4 = (zeros(nrings) for i in 1:3)
     R3p = [zeros(2) for ri in 1:nrings]
     R3m = [zeros(2) for ri in 1:nrings]
-    outs = (out1, out2, out3)
+    outs = (out1, out2, out3, out4)
 
     intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
 
@@ -386,7 +450,7 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
                 print(f, "t")                   # t = time stamp
                 for ri in 1:nrings              # Z = centroid
                     print(f, ",Zx$(ri),Zy$(ri),Zz$(ri)")
-                    if fi==1 || fi==2
+                    if fi==1 || fi==2 || fi==4
                         print(f, ",R$(ri)")     # R = ring radius
                     else                        # - and + radius in each dim
                         print(f, ",Rxm$(ri),Rym$(ri)")
@@ -413,14 +477,19 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
         calc_elliptic_radius(R3m, R3p, Z2, pfield, nrings, intervals;
                                                        unitx=unitx, unity=unity)
 
+       # Calculate the centroid, radius, and thickness of the ring from
+       # the position of all particles weighted by local vorticity
+       calc_rings_weightedW2!(Z4, R4, sgm4, pfield, nrings, intervals)
+
         # Write ring to file and/or save to output arrays
-        for (fi, Z, R, a) in ((1, Z1, R1, sgm1), (2, Z2, R2, sgm2), (3, Z2, (R3m, R3p), sgm2))
+        for (fi, Z, R, a) in ((1, Z1, R1, sgm1), (2, Z2, R2, sgm2),
+                                (3, Z2, (R3m, R3p), sgm2), (4, Z4, R4, sgm4))
             if save_path != nothing
                 f = fs[fi]
                 print(f, t)
                 for ri in 1:nrings
                     for dim in 1:3; print(f, ",", Z[ri][dim]); end;
-                    if fi==1 || fi==2
+                    if fi==1 || fi==2 || fi==4
                         print(f, ",", R[ri])
                     else
                         for dim in 1:2; print(f, ",", R[1][ri][dim]); end;
