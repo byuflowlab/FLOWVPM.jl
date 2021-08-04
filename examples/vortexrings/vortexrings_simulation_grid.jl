@@ -27,6 +27,9 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                         Rtot=10.0,      # Runs the simulation for this long (in radii distances)
                                         beta=0.5,       # Parameter for theoretical velocity
                                         faux=1.0,       # Shrinks the discretized core by this factor
+                                        zeta=(r,Rcross) -> 1/(pi*Rcross^2) * exp(-r^2/Rcross^2), # Analytic vorticity distribution
+                                        rbf=false,      # If true, it runs an RBF interpolation to match the analytic vorticity
+                                        rbf_optargs=[(:itmax,200), (:tol,1e-2), (:iterror,true), (:verbose,true), (:debug,false)],
                                         # ------- OUTPUT OPTIONS ---------------
                                         save_path=save_path,
                                         verbose=true,           # Enable verbose
@@ -57,9 +60,29 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                 dxoRcrosss[ri], sigmas[ri], minmagGamma,
                                 O=Os[ri],
                                 Oaxis=Oaxiss[ri];
+                                zeta=zeta,
                                 addringoptargs...
                               )
         push!(Nphis, Nphi)
+    end
+
+    if rbf
+        # Generate analytic vorticity field
+        W_fun! = generate_Wfun(nrings, circulations,
+                                    Rs, ARs, Rcrosss, Os, Oaxiss; zeta=zeta)
+        W = zeros(3)
+
+        # Use analytic vorticity as target vorticity (stored under P.M[7:9])
+        for P in vpm.iterator(pfield)
+            W .= 0
+            W_fun!(W, P.X)
+            for i in 1:3
+                P.M[i+6] = W[i]
+            end
+        end
+        # RBF interpolation of the analytic distribution
+        viscous = vpm.CoreSpreading(-1, -1, vpm.zeta_fmm; v_lvl=v_lvl+1, rbf_optargs...)
+        vpm.rbf_conjugategradient(pfield, viscous)
     end
 
     if verbose
