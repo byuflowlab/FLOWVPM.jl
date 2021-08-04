@@ -272,8 +272,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
 
         for i in 1:3                          # alpha = rr./pAp
-            # cs.alphas[i] = cs.rrs[i]/cs.pAps[i] * cs.flags[i]
-            cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
+            cs.alphas[i] = cs.rrs[i]/cs.pAps[i] * cs.flags[i]
+            # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
         end
 
         cs.prev_rrs .= cs.rrs
@@ -290,6 +290,13 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.betas .= cs.rrs
         cs.betas ./= cs.prev_rrs
 
+        # Avoid dividing by zero
+        for i in 1:3
+            if abs(cs.prev_rrs[i]) <= 2*eps()
+                cs.betas[i] = 1
+            end
+        end
+
         for P in iterator(pfield)
             for i in 1:3
                 P.Gamma[i] = P.M[i+3] + cs.betas[i]*P.Gamma[i]
@@ -297,7 +304,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
 
         for i in 1:3
-            cs.flags[i] *= sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+            cs.flags[i] *= abs(cs.rr0s[i]) <= 2*eps() ? false : sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
         end
 
         # Non-convergenced case
@@ -340,6 +347,21 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
                 "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
                 "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_particle(pfield, 1).Jexa[1:3], digits=8))")
         println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
+
+        rms_ini, rms_resend = zeros(3), zeros(3)
+
+        for P in iterator(pfield)
+            for i in 1:3
+                rms_ini[i] += P.M[i+6]^2
+                rms_resend[i] += (P.Jexa[i] - P.M[i+6])^2
+            end
+        end
+        for i in 1:3
+            rms_ini[i] = sqrt(rms_ini[i])
+            rms_resend[i] = sqrt(rms_resend[i])
+        end
+
+        println("\t"^(cs.v_lvl+1)*"RMS residual / RMS Wtarg: $(rms_resend./rms_ini)\n")
     end
 
     return nothing
