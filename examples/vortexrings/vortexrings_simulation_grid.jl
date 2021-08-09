@@ -30,6 +30,7 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                         zeta=(r,Rcross) -> 1/(pi*Rcross^2) * exp(-r^2/Rcross^2), # Analytic vorticity distribution
                                         rbf=false,      # If true, it runs an RBF interpolation to match the analytic vorticity
                                         rbf_optargs=[(:itmax,200), (:tol,1e-2), (:iterror,true), (:verbose,true), (:debug,false)],
+                                        precondition_sigma=false, # If true, it pre-conditions sigma to conserve mass in rVPM
                                         # ------- OUTPUT OPTIONS ---------------
                                         save_path=save_path,
                                         verbose=true,           # Enable verbose
@@ -64,6 +65,23 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                 addringoptargs...
                               )
         push!(Nphis, Nphi)
+
+        # Modify smoothing radii to pre-condition conservation of mass in rVPM scheme
+        if precondition_sigma
+            for P in vpm.iterator(pfield; start_i=vpm.get_np(pfield)-Nphi+1)
+
+                x = (P.X[1]-Os[ri][1])*Oaxiss[ri][1, 1] + (P.X[2]-Os[ri][2])*Oaxiss[ri][2, 1] + (P.X[3]-Os[ri][3])*Oaxiss[ri][3, 1]
+                y = (P.X[1]-Os[ri][1])*Oaxiss[ri][1, 2] + (P.X[2]-Os[ri][2])*Oaxiss[ri][2, 2] + (P.X[3]-Os[ri][3])*Oaxiss[ri][3, 2]
+                x /= sqrt(ARs[ri])
+                y *= sqrt(ARs[ri])
+
+                rho = sqrt(x^2 + y^2)               # Radius from centroid
+
+                P.sigma .*= sqrt(Rs[ri]/rho)
+                P.vol .*= Rs[ri]/rho
+            end
+        end
+
     end
 
     if rbf
