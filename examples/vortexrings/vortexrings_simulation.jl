@@ -16,7 +16,8 @@ reference ring `nref` would take to travel a distance of `Rtot` radii in
 isolation and inviscid flow (calculated through the function `Uring(...)`).
 The time step `dt` is then calculated as `dt = (Rtot/Uring) / nsteps`
 """
-function run_vortexring_simulation(pfield::vpm.ParticleField, dt::Real,
+function run_vortexring_simulation(pfield::vpm.ParticleField, nsteps::Int,
+                                        dt::Real,
                                         nrings::Int,
                                         Nphis, ncs, extra_ncs;
                                         # ------- SIMULATION OPTIONS -----------
@@ -120,7 +121,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
         @printf "%sTime step:\t\t\t\t%1.5e s\n"                       "\t"^(v_lvl+1) dt
     end
 
-    return run_vortexring_simulation(pfield, dt,
+    return run_vortexring_simulation(pfield, nsteps, dt,
                                             nrings, Nphis, ncs, extra_ncs;
                                             verbose=verbose,
                                             v_lvl=v_lvl,

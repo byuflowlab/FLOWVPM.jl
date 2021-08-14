@@ -11,8 +11,7 @@
 
 
 
-
-function plot_dynamics1n2(read_path;
+function plot_dynamics(read_path;
                             filename="vortexring-dynamics1.csv",
                             cols_per_ring=5,
                             to_plot=[#  ((label_x, index_x, scale_x), (label_y, index_y, scale_y))
@@ -25,6 +24,7 @@ function plot_dynamics1n2(read_path;
                             vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10, vpm_optargs=[],
                             plot_ana=false, ana_args=[], ana_optargs=[], lbl_pref="automatic",
                             ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0,
+                            grid_optargs=(color="0.8", linestyle=":"),
                             sidelegend=false, _fig=nothing, _axs=nothing
                             )
 
@@ -82,7 +82,7 @@ function plot_dynamics1n2(read_path;
             if ri == nrings
                 ax.set_xlabel(label_x)
                 ax.set_ylabel(label_y)
-                ax.grid(true, color="0.8", linestyle=":")
+                ax.grid(true; grid_optargs...)
                 if ploti == length(to_plot)
                     if sidelegend
                         ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=false)
@@ -101,6 +101,7 @@ function plot_dynamics1n2(read_path;
     return fig, axs
 end
 
+plot_dynamics1n2 = plot_dynamics
 
 
 """
