@@ -175,7 +175,7 @@ function generate_Wfun(circulation::Real,
         y = (X[1]-O[1])*Oaxis[1, 2] + (X[2]-O[2])*Oaxis[2, 2] + (X[3]-O[3])*Oaxis[3, 2]
         z = (X[1]-O[1])*Oaxis[1, 3] + (X[2]-O[2])*Oaxis[2, 3] + (X[3]-O[3])*Oaxis[3, 3]
 
-        # Wrap space to make it ellipsoid
+        # Warp space to make it ellipsoid
         # NOTE: I'm not sure I'm converting things correctly here
         x /= sqrt(AR)
         y *= sqrt(AR)
@@ -194,12 +194,18 @@ function generate_Wfun(circulation::Real,
         for f in (-1, 1)
 
             # Convert cylindrical to toroidal coordinates
-            r = sqrt( (rho + f*Reff)^2 + z^2 ) # Radius from centerline
-            theta = asin(z/r)              # Angle from centerline
+            # r = sqrt( (rho + f*Reff)^2 + z^2 ) # Radius from centerline
+            # theta = asin(z/r)              # Angle from centerline
 
             # Calculate vorticity magnitude
             # NOTE: Nor here
-            magW = f*circulation*zeta(r * Rcross/Rcrosseff, Rcross)
+            # magW = f*circulation*zeta(r * Rcross/Rcrosseff, Rcross)
+            # magW = f*circulation*zeta(r, Rcrosseff)
+            # magW = f*circulation*zeta(r, Rcross)
+
+
+            r = sqrt( (rho + f*Reff)^2 + (Rcrosseff/Rcross*z)^2 ) # Radius from centerline
+            magW = f*circulation*(Rcrosseff/Rcross)^2*zeta(r, Rcrosseff)
 
             # Calculate vorticity unitary direction in ring's Cartesian coordiantes
             Txr, Tyr, Tzr = cos(phi), -sin(phi), 0
