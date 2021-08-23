@@ -21,9 +21,9 @@ function plot_dynamics(read_path;
                                     ],
                             figname="vortexrings", figsize=[7,5]*7/9,
                             plot_vpm=true,
-                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", vpm_alpha=0.10, vpm_optargs=[],
+                            vpm_stl=".", clrs="rbcmgy"^10, vpm_lbl=" VPM", alt_vpm_lbl=nothing, vpm_alpha=0.10, vpm_optargs=[],
                             plot_ana=false, ana_args=[], ana_optargs=[], lbl_pref="automatic",
-                            ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0,
+                            ana_stl="-", ana_lbl=" Analytic", ana_alpha=1.0, alt_ana_lbl=nothing, ana_clrs=nothing,
                             grid_optargs=(color="0.8", linestyle=":"),
                             sidelegend=false, _fig=nothing, _axs=nothing
                             )
@@ -69,13 +69,14 @@ function plot_dynamics(read_path;
                                             data_ana[index_y][ri]
 
                 ax.plot(scale_x*xs_ana, scale_y*ys_ana, ana_stl;
-                            label=(lbl_pref=="automatic" ? "Ring $(ri)" : lbl_pref)*ana_lbl, color="$(clrs[ri])",
+                            label=alt_ana_lbl!=nothing ? alt_ana_lbl[ri] : (lbl_pref=="automatic" ? "Ring $(ri)" : lbl_pref)*ana_lbl,
+                            color=ana_clrs!=nothing ? "$(ana_clrs[ri])" : "$(clrs[ri])",
                             alpha=ana_alpha)
             end
 
             if plot_vpm
                 ax.plot(scale_x*xs, scale_y*ys, vpm_stl;
-                        label=(lbl_pref=="automatic" ? "Ring $(ri)" : lbl_pref)*vpm_lbl, color="$(clrs[ri])",
+                        label= alt_vpm_lbl!=nothing ? alt_vpm_lbl[ri] : (lbl_pref=="automatic" ? "Ring $(ri)" : lbl_pref)*vpm_lbl, color="$(clrs[ri])",
                         alpha=vpm_alpha, vpm_optargs...)
             end
 
@@ -123,7 +124,8 @@ associated with vorticity distribution inside the ring core (Winckelmans' kernel
 corresponds to `Delta=0`).
 """
 function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
-                                        tend=20.0, dtmax=0.1, dynamica=true)
+                                tend=20.0, dtmax=0.1, dynamica=true, nu=nothing,
+                                thickgaussian=false)
 
     # Initial conditions
     u0 = vcat([[Gammas[ri], Rs[ri], Zs[ri], as[ri], Deltas[ri]] for ri in 1:nrings]...)
@@ -156,7 +158,6 @@ function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
             du[ri_eq+2] = 0
             du[ri_eq+3] = Vz(Gammai, Ri, ai, Deltai)
             # du[ri_eq+4] = 0
-            du[ri_eq+5] = 0
 
             for rj in 1:nrings           # Iterate over source rings
                 if ri != rj
@@ -183,6 +184,21 @@ function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
             else
                 du[ri_eq+4] = 0
             end
+
+            # Calculate dotai = nu / ai
+            if nu != nothing
+                du[ri_eq+4] += 2*nu/ai
+            end
+
+            # Calculate dotDeltai = -1.12*2*eps*doteps - 5.0*4*eps^3*doteps
+            if thickgaussian
+                epsi = ai/Ri
+                depsidt = du[ri_eq+4]/Ri - ai/Ri^2*du[ri_eq+2]
+                du[ri_eq+5] = -1.12*2*epsi*depsidt -5.0*4*epsi^3*depsidt
+            else
+                du[ri_eq+5] = 0
+            end
+
 
         end
 
