@@ -32,6 +32,7 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                         rbf_optargs=[(:itmax,200), (:tol,1e-2), (:iterror,true), (:verbose,true), (:debug,false)],
                                         precondition_sigma=false, # If true, it pre-conditions sigma to conserve mass in rVPM
                                         restart_file=nothing,
+                                        restart_sigma=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
                                         save_path=save_path,
                                         verbose=true,           # Enable verbose
