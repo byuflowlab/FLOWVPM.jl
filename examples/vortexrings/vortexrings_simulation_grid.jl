@@ -31,6 +31,7 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                         rbf=false,      # If true, it runs an RBF interpolation to match the analytic vorticity
                                         rbf_optargs=[(:itmax,200), (:tol,1e-2), (:iterror,true), (:verbose,true), (:debug,false)],
                                         precondition_sigma=false, # If true, it pre-conditions sigma to conserve mass in rVPM
+                                        restart_file=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
                                         save_path=save_path,
                                         verbose=true,           # Enable verbose
@@ -83,8 +84,32 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
         end
 
     end
+    if restart_file != nothing
+        # Read restart file, overwritting the particle field
+        vpm.read!(pfield, h5_fname; overwrite=true, load_time=true)
 
-    if rbf
+        if restart_sigma != nothing
+
+            # Evaluate current vorticity field (gets stored under P.Jexa[1:3])
+            vpm.zeta_fmm(pfield)
+
+            # Resize particle cores and store target vorticity under P.M[7:9]
+            for P in vpm.iterate(pfield)
+
+                P.sigma[1] = restart_sigma
+
+                for i in 1:3
+                    P.M[i+6] = P.Jexa[i]
+                end
+            end
+
+            # Calculate the new vortex strenghts through RBF
+            viscous = vpm.CoreSpreading(-1, -1, vpm.zeta_fmm; v_lvl=v_lvl+1, rbf_optargs...)
+            vpm.rbf_conjugategradient(pfield, viscous)
+
+        end
+
+    elseif rbf
         # Generate analytic vorticity field
         W_fun! = generate_Wfun(nrings, circulations,
                                     Rs, ARs, Rcrosss, Os, Oaxiss; zeta=zeta)
