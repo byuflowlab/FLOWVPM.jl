@@ -86,7 +86,7 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
     end
     if restart_file != nothing
         # Read restart file, overwritting the particle field
-        vpm.read!(pfield, h5_fname; overwrite=true, load_time=true)
+        vpm.read!(pfield, restart_file; overwrite=true, load_time=true)
 
         if restart_sigma != nothing
 
