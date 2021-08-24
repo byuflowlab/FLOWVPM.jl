@@ -117,6 +117,8 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
                                         kernel_singular, kernel_gaussian,
                                         kernel_gaussianerf, kernel_winckelmans],
         CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
+        ParticleStrengthExchange.body.name => [gaussianerf, winckelmans,
+                                        kernel_gaussianerf, kernel_winckelmans],
     )
 
 

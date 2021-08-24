@@ -190,9 +190,79 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
     end
 end
+##### END OF CORE SPREADING SCHEME #############################################
 
 
 
+################################################################################
+# PARTICLE STRENGTH EXCHANGE SCHEME TYPE
+################################################################################
+mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
+    # User inputs
+    nu::R                                 # Kinematic viscosity
+
+    # Optional inputs
+    recalculate_vols::Bool                # Whether to recalculate volumes
+
+    ParticleStrengthExchange{R}(
+                                    nu; recalculate_vols=true
+                                ) where {R} = new(
+                                    nu, recalculate_vols
+                                )
+end
+
+ParticleStrengthExchange(nu, args...; optargs...
+                    ) = ParticleStrengthExchange{RealFMM}(RealFMM(nu), args...; optargs...)
+
+function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
+
+    if pfield.UJ != UJ_fmm
+        # NOTE: PSE has only been implemented with FMM so far
+        error("PSE with UJ function $(pfield.UJ) has not been implemented yet!")
+    end
+
+    # Recalculate particle volume from current particle smoothing
+    if scheme.recalculate_vols
+        for p in iterator(pfield)
+            p.vol[1] = 4/3*pi*p.sigma[1]^3
+        end
+    end
+
+    # ------------------ EULER SCHEME ------------------------------------------
+    if pfield.integration == euler
+
+        # Update Gamma
+        for p in iterator(pfield)
+            for i in 1:3
+                p.Gamma[i] += dt * scheme.nu*p.PSE[i]
+            end
+        end
+
+    # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
+    elseif pfield.integration == rungekutta3
+
+        # Update Gamma
+        for p in iterator(pfield)
+            for i in 1:3
+                p.M[i, 2] += dt * scheme.nu*p.PSE[i]
+                p.Gamma[i] += aux2 * dt * scheme.nu*p.PSE[i]
+            end
+        end
+
+    # ------------------ DEFAULT -----------------------------------------------
+    else
+        error("Time integration scheme $(pfield.integration) not"*
+                        " implemented in PSE viscous scheme yet!")
+    end
+
+end
+##### END OF PARTICLE STRENGTH EXCHANGE SCHEME ###################################
+
+
+
+
+
+##### COMMON FUNCTIONS #########################################################
 
 """
 Radial basis function interpolation of Gamma using the conjugate gradient
@@ -409,8 +479,4 @@ the FMM neglecting the far field, saving the results under P.Jexa[1:3].
 function zeta_fmm(pfield)
     call_FLOWExaFMM(pfield; rbf=true)
 end
-##### END OF CORE SPREADING SCHEME #############################################
-
-
-##### COMMON FUNCTIONS #########################################################
 ################################################################################

@@ -292,6 +292,10 @@ function _reset_particle(P::Particle{T}, tzero::T) where {T}
     P.J[1, 3] = tzero
     P.J[2, 3] = tzero
     P.J[3, 3] = tzero
+
+    P.PSE[1] = tzero
+    P.PSE[2] = tzero
+    P.PSE[3] = tzero
 end
 _reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 

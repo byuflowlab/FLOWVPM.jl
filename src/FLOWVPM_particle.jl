@@ -40,6 +40,7 @@ struct Particle{T}
   # Properties
   U::Array{T, 1}                # Velocity at particle (3-elem array)
   J::Array{T, 2}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  PSE::Array{T, 1}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
   M::Array{T, 2}                # 3x3 array of auxiliary memory
@@ -56,7 +57,7 @@ end
 Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 1),  zeros(T, 1),
                                                       zeros(T, 1),
-                                                      zeros(T, 3), zeros(T, 3, 3),
+                                                      zeros(T, 3), zeros(T, 3, 3), zeros(T, 3),
                                                       zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
@@ -75,6 +76,7 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 zeros(RealFMM, 1),
                                                 zeros(RealFMM, 3),
                                                 zeros(RealFMM, 3, 3),
+                                                fmm.get_pseref(body),
                                                 zeros(RealFMM, 3, 3),
                                                 fmm.get_Jref(body),
                                                 fmm.get_dJdx1ref(body),
