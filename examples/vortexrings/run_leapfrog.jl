@@ -42,14 +42,13 @@ Re        = 3000                        # Reynolds number Re = Gamma/nu
 
 # -------------- SOLVER SETTINGS -------------------------------------------
 solver = (
-    formulation   = vpm.formulation_reclassic,
+    formulation   = vpm.cVPM,
     sgsmodel      = vpm.sgs_none,
     relaxation    = vpm.correctedpedrizzetti,
     kernel        = vpm.winckelmans,
     viscous       = vpm.Inviscid(),
     transposed    = true,
     integration   = vpm.rungekutta3,
-    relax         = true,
     UJ            = vpm.UJ_fmm,
     fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5)
 )
@@ -69,8 +68,6 @@ pfield = run_vortexring_simulation(  nrings, circulations,
                                     Rtot=Rtot,
                                     beta=beta,
                                     faux=faux,
-                                    # ------- SOLVER OPTIONS ---------------
-                                    nsteps_relax=1,
                                     # ------- OUTPUT OPTIONS ---------------
                                     save_path=save_path,
                                     calc_monitors=true,

@@ -46,14 +46,13 @@ for (description, integration, UJ, nc) in (
 
         # -------------- SOLVER SETTINGS -------------------------------------------
         solver = (
-            formulation   = vpm.formulation_reclassic,
+            formulation   = vpm.cVPM,
             sgsmodel      = vpm.sgs_none,
             relaxation    = vpm.correctedpedrizzetti,
             kernel        = vpm.winckelmans,
             viscous       = vpm.Inviscid(),
             transposed    = true,
             integration   = integration,
-            relax         = true,
             UJ            = UJ,
             fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5)
         )
@@ -73,8 +72,6 @@ for (description, integration, UJ, nc) in (
                                             Rtot=Rtot,
                                             beta=beta,
                                             faux=faux,
-                                            # ------- SOLVER OPTIONS ---------------
-                                            nsteps_relax=1,
                                             # ------- OUTPUT OPTIONS ---------------
                                             save_path=nothing,
                                             calc_monitors=false,

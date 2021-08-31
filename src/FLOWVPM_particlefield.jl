@@ -36,9 +36,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     sgsscaling::Function                        # Scaling factor of SGS contributions
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
-    relaxation::Function                        # Relaxation scheme
-    relax::Bool                                 # Enables relaxation scheme
-    rlxf::R                                     # Relaxation factor (fraction of dt)
+    relaxation::Relaxation{R}                   # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
@@ -56,7 +54,6 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 integration=rungekutta3,
                                 transposed=true,
                                 relaxation=relaxation_default,
-                                relax=true, rlxf=R(0.3),
                                 fmm=FMM(),
                                 M=zeros(R, 4)
                          ) where {R, F, V} = new(
@@ -71,7 +68,6 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 integration,
                                 transposed,
                                 relaxation,
-                                relax, rlxf,
                                 fmm,
                                 M
                           )

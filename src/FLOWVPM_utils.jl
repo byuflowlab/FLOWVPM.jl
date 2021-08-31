@@ -29,7 +29,6 @@ Solves `nsteps` of the particle field with a time step of `dt`.
                             solving the governing equations, and any new
                             particles added by this function are immediately
                             removed.
-* `nsteps_relax::Int`   : Relaxes the particle field every this many time steps.
 * `save_path::String`   : Give it a string for saving VTKs of the particle
                             field. Creates the given path.
 * `run_name::String`    : Name of output files.
@@ -44,7 +43,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
-                      nsteps_relax::Int64=-1,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
                       create_savepath::Bool=true,
@@ -80,7 +78,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     # Initialize verbose
     (line1, line2, run_id, file_verbose,
         vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
-                                                    dt, nsteps_relax, nsteps_save,
+                                                    dt, nsteps_save,
                                                     runtime_function,
                                                     static_particles_function, v_lvl)
 
@@ -92,7 +90,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         end
 
         # Relaxation step
-        relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+        relax = pfield.relaxation != relaxation_none &&
+                pfield.relaxation.nsteps_relax >= 1 &&
+                i>0 && (i%pfield.relaxation.nsteps_relax == 0)
 
         org_np = get_np(pfield)
 
@@ -510,7 +510,7 @@ end
 
 
 function initialize_verbose(verbose, save_path, run_name, pfield, dt,
-                            nsteps_relax, nsteps_save,
+                            nsteps_save,
                             runtime_function, static_particles_function, v_lvl)
     line1 = "*"^(73-8*v_lvl)
     line2 = "-"^(length(line1))
@@ -536,7 +536,6 @@ function initialize_verbose(verbose, save_path, run_name, pfield, dt,
     vprintln(_get_settings_string(pfield; tab=v_lvl+2), 0)
     vprintln("SIMULATION SETTINGS", v_lvl+1)
     vprintln("dt:\t\t\t$(dt)", v_lvl+2)
-    vprintln("nsteps_relax:\t\t$(nsteps_relax)", v_lvl+2)
     vprintln("Runtime function:\t"*( runtime_function==runtime_default ?
                                 "Nothing" : "Yes"), v_lvl+2)
     vprintln("Static particles:\t"*( static_particles_function==static_particles_default ?
