@@ -91,6 +91,7 @@ const sgs_stretching1_fmm_directionlow = generate_sgs_directionfiltered(generate
 const sgs_default = sgs_none
 
 const standard_sgsmodels = (:sgs_none,
+                            :sgs_stretching0_fmm,
                             :sgs_stretching1_direct, :sgs_stretching1_fmm,
                             :sgs_stretching2_direct, :sgs_stretching2_fmm,
                             # This one won't be recognized by save_settings due to scope of definition
