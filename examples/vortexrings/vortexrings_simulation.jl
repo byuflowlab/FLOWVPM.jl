@@ -88,9 +88,18 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         Rtot=10.0,      # Runs the simulation for this long (in radii distances)
                                         beta=0.5,       # Parameter for theoretical velocity
                                         faux=1.0,       # Shrinks the discretized core by this factor
+                                        rbf=false,      # If true, it runs an RBF interpolation to match the analytic vorticity
+                                        rbf_optargs=[(:itmax,200), (:tol,1e-2), (:iterror,true), (:verbose,true), (:debug,false)],
+                                        zeta=(r,Rcross) -> 1/(pi*Rcross^2) * exp(-r^2/Rcross^2), # Analytic vorticity distribution (used in RBF)
+                                        minWfraction=0, # Removes any particles with less vorticity than this fraction of the peak vorticity
+                                        restart_file=nothing,
+                                        restart_sigma=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
                                         verbose=true,           # Enable verbose
                                         v_lvl=0,
+                                        use_monitor_ringvorticity=false,
+                                        monvort_optargs=[(:nprobes, 1000)],
+                                        monitor_others=(args...; optargs...) -> false,
                                         optargs...
                                         )
 
@@ -107,9 +116,74 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
         addvortexring(pfield, circulations[ri],
                         Rs[ri], ARs[ri], faux*Rcrosss[ri],
                         Nphis[ri], ncs[ri], sigmas[ri]; extra_nc=extra_ncs[ri],
-                        O=Os[ri],
-                        Oaxis=Oaxiss[ri]
+                        O=Os[ri], Oaxis=Oaxiss[ri],
+                        verbose=verbose, v_lvl=v_lvl
                       )
+    end
+
+    if restart_file != nothing
+        # Read restart file, overwritting the particle field
+        vpm.read!(pfield, restart_file; overwrite=true, load_time=true)
+
+        if restart_sigma != nothing
+
+            # Evaluate current vorticity field (gets stored under P.Jexa[1:3])
+            vpm.zeta_fmm(pfield)
+
+            # Resize particle cores and store target vorticity under P.M[7:9]
+            for P in vpm.iterate(pfield)
+
+                P.sigma[1] = restart_sigma
+
+                for i in 1:3
+                    P.M[i+6] = P.Jexa[i]
+                end
+            end
+
+            # Calculate the new vortex strenghts through RBF
+            viscous = vpm.CoreSpreading(-1, -1, vpm.zeta_fmm; v_lvl=v_lvl+1, rbf_optargs...)
+            vpm.rbf_conjugategradient(pfield, viscous)
+
+        end
+
+    elseif rbf
+        # Generate analytic vorticity field
+        W_fun! = generate_Wfun(nrings, circulations,
+                                    Rs, ARs, Rcrosss, Os, Oaxiss; zeta=zeta)
+        W = zeros(3)
+
+        # Remove particles at positions where the vorticity is negligible
+        if minWfraction > 0
+
+            peakW = maximum(circulations[ri]*zeta(0, Rcrosss[ri]) for ri in 1:nrings)
+
+            for (Pi, P) in enumerate(vpm.iterator(pfield; reverse=true))
+                W .= 0
+                W_fun!(W, P.X)
+                magW = norm(W)
+
+                if magW/peakW <= minWfraction
+                    vpm.remove_particle(pfield, Pi)
+                end
+            end
+        end
+
+        if verbose
+            println("\t"^(v_lvl)*"Total number of particles: $(vpm.get_np(pfield))")
+        end
+
+        # Use analytic vorticity as target vorticity (stored under P.M[7:9])
+        for P in vpm.iterator(pfield)
+            W .= 0
+            W_fun!(W, P.X)
+            for i in 1:3
+                P.M[i+6] = W[i]
+            end
+        end
+
+        # RBF interpolation of the analytic distribution
+        viscous = vpm.CoreSpreading(-1, -1, vpm.zeta_fmm; v_lvl=v_lvl+1, rbf_optargs...)
+        vpm.rbf_conjugategradient(pfield, viscous)
     end
 
     if verbose
@@ -121,10 +195,19 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
         @printf "%sTime step:\t\t\t\t%1.5e s\n"                       "\t"^(v_lvl+1) dt
     end
 
+    monitor_ringvorticity = !use_monitor_ringvorticity ? (args...; optargs...) -> false :
+                                generate_monitor_ringvorticity(nrings, Nphis,
+                                                            ncs, extra_ncs;
+                                                            save_path=save_path,
+                                                            monvort_optargs...)
+
+    this_monitor_others(args...; optargs...) = monitor_others(args...; optargs...) || monitor_ringvorticity(args...; optargs...)
+
     return run_vortexring_simulation(pfield, nsteps, dt,
                                             nrings, Nphis, ncs, extra_ncs;
                                             verbose=verbose,
                                             v_lvl=v_lvl,
+                                            monitor_others=this_monitor_others,
                                             optargs...
                                             )
 end

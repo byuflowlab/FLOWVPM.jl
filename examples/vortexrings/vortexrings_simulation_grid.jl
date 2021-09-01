@@ -64,6 +64,7 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
                                 O=Os[ri],
                                 Oaxis=Oaxiss[ri];
                                 zeta=zeta,
+                                verbose=verbose, v_lvl=v_lvl,
                                 addringoptargs...
                               )
         push!(Nphis, Nphi)

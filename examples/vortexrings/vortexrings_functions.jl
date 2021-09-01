@@ -73,7 +73,8 @@ where `Oaxis[:, 1]` is the major axis, `Oaxis[:, 2]` is the minor axis, and
 function addvortexring(pfield::vpm.ParticleField, circulation::Real,
                             R::Real, AR::Real, Rcross::Real,
                             Nphi::Int, nc::Int, sigma::Real; extra_nc::Int=0,
-                            O::Vector{<:Real}=zeros(3), Oaxis=I
+                            O::Vector{<:Real}=zeros(3), Oaxis=I,
+                            verbose=true, v_lvl=0
                             )
 
     # ERROR CASE
@@ -129,6 +130,7 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
 
     omega = circulation / (pi*Rcross^2) # Average vorticity
 
+    org_np = vpm.get_np(pfield)
 
     # Discretization of torus into cross sections
     for N in 0:Nphi-1
@@ -208,6 +210,10 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
 
         end
 
+    end
+
+    if verbose
+        println("\t"^(v_lvl)*"Number of particles: $(vpm.get_np(pfield) - org_np)")
     end
 
     return nothing
