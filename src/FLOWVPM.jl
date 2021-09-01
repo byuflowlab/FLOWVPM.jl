@@ -10,6 +10,9 @@
         modification of this code is allowed without written consent.
 
 # TODO
+* [ ] Review time integration routines and SFS models to conform to new GE derivation.
+* [ ] Save and read C for restart.
+* [ ] Remove circulation property.
 * [ ] Optimize creating of hdf5s to speed up simulations.
 """
 module FLOWVPM
@@ -35,8 +38,9 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
-                    "particle", "relaxation", "particlefield",
-                    "UJ", "sgsmodels", "timeintegration",
+                    "particle", "relaxation", "subfilterscale",
+                    "particlefield",
+                    "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
@@ -47,11 +51,11 @@ end
 # ------------ Available VPM formulations
 const formulation_classic = ClassicVPM{RealFMM}()
 const formulation_cVPM = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_rVPM = formulation_sphere_momentum
 
 const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
 const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = formulation_rVPM
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -92,23 +96,24 @@ const relaxation_default = pedrizzetti
 
 const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti)
 
-# ------------ Subgrid-scale models
-const sgs_none(args...) = nothing
-const sgs_stretching1_fmm_directionlow = generate_sgs_directionfiltered(generate_sgs_lowfiltered(sgs_stretching1_fmm))
-const sgs_default = sgs_none
+# ------------ Subfilter-scale models
+const SFS_none = NoSFS()
 
-const standard_sgsmodels = (:sgs_none,
-                            :sgs_stretching0_fmm,
-                            :sgs_stretching1_direct, :sgs_stretching1_fmm,
-                            :sgs_stretching2_direct, :sgs_stretching2_fmm,
+const sfs_none(args...) = nothing
+const sfs_stretching1_fmm_directionlow = generate_sfs_directionfiltered(generate_sfs_lowfiltered(sfs_stretching1_fmm))
+const sfs_default = sfs_none
+
+# SFS aliases
+const noSFS = SFS_none
+const SFS_default = SFS_none
+
+const standard_sfsmodels = (:sfs_none,
+                            :sfs_stretching0_fmm,
+                            :sfs_stretching1_direct, :sfs_stretching1_fmm,
+                            :sfs_stretching2_direct, :sfs_stretching2_fmm,
                             # This one won't be recognized by save_settings due to scope of definition
-                            # :sgs_stretching1_fmm_directionlow
+                            # :sfs_stretching1_fmm_directionlow
                             )
-
-# Subgrid-scale scaling functions
-const sgs_scaling_none(args...) = 1
-const sgs_scaling_default = sgs_scaling_none
-const standard_sgsscalings = (:sgs_scaling_none, )
 
 # ------------ Other default functions
 const nofreestream(t) = zeros(3)
@@ -132,21 +137,20 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------
 
-# Field inside the Particle type where the SGS contribution is stored (make sure
-# this is consistent with ExaFMM and functions under FLOWVPM_sgsmodels.jl)
-const _SGS = :Jexa
+# Field inside the Particle type where the SFS contribution is stored (make sure
+# this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
+const _SFS = :Jexa
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
 const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
-                                            :relaxation, :sgsmodel, :sgsscaling, :viscous)
+                                            :relaxation, :SFS, :viscous)
 
 # Hash table between functions that are solver settings and their symbol
 const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
                                  :rungekutta3, standard_kernels...,
                                                standard_relaxations...,
-                                               standard_sgsmodels...,
-                                               standard_sgsscalings...)
+                                               standard_sfsmodels...)
 const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))

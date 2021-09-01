@@ -145,9 +145,9 @@ function UJ_fmm(pfield::ParticleField; optargs...)
 end
 
 function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                            rbf::Bool=false, sgs::Bool=false, sgs_type::Int=-1,
-                            transposed_sgs::Bool=true,
-                            reset::Bool=true, reset_sgs::Bool=false,
+                            rbf::Bool=false, sfs::Bool=false, sfs_type::Int=-1,
+                            transposed_sfs::Bool=true,
+                            reset::Bool=true, reset_sfs::Bool=false,
                             sort::Bool=true)
     try
         fmm.calculate(pfield.bodies,
@@ -156,9 +156,9 @@ function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
                         RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
                         Int32(pfield.kernel.EXAFMM_P2P),
                         Int32(pfield.kernel.EXAFMM_L2P),
-                        Int32(sgs_type),
-                        rbf, sgs, transposed_sgs,
-                        reset, reset_sgs, sort)
+                        Int32(sfs_type),
+                        rbf, sfs, transposed_sfs,
+                        reset, reset_sfs, sort)
     catch e
         error("ExaFMM unexpected error: $(e)")
     end

@@ -13,7 +13,7 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
+mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -32,8 +32,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
-    sgsmodel::Function                          # Subgrid-scale contributions model
-    sgsscaling::Function                        # Scaling factor of SGS contributions
+    SFS::S                                    # Subfilter-scale contributions scheme
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
@@ -42,29 +41,27 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
     # Internal memory for computation
     M::Array{R, 1}
 
-    ParticleField{R, F, V}(
+    ParticleField{R, F, V, S}(
                                 maxparticles,
                                 particles, bodies, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
-                                sgsmodel=sgs_default,
-                                sgsscaling=sgs_scaling_default,
+                                SFS=SFS_default,
                                 integration=rungekutta3,
                                 transposed=true,
                                 relaxation=relaxation_default,
                                 fmm=FMM(),
                                 M=zeros(R, 4)
-                         ) where {R, F, V} = new(
+                         ) where {R, F, V, S} = new(
                                 maxparticles,
                                 particles, bodies, formulation, viscous,
                                 np, nt, t,
                                 kernel,
                                 UJ,
                                 Uinf,
-                                sgsmodel,
-                                sgsscaling,
+                                SFS,
                                 integration,
                                 transposed,
                                 relaxation,
@@ -76,8 +73,9 @@ end
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
+                                    SFS::S=SFS_default,
                                     optargs...
-                            ) where {F, V<:ViscousScheme}
+                            ) where {F, V<:ViscousScheme, S<:SubFilterScale}
     # Memory allocation by C++
     bodies = fmm.genBodies(maxparticles)
 
@@ -90,8 +88,9 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{RealFMM, F, V}(maxparticles, particles, bodies,
-                                         formulation, viscous; np=0, optargs...)
+    return ParticleField{RealFMM, F, V, S}(maxparticles, particles, bodies,
+                                            formulation, viscous;
+                                            np=0, SFS=SFS, optargs...)
 end
 
 ##### FUNCTIONS ################################################################
@@ -237,11 +236,12 @@ function remove_particle(self::ParticleField, i::Int)
 
         Ptarg = get_particle(self, i)
         Ptarg.circulation .= Plast.circulation
+        Ptarg.C .= Plast.C
     end
 
     # Remove last particle in the field
     _reset_particle(Plast)
-    _reset_particle_sgs(Plast)
+    _reset_particle_sfs(Plast)
     self.np -= 1
 
     return nothing
@@ -295,15 +295,16 @@ function _reset_particle(P::Particle{T}, tzero::T) where {T}
 end
 _reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 
-function _reset_particles_sgs(self::ParticleField{R, F, V}) where {R, F, V}
+function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
     for P in iterator(self)
-        _reset_particle_sgs(P, tzero)
+        _reset_particle_sfs(P, tzero)
     end
 end
 
-function _reset_particle_sgs(P::Particle{T}, tzero::T) where {T}
-    getproperty(P, _SGS)::Array{T, 2} .= tzero
+function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
+    getproperty(P, _SFS)::Array{T, 2} .= tzero
+    P.C .= tzero
 end
-_reset_particle_sgs(P::Particle{T}) where {T} = _reset_particle_sgs(P, zero(T))
+_reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
 ##### END OF PARTICLE FIELD#####################################################
