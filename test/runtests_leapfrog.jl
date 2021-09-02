@@ -47,7 +47,7 @@ for (description, integration, UJ, nc) in (
         # -------------- SOLVER SETTINGS -------------------------------------------
         solver = (
             formulation   = vpm.cVPM,
-            sgsmodel      = vpm.sgs_none,
+            SFS           = vpm.noSFS,
             relaxation    = vpm.correctedpedrizzetti,
             kernel        = vpm.winckelmans,
             viscous       = vpm.Inviscid(),

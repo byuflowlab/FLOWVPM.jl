@@ -62,6 +62,8 @@ struct ConstantSFS{R} <: SubFilterScale
     ConstantSFS{R}(model, Cs=R(1)) where {R} = new(model, Cs)
 end
 
+ConstantSFS(model; Cs::R=RealFMM(1.0)) where {R} = ConstantSFS{R}(model, Cs)
+
 function (SFS::ConstantSFS)(pfield; optargs...)
     # Reset U and J to zero
     _reset_particles(pfield)
