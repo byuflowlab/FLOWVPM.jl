@@ -95,7 +95,7 @@ end
 
 """
     `isLES(pfield::ParticleField)`
-    
+
     Returns true if the particle field solver implements a subfilter-scale model
 of turbulence for large eddy simulation (LES).
 """
@@ -312,7 +312,7 @@ end
 
 function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
     getproperty(P, _SFS)::Array{T, 2} .= tzero
-    P.C .= tzero
+    # P.C .= tzero
 end
 _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
 ##### END OF PARTICLE FIELD#####################################################

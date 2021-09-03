@@ -78,7 +78,7 @@ function ConstantSFS(model; Cs::R=RealFMM(1.0), optargs...) where {R}
     return ConstantSFS{R}(model; Cs, optargs...)
 end
 
-function (SFS::ConstantSFS)(pfield; optargs...)
+function (SFS::ConstantSFS)(pfield; a=1, b=1)
     # Reset U and J to zero
     _reset_particles(pfield)
 
@@ -89,22 +89,27 @@ function (SFS::ConstantSFS)(pfield; optargs...)
     _reset_particles_sfs(pfield)
     SFS.model(pfield)
 
-    # "Calculate" model coefficient
-    for p in iterator(pfield)
-        p.C[1] = SFS.Cs
-    end
+    # Recognize Euler step or Runge-Kutta's first substep
+    if a==1 || a==0
 
-    # Apply control strategies
-    for p in iterator(pfield)
+        # "Calculate" model coefficient
+        for p in iterator(pfield)
+            p.C[1] = SFS.Cs
+        end
 
-        for control in SFS.controls
-            if control(p, pfield)
+        # Apply control strategies
+        for p in iterator(pfield)
 
-                # Clip SFS model by nullifying the model coefficient
-                p.C[1] = 0
-                break
+            for control in SFS.controls
+                if control(p, pfield)
 
+                    # Clip SFS model by nullifying the model coefficient
+                    p.C[1] = 0
+                    break
+
+                end
             end
+
         end
 
     end
