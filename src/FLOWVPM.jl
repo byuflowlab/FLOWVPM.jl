@@ -11,6 +11,7 @@
 
 # TODO
 * [ ] Review time integration routines and SFS models to conform to new GE derivation.
+* [ ] Remember to multiply SFS by p.sigma[1]^3/zeta0
 * [ ] Save and read C for restart.
 * [ ] Remove circulation property.
 * [ ] Optimize creating of hdf5s to speed up simulations.
@@ -97,20 +98,20 @@ const relaxation_default = pedrizzetti
 const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti)
 
 # ------------ Subfilter-scale models
-const SFS_none = NoSFS()
+const SFS_none = NoSFS{RealFMM}()
 
-const sfs_none(args...) = nothing
-const sfs_stretching1_fmm_directionlow = generate_sfs_directionfiltered(generate_sfs_lowfiltered(sfs_stretching1_fmm))
-const sfs_default = sfs_none
+# const sfs_none(args...) = nothing
+# const sfs_stretching1_fmm_directionlow = generate_sfs_directionfiltered(generate_sfs_lowfiltered(sfs_stretching1_fmm))
+# const sfs_default = sfs_none
 
 # SFS aliases
 const noSFS = SFS_none
 const SFS_default = SFS_none
 
-const standard_sfsmodels = (:sfs_none,
-                            :sfs_stretching0_fmm,
-                            :sfs_stretching1_direct, :sfs_stretching1_fmm,
-                            :sfs_stretching2_direct, :sfs_stretching2_fmm,
+const standard_sfsmodels = (# :sfs_none,
+                            # :sfs_stretching0_fmm,
+                            # :sfs_stretching1_direct, :sfs_stretching1_fmm,
+                            # :sfs_stretching2_direct, :sfs_stretching2_fmm,
                             # This one won't be recognized by save_settings due to scope of definition
                             # :sfs_stretching1_fmm_directionlow
                             )

@@ -184,6 +184,10 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
 
+    if isLES(self)
+        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self)]
+    end
+
     # Connectivity information
     h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
 
@@ -293,6 +297,18 @@ function save(self::ParticleField, file_name::String; path::String="",
                             "\" Format=\"HDF\" Precision=\"4\">",
                             h5fname, ":i</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
+
+              if isLES(self)
+                  # Attribute: C
+                  print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                              " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                              " Name=\"C\" Type=\"Vector\">\n")
+                    print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                                " Dimensions=\"", np, " ", 3,
+                                "\" Format=\"HDF\" Precision=\"4\">",
+                                h5fname, ":C</DataItem>\n")
+                  print(xmf, "\t\t\t\t</Attribute>\n")
+              end
 
             print(xmf, "\t\t\t</Grid>\n")
           print(xmf, "\t\t</Grid>\n")

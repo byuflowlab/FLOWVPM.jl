@@ -93,6 +93,14 @@ function ParticleField(maxparticles::Int;
                                             np=0, SFS=SFS, optargs...)
 end
 
+"""
+    `isLES(pfield::ParticleField)`
+    
+    Returns true if the particle field solver implements a subfilter-scale model
+of turbulence for large eddy simulation (LES).
+"""
+isLES(self::ParticleField) = isSFSenabled(self.SFS)
+
 ##### FUNCTIONS ################################################################
 """
   `add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=np)`
