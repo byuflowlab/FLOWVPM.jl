@@ -192,7 +192,7 @@ function control_magnitude(P::Particle{R}, pfield) where {R}
     if pfield.nt == 0
         # error("Logic error: It was not possible to estimate time step.")
         nothing
-    else
+    elseif P.C[1] != 0
         deltat::R = pfield.t / pfield.nt
 
         f::R = pfield.formulation.f
