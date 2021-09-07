@@ -108,7 +108,8 @@ isLES(self::ParticleField) = isSFSenabled(self.SFS)
 Add a particle to the field.
 """
 function add_particle(self::ParticleField, X, Gamma, sigma;
-                                           vol=0, circulation::Real=1, index=-1)
+                                           vol=0, circulation::Real=1,
+                                           C=0, index=-1)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -126,6 +127,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.sigma .= sigma
     P.vol .= vol
     P.circulation .= abs(circulation)
+    P.C .= C
     P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field

@@ -474,13 +474,24 @@ function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
     X = h5["X"][:, :]
     Gamma = h5["Gamma"][:, :]
     sigma = h5["sigma"][:]
-    circulation = h5["circulation"][:]
     vol = h5["vol"][:]
+    circulation = h5["circulation"][:]
 
-    # Loads particles
+    add_C = "C" in keys(h5)
+
+    if add_C
+        C = h5["C"][:, :]
+    end
+
+    # Load particles
     for i in 1:np
-        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                            circulation=circulation[i], vol=vol[i])
+        if add_C
+            add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
+                         circulation=circulation[i], vol=vol[i], C=view(C, 1:3, i))
+        else
+            add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
+                                         circulation=circulation[i], vol=vol[i])
+        end
     end
 
     return pfield
