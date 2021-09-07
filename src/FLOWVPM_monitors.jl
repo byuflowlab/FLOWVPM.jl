@@ -174,7 +174,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
         # Write to log file
         f = open(joinpath(save_path, fname), "a")
         if t==0 || pfield.nt==0
-            println(f, "nt", ",", "t (s)", ",", "zeroratio,mean,stddev,skewness,kurtosis,min,max,")
+            println(f, "nt", ",", "t (s)", ",", "zeroratio,mean,stddev,skewness,kurtosis,min,max")
         end
         println(f, pfield.nt, ",", t, ",", nzero/Ntot, ",", mean, ",", stddev, ",", skew, ",", kurt, ",", minC, ",", maxC)
         close(f)
