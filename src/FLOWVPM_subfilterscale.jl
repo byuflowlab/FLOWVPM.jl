@@ -346,11 +346,11 @@ function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
         p.sigma[1] *= alpha
     end
 
-    # Recalculate UJ with test filter
+    # Calculate UJ with test filter
     _reset_particles(pfield)
     pfield.UJ(pfield)
 
-    # Recalculate SFS with test filter
+    # Calculate SFS with test filter
     _reset_particles_sfs(pfield)
     SFS.model(pfield)
 
@@ -470,6 +470,73 @@ function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
 
     # Flush temporal memory
     for p in iterator(pfield); p.M .= zeroR; end;
+
+    return nothing
+end
+
+
+"""
+    Dynamic procedure for SFS model coefficient based on sensor function of
+enstrophy between resolved and unresolved domain, numerically
+implemented through a test filter. See 20210901 notebook for derivation.
+"""
+function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
+                                           alpha::Real, lambdacrit::Real,
+                                           minC::Real, maxC::Real;
+                                           sensor=Lmbd->Lmbd < 0 ? 1 : Lmbd <= 1 ? 0.5*(1 + sin(pi/2 - Lmbd*pi)) : 0,
+                                           Lambda=(lmbd, lmbdcrit) -> (lmbd - lmbdcrit) / (1 - lmbdcrit)
+                                         ) where {R}
+
+    # Storage terms: f(λ) <=> p.C[1], test-filter ξ <=> p.C[2], primary-filter ξ <=> p.C[3]
+
+    # ERROR CASES
+    if minC < 0
+        error("Invalid C bounds: Got a negative bound for minC ($(minC))")
+    elseif maxC < 0
+            error("Invalid C bounds: Got a negative bound for maxC ($(maxC))")
+    elseif minC > maxC
+        error("Invalid C bounds: minC > maxC ($(minC) > $(maxC))")
+    end
+
+    # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
+    # Replace domain filter width with test filter width
+    for p in iterator(pfield)
+        p.sigma[1] *= alpha
+    end
+
+    # Calculate UJ with test filter
+    _reset_particles(pfield)
+    pfield.UJ(pfield)
+
+    # Store test-filter ξ under p.C[2]
+    for p in iterator(pfield)
+        p.C[2] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+    end
+
+    # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
+    # Restore domain filter width
+    for p in iterator(pfield)
+        p.sigma[1] /= alpha
+    end
+
+    # Calculate UJ with domain filter
+    _reset_particles(pfield)
+    pfield.UJ(pfield)
+
+    # Calculate SFS with domain filter
+    _reset_particles_sfs(pfield)
+    SFS.model(pfield)
+
+    # Store domain-filter ξ under p.C[3]
+    for p in iterator(pfield)
+        p.C[3] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+    end
+
+    # -------------- CALCULATE COEFFICIENT -------------------------------------
+    for p in iterator(pfield)
+        Lmbd = Lambda(p.C[2]/p.C[3], lambdacrit)
+        p.C[1] = minC + sensor(Lmbd)*( maxC - minC )
+    end
 
     return nothing
 end

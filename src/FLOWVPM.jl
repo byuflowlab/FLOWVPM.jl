@@ -100,6 +100,7 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 # ------------ Subfilter-scale models
 # SFS procedure aliases
 const pseudo3level = dynamicprocedure_pseudo3level
+const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
 const SFS_none = NoSFS{RealFMM}()
