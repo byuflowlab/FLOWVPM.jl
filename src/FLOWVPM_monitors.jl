@@ -109,3 +109,82 @@ function monitor_enstrophy_Gammaomega(pfield, t, dt; save_path=nothing, run_name
 
     return false
 end
+
+
+"""
+Runtime function that calculates the statistical properties of the SFS model
+coefficient across the particle field. Particles whose coefficients have been
+clipped are ignored.
+"""
+function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
+                                                    suff="Chistory.log",
+                                                    vprintln=(args...)->nothing,
+                                                    out=nothing)
+
+
+    # Calculate mean ignoring clipped (zero) coefficients
+    mean = 0
+    N, nzero, Ntot = 0, 0, get_np(pfield)
+    for P in iterator(pfield)
+        if P.C[1] == 0
+            nzero += 1
+        else
+            N += 1
+            mean += abs(P.C[1])
+        end
+    end
+    mean /= N
+
+    # Calculate standard deviation, skewness, min, and max
+    stddev, skew, kurt = 0, 0, 0
+    minC, maxC = Inf, -Inf
+
+    for P in iterator(pfield)
+
+        C = abs(P.C[1])
+
+        if C != 0
+            val = C - mean
+            stddev += val^2
+            skew += val^3
+            kurt += val^4
+
+            if C < minC
+                minC = C
+            elseif C > maxC
+                maxC = C
+            end
+        end
+
+    end
+    stddev /= N
+    stddev = sqrt(stddev)
+    skew /= N
+    skew /= stddev^3
+    kurt /= N
+    kurt /= stddev^4
+
+    # Print to verbose
+    vprintln("Cd mean, stddev, ratio zeroes:\t$(round.((mean, stddev, nzero/Ntot), digits=5))")
+
+    # Save files
+    if save_path!=nothing
+        fname = run_name*"_"^(length(run_name)!=0)*suff
+
+        # Write to log file
+        f = open(joinpath(save_path, fname), "a")
+        if t==0 || pfield.nt==0
+            println(f, "nt", ",", "t (s)", ",", "zeroratio,mean,stddev,skewness,kurtosis,min,max,")
+        end
+        println(f, pfield.nt, ",", t, ",", nzero/Ntot, ",", mean, ",", stddev, ",", skew, ",", kurt, ",", minC, ",", maxC)
+        close(f)
+
+    end
+
+    # Push to output array
+    if out != nothing
+        push!(out, (t, nzero/Ntot, mean, stddev, skew, kurt, minC, maxC))
+    end
+
+    return false
+end
