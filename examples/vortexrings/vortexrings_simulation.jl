@@ -157,7 +157,9 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
 
             peakW = maximum(circulations[ri]*zeta(0, Rcrosss[ri]) for ri in 1:nrings)
 
-            for (Pi, P) in enumerate(vpm.iterator(pfield; reverse=true))
+            for Pi in vpm.get_np(pfield):-1:1
+                P = vpm.get_particle(pfield, Pi)
+
                 W .= 0
                 W_fun!(W, P.X)
                 magW = norm(W)
