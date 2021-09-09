@@ -428,7 +428,8 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
                                         fname_pref="vortexring",
                                         unitx=(1,0,0), unity=(0,1,0),
                                         out1=nothing, out2=nothing,
-                                        out3=nothing, out4=nothing)
+                                        out3=nothing, out4=nothing,
+                                        overwrite_intervals=nothing)
 
     # File names
     fnames = Tuple(joinpath(save_path, fname_pref*"-dynamics$(fi).csv")
@@ -443,6 +444,7 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
     outs = (out1, out2, out3, out4)
 
     intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
+    intervals = overwrite_intervals != nothing ? overwrite_intervals : intervals
 
     function monitor_vortexring(pfield, t, args...; optargs...)
 
@@ -573,7 +575,8 @@ function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
                                             nprobes=100,
                                             linefactor=1.5, probedir=[1,0,0],
                                             save_path=nothing, fname_pref="vortexring",
-                                            outs=nothing)
+                                            outs=nothing,
+                                            overwrite_intervals=nothing)
 
     # File names
     fnames = [joinpath(save_path, fname_pref*"-vorticity-ring$(ri)")
@@ -602,6 +605,7 @@ function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
 
     # Particle-count intervals of each ring
     intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
+    intervals = overwrite_intervals != nothing ? overwrite_intervals : intervals
 
     function monitor_ringvorticity(pfield, t, args...; optargs...)
 
