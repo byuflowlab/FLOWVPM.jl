@@ -156,19 +156,19 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
     if proceed
 
-        t_sgm_crit = scheme.sgm0^2*(scheme.beta^2-1)/(2*scheme.nu)
-
         # Update core growth timer
         scheme.t_sgm += dt
 
+        beta_cur = sqrt(2*scheme.nu*scheme.t_sgm/scheme.sgm0^2 + 1)
+
         if scheme.verbose
             println("\t"^scheme.v_lvl*
-                    "Current sigma growth: $(round(scheme.t_sgm, digits=7))"*
-                    "\tCritical:$(round(t_sgm_crit, digits=7))")
+                    "Current sigma growth: $(round(beta_cur, digits=7))"*
+                    "\tCritical:$(round(scheme.beta, digits=7))")
         end
 
         # Reset core sizes if cores have overgrown
-        if scheme.t_sgm >= t_sgm_crit
+        if beta_cur >= scheme.beta
             # Calculate approximated vorticity (stored under P.Jexa[1:3])
             scheme.zeta(pfield)
 
