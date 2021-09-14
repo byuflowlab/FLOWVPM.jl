@@ -220,7 +220,7 @@ end
 SFS model. See 20210901 notebook for derivation.
 """
 function clipping_backscatter(P::Particle, pfield)
-    return P.Gamma[1]*get_SFS1(P) + P.Gamma[2]*get_SFS2(P) + P.Gamma[3]*get_SFS3(P) < 0
+    return P.C[1]*(P.Gamma[1]*get_SFS1(P) + P.Gamma[2]*get_SFS2(P) + P.Gamma[3]*get_SFS3(P)) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
