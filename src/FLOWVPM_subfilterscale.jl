@@ -326,7 +326,8 @@ small enough to approximate the singular velocity field as \$\\mathbf{u} \\appro
 """
 function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
-                                       minC::Real, maxC::Real) where {R}
+                                       minC::Real, maxC::Real;
+                                       force_positive::Bool=false) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
     #                C=<Γ⋅L>/<Γ⋅m> <=> p.C[1], <Γ⋅L> <=> p.C[2], <Γ⋅m> <=> p.C[3]
@@ -466,6 +467,9 @@ function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
 
         # Store model coefficient
         p.C[1] = p.C[2] / p.C[3]
+
+        # Force the coefficient to be positive
+        p.C[1] *= sign(p.C[1])^force_positive
     end
 
     # Flush temporal memory
