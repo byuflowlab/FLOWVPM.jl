@@ -77,7 +77,7 @@ struct ConstantSFS{R} <: SubFilterScale{R}
 end
 
 function ConstantSFS(model; Cs::R=RealFMM(1.0), optargs...) where {R}
-    return ConstantSFS{R}(model; Cs, optargs...)
+    return ConstantSFS{R}(model; Cs=Cs, optargs...)
 end
 
 function (SFS::ConstantSFS)(pfield; a=1, b=1)

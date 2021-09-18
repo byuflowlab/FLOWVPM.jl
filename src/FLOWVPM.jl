@@ -52,11 +52,11 @@ end
 # ------------ Available VPM formulations
 const formulation_classic = ClassicVPM{RealFMM}()
 const formulation_cVPM = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
-const formulation_rVPM = formulation_sphere_momentum
+const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
 
 const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
 const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -113,9 +113,11 @@ const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positi
 const noSFS = SFS_none
 const SFS_default = SFS_none
 
-const standard_SFSs = (:SFS_none, :SFS_Cs_nobackscatter,
-                        :SFS_Cd_twolevel_nobackscatter,
-                        :SFS_Cd_threelevel_nobackscatter)
+const standard_SFSs = (
+                        :SFS_none, :SFS_Cs_nobackscatter,
+                        # :SFS_Cd_twolevel_nobackscatter,
+                        # :SFS_Cd_threelevel_nobackscatter
+                        )
 
 # ------------ Other default functions
 const nofreestream(t) = zeros(3)
