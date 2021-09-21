@@ -32,8 +32,9 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                                         rbf=true,       # If true, it runs an RBF interpolation to match the analytic vorticity with more accuracy
                                         rbf_optargs=[(:itmax,200), (:tol,2.5e-2), (:iterror,true), (:verbose,true), (:debug,false)],
                                         rbf_Wf=0.5,     # Scales target RBF vorticity by this factor
-                                        rbf_halfcylinder=true,   # Use only a half cylinder of particles for the RBF
+                                        rbf_fullcylinder=false,  # Use a cylinder of particles for the RBF with half of it in inside the jet
                                         keep_rbfparticles=false, # Keep particles used for RBF as static particles
+                                        keep_rbffullcylinder=false, # Keep the half of the cylinder that is inside the jet as free particles
                                         restart_file=nothing,
                                         restart_sigma=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
@@ -112,7 +113,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
         if abs(Wmean) / Wpeak >= minWfraction
             for zi in 0:Nz                  # Iterate over Z layers (time steps)
 
-                for sgn in [1, -1][1:2^(!rbf_halfcylinder && zi!=0)]
+                for sgn in [1, -1][1:2^(rbf_fullcylinder && zi!=0)]
                     org_np = vpm.get_np(pfield)
 
                     this_O = O + sgn*zi*dz*Cline  # Center of this layer
@@ -195,8 +196,8 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
             vpm.remove_particle(pfield, pi)
         end
 
-        # Remove half of the cylinder if a full cylinder was used for RBF
-        if rbf_halfcylinder==false
+        # Case that a full cylinder was used for RBF
+        if rbf_fullcylinder
 
             auxX = zeros(3)
 
@@ -205,7 +206,14 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                 auxX .= P.X
                 auxX .-= O
                 if dot(auxX, Cline) > 0
-                    vpm.remove_particle(pfield, pi)
+
+                    if keep_rbffullcylinder # Case of keeping the full cylinder
+                        # Make particle non-static
+                        P.static .= false
+                    else # Case of removing half of the cylinder
+                        vpm.remove_particle(pfield, pi)
+                    end
+
                 end
             end
         end
