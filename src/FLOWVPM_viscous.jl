@@ -446,8 +446,12 @@ Evaluates the basis function that the field exerts on itself through direct
 particle-to-particle interactions, saving the results under P.Jexa[1:3].
 """
 function zeta_direct(pfield)
-    for P in iterator(pfield); P.Jexa[1:3] .= 0; end;
-    return zeta_direct(iterator(pfield), iterator(pfield), pfield.kernel.zeta)
+    for P in iterator(pfield; include_static=true)
+        P.Jexa[1:3] .= 0
+    end
+    return zeta_direct( iterator(pfield; include_static=true),
+                        iterator(pfield; include_static=true),
+                        pfield.kernel.zeta)
 end
 
 function zeta_direct(sources, targets, zeta::Function)

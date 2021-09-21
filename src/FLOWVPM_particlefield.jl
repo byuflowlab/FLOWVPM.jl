@@ -109,7 +109,7 @@ Add a particle to the field.
 """
 function add_particle(self::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, index=-1)
+                                           C=0, static=false, index=-1)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -128,6 +128,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.vol .= vol
     P.circulation .= abs.(circulation)
     P.C .= C
+    P.static .= static
     P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
@@ -143,7 +144,8 @@ Add a copy of Particle `P` to the field.
 """
 function add_particle(self::ParticleField, P::Particle)
     return add_particle(self, P.X, P.Gamma, P.sigma;
-                            vol=P.vol, circulation=P.circulation, C=P.C)
+                            vol=P.vol, circulation=P.circulation,
+                            C=P.C, static=P.static)
 end
 
 """
@@ -216,8 +218,16 @@ julia> # Iterate over particles
 [4.0, 40.0, 400.0]
 ```
 """
-function get_particleiterator(self::ParticleField{R, F, V}; start_i::Int=1,
-                              end_i::Int=-1, reverse=false ) where {R, F, V}
+function get_particleiterator(args...; include_static=false, optargs...)
+    if include_static
+        return _get_particleiterator(args...; optargs...)
+    else
+        return (P for P in _get_particleiterator(args...; optargs...) if !P.static[1])
+    end
+end
+
+function _get_particleiterator(self::ParticleField{R, F, V}; start_i::Int=1,
+                              end_i::Int=-1, reverse=false) where {R, F, V}
     # ERROR CASES
     if end_i > get_np(self)
         error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
@@ -257,6 +267,7 @@ function remove_particle(self::ParticleField, i::Int)
         Ptarg = get_particle(self, i)
         Ptarg.circulation .= Plast.circulation
         Ptarg.C .= Plast.C
+        Ptarg.static .= Plast.static
     end
 
     # Remove last particle in the field
@@ -289,7 +300,7 @@ end
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
-    for P in iterator(self)
+    for P in iterator(self; include_static=true)
         _reset_particle(P, tzero)
     end
 end
@@ -317,7 +328,7 @@ _reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 
 function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
     tzero = zero(R)
-    for P in iterator(self)
+    for P in iterator(self; include_static=true)
         _reset_particle_sfs(P, tzero)
     end
 end

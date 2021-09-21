@@ -36,6 +36,7 @@ struct Particle{T}
   sigma::Array{T, 1}            # Smoothing radius (1-elem array)
   vol::Array{T, 1}              # Volume (1-elem array)
   circulation::Array{T, 1}      # Scalar circulation (1-elem array)
+  static::Array{Bool, 1}        # If true, this particle is not evolved in time
 
   # Properties
   U::Array{T, 1}                # Velocity at particle (3-elem array)
@@ -57,6 +58,7 @@ end
 # Empty initializer
 Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 1),  zeros(T, 1),
+                                                      zeros(Bool, 1),
                                                       zeros(T, 1),
                                                       zeros(T, 3), zeros(T, 3, 3), zeros(T, 3),
                                                       zeros(T, 3, 3), zeros(T, 3),
@@ -74,6 +76,7 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 fmm.get_qref(body),
                                                 fmm.get_sigmaref(body),
                                                 fmm.get_volref(body),
+                                                zeros(Bool, 1),
                                                 zeros(RealFMM, 1),
                                                 zeros(RealFMM, 3),
                                                 zeros(RealFMM, 3, 3),

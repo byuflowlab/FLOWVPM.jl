@@ -99,14 +99,16 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         # Time step
         if i!=0
             # Add static particles
-            static_particles_function(pfield, pfield.t, dt)
+            remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax)
 
             # Remove static particles (assumes particles remained sorted)
-            for pi in get_np(pfield):-1:(org_np+1)
-                remove_particle(pfield, pi)
+            if remove==nothing || remove
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
             end
         end
 
@@ -177,15 +179,16 @@ function save(self::ParticleField, file_name::String; path::String="",
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
     # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
-    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
-    h5["sigma"] = [P.sigma[1] for P in iterate(self)]
-    h5["circulation"] = [P.circulation[1] for P in iterate(self)]
-    h5["vol"] = [P.vol[1] for P in iterate(self)]
-    h5["i"] = [P.index[1] for P in iterate(self)]
+    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true)]
+    h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true)]
+    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
+    h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
 
     if isLES(self)
-        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self)]
+        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
     end
 
     # Connectivity information
@@ -200,7 +203,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     #     chunk = dim==1 && false ? (np,) : (1, np)
     #     dset = HDF5.d_create(h5, field, dtype, dims, "chunk", chunk)
     #
-    #     for (pi, P) in enumerate(iterator(self))
+    #     for (pi, P) in enumerate(iterator(self; include_static=true))
     #         dset[:, pi] .= getproperty(P, Symbol(field))
     #     end
     #
@@ -287,12 +290,22 @@ function save(self::ParticleField, file_name::String; path::String="",
                             h5fname, ":vol</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
+              # Attribute: static
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                          " Name=\"static\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                            " Dimensions=\"", np, " ", 1,
+                            "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":static</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
 
               # Attribute: index
               print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
                           " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
                           " Name=\"i\" Type=\"Scalar\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
                             " Dimensions=\"", np, " ", 1,
                             "\" Format=\"HDF\" Precision=\"4\">",
                             h5fname, ":i</DataItem>\n")
@@ -476,6 +489,7 @@ function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
     sigma = h5["sigma"][:]
     vol = h5["vol"][:]
     circulation = h5["circulation"][:]
+    static = h5["static"][:]
 
     add_C = "C" in keys(h5)
 
@@ -487,10 +501,11 @@ function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
     for i in 1:np
         if add_C
             add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                         circulation=circulation[i], vol=vol[i], C=view(C, 1:3, i))
+                         circulation=circulation[i], vol=vol[i], static=static[i],
+                                                                C=view(C, 1:3, i))
         else
             add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                                         circulation=circulation[i], vol=vol[i])
+                         circulation=circulation[i], vol=vol[i], static=static[i])
         end
     end
 

@@ -33,7 +33,9 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_direct(source::ParticleField, target::ParticleField)
-  return UJ_direct(iterator(source), iterator(target), source.kernel)
+  return UJ_direct( iterator(source; include_static=true),
+                    iterator(target; include_static=true),
+                    source.kernel)
 end
 
 function UJ_direct(sources, targets, kernel::Kernel)
@@ -120,7 +122,7 @@ function UJ_fmm(pfield::ParticleField; optargs...)
     aux1 = RealFMM(1/(4*pi))
 
     # Build velocity and velocity Jacobian from the FMM's vector potential
-    for P in iterator(pfield)
+    for P in iterator(pfield; include_static=true)
         # Velocity U = ∇ × ψ
         P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])
         P.U[2] += aux1*(P.Jexa[3,1] - P.Jexa[1,3])
