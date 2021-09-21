@@ -31,6 +31,9 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                                         max_zsigma=12.0,# Maximum sigmas in z-direction to create annulis for defining BC
                                         rbf=true,       # If true, it runs an RBF interpolation to match the analytic vorticity with more accuracy
                                         rbf_optargs=[(:itmax,200), (:tol,2.5e-2), (:iterror,true), (:verbose,true), (:debug,false)],
+                                        rbf_Wf=0.5,     # Scales target RBF vorticity by this factor
+                                        rbf_halfcylinder=true,   # Use only a half cylinder of particles for the RBF
+                                        keep_rbfparticles=false, # Keep particles used for RBF as static particles
                                         restart_file=nothing,
                                         restart_sigma=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
@@ -109,21 +112,24 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
         if abs(Wmean) / Wpeak >= minWfraction
             for zi in 0:Nz                  # Iterate over Z layers (time steps)
 
-                org_np = vpm.get_np(pfield)
+                for sgn in [1, -1][1:2^(!rbf_halfcylinder && zi!=0)]
+                    org_np = vpm.get_np(pfield)
 
-                this_O = O + zi*dz*Cline  # Center of this layer
+                    this_O = O + sgn*zi*dz*Cline  # Center of this layer
 
-                # Discretize the annulus into Nphi sections as particles
-                addannulus(pfield, circulation,
-                                        rc, AR,
-                                        Nphi, sigma, area;
-                                        O=this_O, Oaxis=Oaxis,
-                                        verbose=verbose, v_lvl=v_lvl+1)
+                    # Discretize the annulus into Nphi sections as particles
+                    addannulus(pfield, circulation,
+                                            rc, AR,
+                                            Nphi, sigma, area;
+                                            O=this_O, Oaxis=Oaxis,
+                                            static=zi!=0,
+                                            verbose=verbose, v_lvl=v_lvl+1)
 
-                # Save indices of particles at the boundary
-                if zi==0
-                    for pi in org_np+1:vpm.get_np(pfield)
-                        push!(BCi, pi)
+                    # Save indices of particles at the boundary
+                    if zi==0
+                        for pi in org_np+1:vpm.get_np(pfield)
+                            push!(BCi, pi)
+                        end
                     end
                 end
             end
@@ -144,7 +150,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
         Wp = zeros(3)
 
         # Use analytic vorticity as target vorticity (stored under P.M[7:9])
-        for P in vpm.iterator(pfield)
+        for P in vpm.iterate(pfield; include_static=true)
 
             # Radial position of this particle
             aux = dot(P.X, Cline)
@@ -162,22 +168,52 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                 # NOTE: If I don't take only half of the target vorticity
                 #       the simulation ends up having double the velocity
                 #       and vorticity once the jet is fully developed
-                P.M[i+6] /= 2
+                P.M[i+6] *= rbf_Wf
 
             end
         end
 
+        # Switch static particles to non-static so they are included in the RBF
+        for P in vpm.iterate(pfield; include_static=true); P.static .= false; end;
+
         # RBF interpolation of the analytic distribution
         rbf_scheme = vpm.CoreSpreading(-1, -1, vpm.zeta_fmm; v_lvl=v_lvl+1, rbf_optargs...)
         vpm.rbf_conjugategradient(pfield, rbf_scheme)
+
+        # Switch them back to static
+        for P in vpm.iterate(pfield; include_static=true); P.static .= true; end;
+        for pi in BCi; vpm.get_particle(pfield, pi).static .= false; end;
     end
 
     # Save a copy of boundary-condition particles
     BC = [deepcopy(vpm.get_particle(pfield, pi)) for pi in BCi]
 
-    # Remove all particles
-    for pi in vpm.get_np(pfield):-1:1
-        vpm.remove_particle(pfield, pi)
+    # Remove particles used for boundary condition RBF
+    if keep_rbfparticles # Remove only the particles that later will be injected
+
+        for pi in sort(BCi; rev=true)
+            vpm.remove_particle(pfield, pi)
+        end
+
+        # Remove half of the cylinder if a full cylinder was used for RBF
+        if rbf_halfcylinder==false
+
+            auxX = zeros(3)
+
+            for pi in vpm.get_np(pfield):-1:1
+                P = vpm.get_particle(pfield, pi)
+                auxX .= P.X
+                auxX .-= O
+                if dot(auxX, Cline) > 0
+                    vpm.remove_particle(pfield, pi)
+                end
+            end
+        end
+
+    else                 # Remove all particles
+        for pi in vpm.get_np(pfield):-1:1
+            vpm.remove_particle(pfield, pi)
+        end
     end
 
     # Runtime function that adds particles imposing the boundary condition
@@ -192,6 +228,11 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
 
     if verbose
         println("\t"^v_lvl*"Final boundary-condition particles:\t$(length(BC))")
+    end
+
+    if maxparticles<length(BC)*nsteps
+        @warn("$(maxparticles) particles is probably insufficient"*
+        " (simulation is expected to grow up to $(length(BC)*nsteps) particles)")
     end
 
     # Simulation restart

@@ -53,6 +53,7 @@ function addannulus(pfield::vpm.ParticleField, circulation::Real,
                             R::Real, AR::Real,
                             Nphi::Int, sigma::Real, area::Real;
                             O::Vector{<:Real}=zeros(3), Oaxis=I,
+                            static::Bool=false,
                             verbose=true, v_lvl=0
                             )
 
@@ -89,7 +90,7 @@ function addannulus(pfield::vpm.ParticleField, circulation::Real,
         Gamma_global = Oaxis*Gamma
 
         vpm.add_particle(pfield, X_global, Gamma_global, sigma;
-                                             vol=vol, circulation=circulation)
+                             vol=vol, circulation=circulation, static=static)
     end
 
     dS = Stot/Nphi                      # Perimeter spacing between cross sections
@@ -153,6 +154,9 @@ function probeline_UW!(pfield, U, W, lines; Gamma=1e-10, sigma=1)
     vpm._reset_particles(pfield)
     pfield.UJ(pfield)
 
+    # Calculate freestream
+    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
     # Save vorticity at probes
     pi = org_np + 1
     for (li, line) in enumerate(lines)
@@ -160,6 +164,7 @@ function probeline_UW!(pfield, U, W, lines; Gamma=1e-10, sigma=1)
             P = vpm.get_particle(pfield, pi)
 
             U[:, xi, li] .= P.U
+            U[:, xi, li] .+= Uinf
             W[1, xi, li] = vpm.get_W1(P)
             W[2, xi, li] = vpm.get_W2(P)
             W[3, xi, li] = vpm.get_W3(P)
