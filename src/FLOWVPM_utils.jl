@@ -484,29 +484,31 @@ function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
         pfield.nt = HDF5.read(h5["nt"])
     end
 
+    # Read HDF5 fields
     X = h5["X"][:, :]
     Gamma = h5["Gamma"][:, :]
     sigma = h5["sigma"][:]
     vol = h5["vol"][:]
     circulation = h5["circulation"][:]
-    static = h5["static"][:]
 
-    add_C = "C" in keys(h5)
+    # Hash to optional arguments of add_particles(...)
+    hash_optargs = [(:circulation, i->circulation[i]), (:vol, i->vol[i])]
+    gen_optargs(i) = ((sym, fun(i)) for (sym, fun) in hash_optargs)
 
-    if add_C
+    if "static" in keys(h5)
+        static = h5["static"][:]
+        push!( hash_optargs, (:static, i->static[i]) )
+    end
+    if "C" in keys(h5)
         C = h5["C"][:, :]
+        push!( hash_optargs, (:C, i->view(C, 1:3, i)) )
     end
 
     # Load particles
     for i in 1:np
-        if add_C
-            add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                         circulation=circulation[i], vol=vol[i], static=static[i],
-                                                                C=view(C, 1:3, i))
-        else
-            add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                         circulation=circulation[i], vol=vol[i], static=static[i])
-        end
+        optargs = gen_optargs(i)
+        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
+                                                                     optargs...)
     end
 
     return pfield
