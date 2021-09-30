@@ -123,7 +123,7 @@ const standard_SFSs = (
 const nofreestream(t) = zeros(3)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
-const monitor_enstrophy = monitor_enstrophy_Gamma2
+const monitor_enstrophy = monitor_enstrophy_Gammaomega
 const runtime_default = monitor_enstrophy
 const static_particles_default(pfield, t, dt) = nothing
 

@@ -124,7 +124,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
 
     # Calculate mean ignoring clipped (zero) coefficients
     mean = 0
-    N, nzero, Ntot = 0, 0, get_np(pfield)
+    N, nzero, Nstatic, Ntot = 0, 0, 0, get_np(pfield)
     for P in iterator(pfield)
         if P.C[1] == 0
             nzero += 1
@@ -132,8 +132,13 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
             N += 1
             mean += abs(P.C[1])
         end
+
+        if P.static[1]
+            Nstatic += 1
+        end
     end
     mean /= N
+    Ntot -= Nstatic
 
     # Calculate standard deviation, skewness, min, and max
     stddev, skew, kurt = 0, 0, 0
