@@ -472,10 +472,7 @@ function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
     # Error case: Particle overflow
     if np>maxparticles
         error("The field to be read ($(h5_fname)) contains $(np) particles"*
-                " but max number of particles in settings $(settings_fname) is"*
-                " $(maxparticles)."*
-                " Please overwrite with read(h5_fname, settings_fname;"*
-                " overwrite_settings=( (:maxparticles, $(np)), ))")
+                " but max number of particles is $(maxparticles).")
     end
 
     # Use time stamp
