@@ -214,6 +214,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
                                     orientation=nothing,
                                     other_file_prefs=[],
                                     other_read_paths=[],
+                                    userfunction_pfield=(pfield, num)->nothing,
                                     verbose=true, v_lvl=0, optargs...)
 
     # Memory pre-allocation
@@ -235,6 +236,9 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             vpm.read!(pfield, other_file_pref*".$(num).h5";
                                     path=other_read_paths[fi], overwrite=false)
         end
+
+        # Pass particle field to user-defined pre-processing function
+        userfunction_pfield(pfield, num)
 
         # Translate and re-orient the grids
         if origin!=nothing || orientation!=nothing
@@ -341,7 +345,7 @@ with the `O` and `Oaxis` optional arguments.
 For instance, `P_min=[0, 0, 1], P_max=[2, 3.5, 1], NDIVS=[10, 10, 0]`
 will generate a 2D surface laying in the xy-plane at z=1.0, spanning from
 (x,y)=(0,0) to (x,y)=(2,3.5). Use `O=[0, 0, -1]` to move the surface back to the
-xy-plane at z=0. Use `Oaxis=[1 0 0; 0 0 -1; 0 1 0]` to make re-orient the
+xy-plane at z=0. Use `Oaxis=[1 0 0; 0 0 -1; 0 1 0]` to re-orient the
 surface to lay in the zx-plane. The same thing can be achieved with
 `Oaxis=gt.rotation_matrix2(-90, 0, 0)` which generates the rotation matrix
 corresponding to a -90deg rotation about the x-axis.
