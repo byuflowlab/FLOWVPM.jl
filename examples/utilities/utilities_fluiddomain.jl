@@ -214,7 +214,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
                                     orientation=nothing,
                                     other_file_prefs=[],
                                     other_read_paths=[],
-                                    userfunction_pfield=(pfield, num)->nothing,
+                                    userfunction_pfield=(pfield, num, grids)->nothing,
                                     verbose=true, v_lvl=0, optargs...)
 
     # Memory pre-allocation
@@ -236,9 +236,6 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             vpm.read!(pfield, other_file_pref*".$(num).h5";
                                     path=other_read_paths[fi], overwrite=false)
         end
-
-        # Pass particle field to user-defined pre-processing function
-        userfunction_pfield(pfield, num)
 
         # Translate and re-orient the grids
         if origin!=nothing || orientation!=nothing
@@ -274,6 +271,10 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             O_prev .= O_new
             Oaxis_prev .= Oaxis_new
         end
+
+
+        # Pass particle field to user-defined pre-processing function
+        userfunction_pfield(pfield, num, grids)
 
         # Proceed to evaluate the particle field on the nodes of each grid
         evaluate_fluiddomain_vtk(pfield, grids;
