@@ -231,7 +231,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
         vpm.read!(pfield, file_pref*".$(num).h5"; path=read_path, overwrite=true)
 
         # Read additional particle fields
-        for (fi, other_file_pref) in other_file_prefs
+        for (fi, other_file_pref) in enumerate(other_file_prefs)
             vpm.read!(pfield, other_file_pref*".$(num).h5";
                                     path=other_read_paths[fi], overwrite=false)
         end
