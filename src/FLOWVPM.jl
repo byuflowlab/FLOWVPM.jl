@@ -56,7 +56,7 @@ const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
 
 const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
 const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5 + 1e-8)
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -66,7 +66,8 @@ const formulation_default = formulation_rVPM
 const standard_formulations = ( :formulation_classic,
                                 :formulation_cVPM, :formulation_rVPM,
                                 :formulation_tube_continuity, :formulation_tube_momentum,
-                                :formulation_sphere_momentum)
+                                :formulation_sphere_momentum
+                              )
 
 # ------------ Available Kernels
 const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
