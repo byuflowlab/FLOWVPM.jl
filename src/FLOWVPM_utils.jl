@@ -179,6 +179,10 @@ function save(self::ParticleField, file_name::String; path::String="",
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
     # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
+    # UPDATE 2021/11: I tried multiple ways of pre-allocating memory in the disk
+    #   through HDF5 and then dumping data into it from pfield through
+    #   iterators, but for some reason HDF5 always re-allocates memory
+    #   when trying to write anything but arrays.
     h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
@@ -191,8 +195,8 @@ function save(self::ParticleField, file_name::String; path::String="",
         h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
     end
 
-    # Connectivity information
-    h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
+    # # Connectivity information
+    # h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
 
     # # Write fields
     # dtype = HDF5.datatype(T)
@@ -229,101 +233,73 @@ function save(self::ParticleField, file_name::String; path::String="",
     print(xmf, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
     print(xmf, "<Xdmf xmlns:xi=\"http://www.w3.org/2001/XInclude\" Version=\"3.0\">\n")
         print(xmf, "\t<Domain>\n")
-          print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
-            print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
+          print(xmf, "\t\t<Grid Name=\"particles\" GridType=\"Uniform\">\n")
 
-        			  print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
+              print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
 
               # Nodes: particle positions
-              print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
+              print(xmf, "\t\t\t\t<Geometry Type=\"XYZ\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
                             " Dimensions=\"", np, " ", 3,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":X</DataItem>\n")
               print(xmf, "\t\t\t\t</Geometry>\n")
 
               # Topology: every particle as a point cell
-              print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Mixed\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-                            " Dimensions=\"", np*3,
-                            "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":connectivity</DataItem>\n")
-              print(xmf, "\t\t\t\t</Topology>\n")
+              print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Polyvertex\"/>\n")
 
               # Attribute: Gamma
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"Gamma\" Type=\"Vector\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"Gamma\" Type=\"Vector\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":Gamma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: sigma
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"sigma\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"sigma\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":sigma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: circulation
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"circulation\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"circulation\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":circulation</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: vol
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"vol\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"vol\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":vol</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: static
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"static\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"static\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":static</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
 
               # Attribute: index
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"i\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
                             h5fname, ":i</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               if isLES(self)
                   # Attribute: C
-                  print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                              " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                              " Name=\"C\" Type=\"Vector\">\n")
+                  print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"C\" Type=\"Vector\">\n")
                     print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                                " Dimensions=\"", np, " ", 3,
-                                "\" Format=\"HDF\" Precision=\"4\">",
+                                " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                                 h5fname, ":C</DataItem>\n")
                   print(xmf, "\t\t\t\t</Attribute>\n")
               end
 
-            print(xmf, "\t\t\t</Grid>\n")
           print(xmf, "\t\t</Grid>\n")
         print(xmf, "\t</Domain>\n")
     print(xmf, "</Xdmf>\n")
