@@ -109,6 +109,22 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
         println("\t"^(v_lvl)*"Number of particles:\t$(vpm.get_np(pfield))")
     end
 
+    # Pre-allocate memory for U and W in grids
+    t = @elapsed begin
+        for field_name in ("U", "W", "J1", "J2", "J3")[1:(add_J ? end : 2)]
+            for grid in grids
+                if !(field_name in keys(grid.field))
+                    arr = zeros(3, grid.nnodes)
+                    gt.add_field(grid, field_name, "vector", arr, "node")
+                end
+            end
+        end
+    end
+
+    if verbose
+        println("\t"^(v_lvl)*"Pre-allocated U and W memory:\t$(round(t, digits=1)) s")
+    end
+
     # Evaluate particle field
     vpm._reset_particles(pfield)
     t = @elapsed pfield.UJ(pfield)
@@ -134,32 +150,25 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             nnodes = grid.nnodes
             rng = prev_np+1:prev_np+nnodes
 
-            # U = collect(vpm.get_U(pfield, i) for i in prev_np+1:prev_np+nnodes)
-            # W = collect(vpm.get_W(pfield, i) for i in prev_np+1:prev_np+nnodes)
+            particles = vpm.iterate(pfield; start_i=rng.start, end_i=rng.stop)
 
-            # NOTE: This avoid memory allocation, but it could generate issues
-            #           if the solution fields are accessed beyond being saved
-            #           as VTK files
-            U = (vpm.get_U(pfield, i) for i in rng)
-            W = (vpm.get_W(pfield, i) for i in rng)
+            U  = grid.field["U"]["field_data"]
+            U .= (P.U[i] for i in 1:3, P in particles)
 
-            gt.add_field(grid, "U", "vector", U, "node"; raise_warn=false)
-            gt.add_field(grid, "W", "vector", W, "node"; raise_warn=false)
+            W  = grid.field["W"]["field_data"]
+            W .= (fun(P) for fun in (vpm.get_W1, vpm.get_W2, vpm.get_W3), P in particles)
 
             if add_J
-                particles = vpm.iterate(pfield;
-                                              start_i=rng.start, end_i=rng.stop)
                 for i in 1:3
-                    Ji = (view(P.J, i, :) for P in particles)
-                    gt.add_field(grid, "J$(i)", "vector", Ji, "node";
-                                                               raise_warn=false)
+                    Ji = grid.field["J$(i)"]["field_data"]
+                    Ji .= (P.J[i, j] for j in 1:3, P in particles)
                 end
             end
 
             # Save fluid domain as VTK file
             if save_path != nothing
                 str *= gt.save(grid, file_pref*gridname;
-                                              path=save_path, num=num, time=num)
+                                              path=save_path, num=num, time=pfield.t)
             end
 
             prev_np += nnodes
