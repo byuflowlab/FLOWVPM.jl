@@ -122,7 +122,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
     end
 
     if verbose
-        println("\t"^(v_lvl)*"Pre-allocated U and W memory:\t$(round(t, digits=1)) s")
+        println("\t"^(v_lvl)*"Pre-allocate U and W memory:\t$(round(t, digits=1)) s")
     end
 
     # Evaluate particle field
@@ -150,7 +150,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             nnodes = grid.nnodes
             rng = prev_np+1:prev_np+nnodes
 
-            particles = vpm.iterate(pfield; start_i=rng.start, end_i=rng.stop)
+            particles = vpm.iterate(pfield; start_i=rng.start, end_i=rng.stop, include_static=true)
 
             U  = grid.field["U"]["field_data"]
             U .= (P.U[i] for i in 1:3, P in particles)
