@@ -38,6 +38,8 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                                         restart_file=nothing,
                                         restart_sigma=nothing,
                                         # ------- OUTPUT OPTIONS ---------------
+                                        save_path=nothing,
+                                        prompt=true,            # Whether to prompt the user
                                         verbose=true,           # Enable verbose
                                         v_lvl=0,
                                         runtime_functions=[],   # Monitors and runtime functions
@@ -238,7 +240,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
         println("\t"^v_lvl*"Final boundary-condition particles:\t$(length(BC))")
     end
 
-    if maxparticles<length(BC)*nsteps
+    if pfield.maxparticles<length(BC)*nsteps
         @warn("$(maxparticles) particles is probably insufficient"*
         " (simulation is expected to grow up to $(length(BC)*nsteps) particles)")
     end

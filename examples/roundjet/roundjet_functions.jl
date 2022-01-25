@@ -10,8 +10,8 @@
 =###############################################################################
 
 
-dot(A, B) = A[1]*B[1] + A[2]*B[2] + A[3]*B[3]
-norm(X) = sqrt(dot(X, X))
+dot(A, B) = sum(a*b for (a,b) in zip(A, B))
+norm(A) = sqrt(mapreduce(x->x^2, +, A))
 function cross(A,B)
     out = zeros(3)
     cross!(out, A, B)
