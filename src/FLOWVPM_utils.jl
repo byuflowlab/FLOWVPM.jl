@@ -130,7 +130,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     end
 
     # Finalize verbose
-    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    if verbose
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    end
 
     return nothing
 end
@@ -564,3 +566,298 @@ function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
     vprintln(line1, v_lvl)
     vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
 end
+
+################################################################################
+################################################################################
+################################################################################
+
+# Eric Green's additions:
+
+"""
+    This provides a new interface for using time integration schemes from DifferentialEquations.jl. Additional methods were defined for operations
+    on particles and particles fields. Addition and scalar multiplication were both needed; the implementation should be fully broadcastable.
+    Arbitrary operations can be run on particle fields because they just broadcast those operations to their interior particles, but only addition
+    and scalar multiplication/division are defined for particles. If other operations are needed, add more methods for particles.
+
+    The function structure is kept close to the original run_vpm!; however, the actual solving is offloaded to DifferentialEquations.jl
+"""
+
+using DifferentialEquations
+diffeq = DifferentialEquations
+using DiffEqSensitivity
+des = DiffEqSensitivity
+
+function run_vpm_alternate_time_marching!(pfield::ParticleField, dt::Real, nsteps::Int;
+    # RUNTIME OPTIONS
+    mode="default",
+    runtime_function::Function=runtime_default,
+    static_particles_function::Function=static_particles_default,
+    nsteps_relax::Int64=-1,
+    # OUTPUT OPTIONS
+    save_path::Union{Nothing, String}=nothing,
+    create_savepath::Bool=true,
+    run_name::String="pfield",
+    save_code::String="",
+    nsteps_save::Int=1, prompt::Bool=true,
+    verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
+    save_time=true)
+
+
+    ### I'm leaving these checks in place for now, even if their relevant functionality is disabled. This may change later.
+    ### Update: This check currently triggers the error output, so it is disabled until I get the viscous scheme/kernel compatibility list updated.
+    # ERROR CASES
+    ## Check that viscous scheme and kernel are compatible
+    #=compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
+
+    if !(pfield.kernel in compatible_kernels)
+        error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
+        " $(typeof(pfield.viscous).name); compatible kernels are"*
+        " $(compatible_kernels)")
+    end=#
+
+    if save_path!==nothing
+        # Create save path
+        if create_savepath; create_path(save_path, prompt); end;
+
+        # Save code
+        if save_code!=""
+            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
+        end
+        
+        # Save settings
+        save_settings(pfield, run_name; path=save_path)
+    end
+
+    # Initialize verbose
+    (line1, line2, run_id, file_verbose,
+    vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
+                                    dt, nsteps_relax, nsteps_save,
+                                    runtime_function,
+                                    static_particles_function, v_lvl)
+
+    ## This section has a lot of changes. There are five options:
+    # 1. The original time-marching code (default)
+    # 2. A DifferentialEquations-based version that runs 1 time step at a time and saves after each step
+    #       - This is probably the easiest to implement, so it gets its own section even though it is just a special case of 3.
+    # 3. A DifferentialEquations-based version that runs N time steps at a time and saves at regular intervals
+    # 4. A DifferentialEquations-based version that runs everything and saves the intermediate states in a vector of ParticleFields
+    #       -There may be memory issues with this one.
+    # 5. A DifferentialEquations-based version that runs everything without saving intermediate results, only outputting the final particle state.
+    #       -The practical use of this might be limited, but it's a good benchmarking tool for comparing with
+    #           the original time-marching implementations.
+    #       -This is also a special case of 3., but now N is the total number of time steps and the system state is only saved once
+
+    # So far, 1., 2., and 5. are implemented, under the names "default", "onestep", and "fullstep", respectively.
+    
+    # RUN
+    if mode == "default"
+        for i in 0:nsteps
+
+            if i%verbose_nsteps==0
+                vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+            end
+
+            # Relaxation step
+            relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+
+            org_np = get_np(pfield)
+
+            # Time step
+            if i!=0
+                # Add static particles
+                static_particles_function(pfield, pfield.t, dt)
+
+                # Step in time solving governing equations
+                nextstep(pfield, dt; relax=relax)
+
+                # Remove static particles (assumes particles remained sorted)
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
+
+            # Calls user-defined runtime function
+            breakflag = runtime_function(pfield, pfield.t, dt;
+                            vprintln= (str)-> i%verbose_nsteps==0 ?
+                                    vprintln(str, v_lvl+2) : nothing)
+
+            # Save particle field
+            if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+                overwrite_time = save_time ? nothing : pfield.nt
+                save(pfield, run_name; path=save_path, add_num=true,
+                                    overwrite_time=overwrite_time)
+            end
+
+            # User-indicated end of simulation
+            if breakflag
+                break
+            end
+
+        end
+
+        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
+        if verbose
+            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        end
+    end
+    if mode == "onestep"
+        tspan = (0.0,dt)
+        p = 1.0
+        for i in 0:nsteps
+
+            if i%verbose_nsteps==0
+                vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+            end
+
+            # Relaxation step
+            relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+
+            org_np = get_np(pfield)
+
+            # Time step
+            if i!=0
+                # Add static particles
+                static_particles_function(pfield, pfield.t, dt)
+
+                ## this section is the only one that sees changes for this option
+                # Step in time solving governing equations
+                #nextstep(pfield, dt; relax=relax)
+                
+                prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
+                # currently just overwrites pfield
+                sol = diffeq.solve(prob,ORK256();dt=dt)
+                pfield .= sol.u[end]
+                pfield.nt += 1
+                pfield.t += dt
+                # Remove static particles (assumes particles remained sorted)
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
+
+            # Calls user-defined runtime functions
+            breakflag = runtime_function(pfield, pfield.t, dt;
+                            vprintln= (str)-> i%verbose_nsteps==0 ?
+                                    vprintln(str, v_lvl+2) : nothing)
+
+            # Save particle field
+            if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+                overwrite_time = save_time ? nothing : pfield.nt
+                save(pfield, run_name; path=save_path, add_num=true,
+                                    overwrite_time=overwrite_time)
+            end
+
+            # User-indicated end of simulation
+            if breakflag
+                break
+            end
+
+        end
+
+        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
+        if verbose
+            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        end
+    end
+
+    if mode == "fullstep"
+        tspan = (0.0,dt*nsteps)
+        nsteps_relax = 10
+        relax_t = (dt*nsteps)/nsteps_relax
+        relax_t0 = relax_t
+        p = [relax_t,relax_t0] # assorted parameters that the solver should have access to that are not stored in the pfield type.
+        cb1 = ContinuousCallback(CoreSpreadingCondition,CoreSpreadingAffect!)
+        cb2 = ContinuousCallback(RelaxationCondition,RelaxationAffect!)
+        cbs = CallbackSet(cb1,cb2)
+
+        # Relaxation step #disabled, might move to actual derivative calculations
+        #relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+
+        org_np = get_np(pfield)
+
+        # Add static particles
+        static_particles_function(pfield, pfield.t, dt)
+        
+        prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
+        # currently just overwrites pfield
+        sol = diffeq.solve(prob,ORK256(),callback=cbs,;dt=dt)
+        pfield .= sol.u[end]
+        pfield.nt += nsteps
+        pfield.t += dt*nsteps
+        # Remove static particles (assumes particles remained sorted)
+        for pi in get_np(pfield):-1:(org_np+1)
+            remove_particle(pfield, pi)
+        end
+
+        # Calls user-defined runtime functions # this should be reformulated to run through callbacks (probably VectorContinuousCallback objects)
+        breakflag = runtime_function(pfield, pfield.t, dt;
+                        vprintln= (str)-> i%verbose_nsteps==0 ?
+                                vprintln(str, v_lvl+2) : nothing)
+
+        # Save particle field ## just one save operation at the end ### the save operation could probably be run as a callback function
+        #=if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+            overwrite_time = save_time ? nothing : pfield.nt
+            save(pfield, run_name; path=save_path, add_num=true,
+                                overwrite_time=overwrite_time)
+        end=#
+        save(pfield, run_name; path=save_path)
+
+        # User-indicated end of simulation ## never break in this case... but it wouldn't be too hard to make this run with a callback
+        #if breakflag
+        #    break
+        #end
+
+        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
+        if verbose
+            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        end
+
+    end
+
+    return nothing
+end
+
+# Relaxation callback functions. These check if the relaxation condition is met (measured by time since last relaxation).
+# If so, it runs the relaxation.
+function RelaxationCondition(u,t,integrator)
+    if !u.relax
+        1
+    else
+        integrator.p[1] - t
+    end
+end
+
+function RelaxationAffect!(integrator)
+    pfield = integrator.u
+    for p in pfield.particles
+        pfield.relaxation(pfield.rlxf, p)
+    end
+    integrator.p[1] += integrator.p[2]
+end
+
+### supported ODE solvers:
+# Tsit5()
+# BS3()
+# Vern7()
+# VCABM()
+# ORK256() - Slightly higher memory usage than default but significantly faster
+# As far as I can tell, all the low-memory-usage ones should work fine - this is another 30-40 solvers
+
+
+### solvers requiring ForwardDiff compatibility:
+# QNDF()
+# FBDF()
+# Rodas4()
+# KenCarp4()
+# TRBDF2()
+# Trapezoid()
+# AutoTsit5(Rosenbrock23())
+# AutoVern7(Rodas5()
+# Rosenbrock23()
+
+### solvers that can yield zero/near zero circulations during solving:
+# DP5()
+# DP8()
+
+### solvers with other incompatibilities:
+# RadauIIA5(): passes in complex float value
