@@ -13,7 +13,8 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
+# Eric Green: "The abstractarray subtyping tells Julia to treat this like a 2D matrix. This lets DifferentialEquations.jl work with it if the appropriate matrix interface is added."
+mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme} <: AbstractArray{R,2}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -80,21 +81,21 @@ end
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
+                                    R=RealFMM,
                                     optargs...
                             ) where {F, V<:ViscousScheme}
     # Memory allocation by C++
     bodies = fmm.genBodies(maxparticles)
 
     # Have Julia point to the same memory than C++
-    particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+    particles = [Particle(fmm.getBody(bodies, i-1),R) for i in 1:maxparticles]
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
         P.index[1] = i
     end
-
     # Generate and return ParticleField
-    return ParticleField{RealFMM, F, V}(maxparticles, particles, bodies,
+    return ParticleField{R, F, V}(maxparticles, particles, bodies,
                                          formulation, viscous; np=0, optargs...)
 end
 
@@ -310,4 +311,191 @@ function _reset_particle_sgs(P::Particle{T}, tzero::T) where {T}
     getproperty(P, _SGS)::Array{T, 2} .= tzero
 end
 _reset_particle_sgs(P::Particle{T}) where {T} = _reset_particle_sgs(P, zero(T))
+
+################################################################################
+################################################################################
+################################################################################
+
+# Eric Green's additions:
+
+# Additional methods for arithmatic operations so that DE.jl can run time integration. The details of this are taken from the array interface documentation, since there's
+# a very similar case in one of their examples (a struct with array-type data as well as other data that needs to be properly carried over)
+
+# Functions defined to enable using a custom array type (from the docs: https://docs.julialang.org/en/v1/manual/interfaces/#man-interfaces-broadcasting):
+
+# As with the particle struct, these functions allow broadcasting to work on the PointList type.
+
+"""
+    'Base.size(pfield::ParticleField)'
+
+Returns the size of the particle field as a 2-entry tuple. The first entry is the number of particles and the second is the number
+of data values that should be updated by a time-stepping algorithm (i.e. 9).
+
+"""
+Base.size(pfield::ParticleField) = (pfield.np,9) # point size hardcoded at 9, since there are 9 entries that the time-stepping algorithm sees.
+
+"""
+    'Base.getindex(pfield::ParticleField{R,F,V},inds)'
+Allows array-like access on ParticleField objects. Required for DifferentialEquations.jl to be able to access ParticleField data correctly.
+Example: pfield[1,2] will return entry 2 (i.e. X[2]) from the first particle in pfield
+"""
+Base.getindex(pfield::ParticleField{R,F,V},inds::Vararg{Int,1}) where {R,F,V} = pfield.particles[Int(ceil(inds[1]/size(pfield)[2]))][(inds[1]-1)%size(pfield)[2]+1] # converts a single-index array access into an access of particle data
+function Base.getindex(pfield::ParticleField{R,F,V},inds::Vararg{Int,2}) where {R,F,V} # slightly longer definition to account for writing to a not-yet-defined pfield
+    if isassigned(pfield.particles)
+        pfield.particles[inds[1]][inds[2]]
+    else
+        pfield = zero(ParticleField(pfield.np;formulation = pfield.formulation,viscous = pfield.viscous,R = R))
+        pfield[inds...] # recursive call
+    end
+end
+
+"""
+    'Base.setindex!(pfield::ParticleField,val,inds)'
+Sets the element at pfield[inds...] to val.
+"""
+Base.setindex!(pfield::ParticleField{R,F,V},val,inds::Vararg{Int,1}) where {R,F,V} = pfield.particles[Int(ceil(inds[1]/size(pfield)[2]))][(inds[1]-1)%size(pfield)[2]+1] = val
+function Base.setindex!(pfield::ParticleField{R,F,V},val,inds::Vararg{Int,2}) where {R,F,V}
+    if isassigned(pfield.particles)
+        ###pfield.particles[inds[1]][inds[2]] = copy(val)
+        pfield.particles[inds[1]][inds[2]] = val
+    else
+        pfield = ParticleField(pfield.maxparticles;formulation = pfield.formulation,viscous = pfield.viscous,R = R)
+        ###pfield.particles[inds[1]][inds[2]] = copy(val)
+        pfield.particles[inds[1]][inds[2]] = val
+    end
+end
+function Base.setindex!(pfield::ParticleField{R,F,V},val,inds::Vararg{Int,N}) where {R,F,V,N}
+    error("error: particle field index out of bounds!") # error case: access with 3 or more indices
+end
+
+# Base.showarg(io::IO,pfield::ParticleField,toplevel) = print(io,"output text") # custom printing function, if desired
+
+### These next few functions should not be used directly; rather, it is used to implement broadcasting any function onto ParticleField objects.
+# The general format is copied from https://docs.julialang.org/en/v1/manual/interfaces/#man-interfaces-broadcasting).
+Base.BroadcastStyle(::Type{<:ParticleField}) = Broadcast.ArrayStyle{ParticleField}()
+"""
+    'Base.similar(bc::Broadcasted)'
+Unpacks broadcasted input and constructs a new ParticleField of similar structure.
+"""
+function Base.similar(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{ParticleField}},::Type{ElType}) where {ElType}
+    pfield = find_pfield(bc)
+    pfield_out = ParticleField(pfield.np;formulation = pfield.formulation,viscous = pfield.viscous,R = ElType)
+    # copies over all the settings
+    pfield_out.maxparticles = pfield.maxparticles
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        add_particle(pfield_out,ElType[0,0,0],ElType[0,0,0],zero(ElType);vol = zero(ElType),circulation = 1e-12*one(ElType),index = p.index)
+    end
+    copy_settings!(pfield_out,pfield)
+    return pfield_out
+end
+"""
+    'find_pfield(bc)'
+Unpacks broadcasted input. This function should probably not be called directly.
+"""
+find_pfield(bc::Base.Broadcast.Broadcasted) = find_pfield(bc.args)
+find_pfield(args::Tuple) = find_pfield(args[1],Base.tail(args))
+find_pfield(x) = x
+find_pfield(::Tuple{}) = nothing
+find_pfield(pfield::ParticleField,rest)= pfield
+find_pfield(::Any,rest) = find_pfield(rest)
+find_pfield(bc::Base.Broadcast.Broadcasted,rest) = find_pfield(bc.args)
+"""
+    'Base.eltype(pfield::ParticleField)
+Returns the base type of the particle field numerical data.
+"""
+Base.eltype(pfield::ParticleField{R,F,V}) where {R,F,V} = R # eltype is the base floating-point type
+
+"""
+    'Base.axes(pfield::ParticleField)'
+Returns the axes of the particle type.
+"""
+Base.axes(pfield::ParticleField) = (Base.OneTo(pfield.np),Base.OneTo(9)) # This defines the array size for a ParticleField
+
+# Extra functions to get the right type returned from solving the ODE:
+
+"""
+    'Base.similar(pfield::ParticleField{R,F,V})'
+Returns a ParticleField similar to the input. The parametric types as well as simulation parameters will be the same. The new field
+will be initialized with the same maxparticles as the original. The same number of particles will be active in the new ParticleField, but
+the numerical data will be initialized to zeros.
+"""
+function Base.similar(pfield::ParticleField{R,F,V}) where {R,F,V}
+    pfield_out = ParticleField(pfield.np;formulation = pfield.formulation,viscous = pfield.viscous,R = R)
+    # copies over all the settings
+    pfield_out.maxparticles = pfield.maxparticles
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        add_particle(pfield_out,R[0,0,0],R[0,0,0],zero(R);vol = zero(R),circulation = 1e-12*one(R),index = p.index)
+    end
+    copy_settings!(pfield_out,pfield)
+    return pfield_out
+end
+function Base.similar(pfield::ParticleField{R,F,V},T2::Type) where {R,F,V}
+    pfield_out = ParticleField(pfield.np;formulation = pfield.formulation,viscous = pfield.viscous,R = T2)
+    # copies over all the settings
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        add_particle(pfield_out,R[0,0,0],R[0,0,0],zero(R);vol = zero(R),circulation = 1e-12*one(R),index = p.index)
+    end
+    copy_settings!(pfield_out,pfield)
+    return pfield_out
+end
+
+"""
+    Base.zero(pfield::ParticleField{R,F,V})
+Returns a "zero" ParticleField. The parametric types as well as simulation parameters will be the same as the inpit. The new field
+will be initialized with the same maxparticles as the original. The same number of particles will be active in the new ParticleField, but
+the numerical data will be initialized to zeros. See Base.similar(pfield::ParticleField{R,F,V}).
+"""
+function Base.zero(pfield::ParticleField{R,F,V}) where {R,F,V}
+    pfield_out = ParticleField(pfield.np;formulation = pfield.formulation,viscous = pfield.viscous,R = R)
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        add_particle(pfield_out,R[0,0,0],R[0,0,0],zero(R);vol = zero(R),circulation = 1e-12*one(R),index = p.index)
+    end
+    copy_settings!(pfield_out,pfield)
+    return pfield_out
+end
+
+"""
+    Base.copy(pfield::ParticleField{R,F,V})
+Copies the input ParticleField. In the process, this initializes a new ParticleField to match the input. See
+Base.similar(pfield::ParticleField{R,F,V}) and Base.zero(pfield::ParticleField{R,F,V}).
+"""
+function Base.copy(pfield::ParticleField{R,F,V}) where {R,F,V}
+    pfield_out = ParticleField(pfield.maxparticles;formulation = pfield.formulation,viscous = pfield.viscous,R = R)
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        ###add_particle(pfield_out,copy(p.X),copy(p.Gamma),p.sigma[1]; vol = p.vol[1],circulation = p.circulation[1],index = p.index)
+        add_particle(pfield_out,p.X,p.Gamma,p.sigma[1]; vol = p.vol[1],circulation = p.circulation[1],index = p.index)
+    end
+    copy_settings!(pfield_out,pfield)
+    return pfield_out
+end
+
+"""
+    'copy_settings!(dest::ParticleField{R,F,V},source::ParticleField{R,F,V})'
+Copies the settings from one ParticleField to another. This is called in copy(), similar(), and zero(), but
+is defined as a second function for convenience.
+"""
+
+function copy_settings!(dest::ParticleField{R,F,V},source::ParticleField{R,F,V}) where {R,F,V}
+
+    dest.maxparticles = source.maxparticles
+    dest.kernel = source.kernel
+    dest.UJ = source.UJ
+    dest.Uinf = source.Uinf
+    dest.sgsmodel = source.sgsmodel
+    dest.sgsscaling = source.sgsscaling
+    dest.integration = source.integration
+    dest.transposed = source.transposed
+    dest.relaxation = source.relaxation
+    dest.relax = source.relax
+    dest.rlxf = source.rlxf
+    dest.fmm = source.fmm
+    return nothing
+
+end
+
 ##### END OF PARTICLE FIELD#####################################################
