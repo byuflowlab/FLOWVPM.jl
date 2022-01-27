@@ -88,7 +88,7 @@ function ParticleField(maxparticles::Int;
     bodies = fmm.genBodies(maxparticles)
 
     # Have Julia point to the same memory than C++
-    particles = [Particle(fmm.getBody(bodies, i-1),R) for i in 1:maxparticles]
+    particles = [Particle(fmm.getBody(bodies, i-1);R=R) for i in 1:maxparticles]
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
