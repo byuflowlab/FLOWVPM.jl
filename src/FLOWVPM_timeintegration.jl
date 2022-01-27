@@ -443,3 +443,79 @@ function relaxation_correctedpedrizzetti(rlxf::Real, p::Particle)
 
     return nothing
 end
+
+################################################################################
+################################################################################
+################################################################################
+
+# Eric Green's additions:
+
+"""
+This provides a function of the form f(dx,x,p) for interfacing with DifferentialEquations. Extra methods were defined for adding two ParticleFields
+    and for multiplying a number by a ParticleField (i.e. n*ParticleField). It should be (mostly) in-place.
+"""
+
+function DiffEQ_derivative_function!(dpfield::ParticleField{R,F,V}, pfield::ParticleField{R,F,V}, t,param) where {R,F,V}
+#function DiffEQ_derivative_function!(pfield::ParticleField, t,p; relax::Bool=false) where {R, V, R2}
+    
+    ## initial computations taken from the first Euler implementation.
+    # Reset U and J to zero ## This resets some parts of the computations for the particles but doesn't reset the actual quantities of interest
+    _reset_particles(pfield)
+
+    # Calculate interactions between particles: U and J
+    pfield.UJ(pfield)
+
+    # Calculate subgrid-scale contributions
+    _reset_particles_sgs(pfield)
+    pfield.sgsmodel(pfield)
+
+    # Calculate freestream
+    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
+    zeta0::R = pfield.kernel.zeta(0)
+
+    ##
+
+    # Update the particle field: convection and stretching
+    for i=1:pfield.np
+        p = pfield.particles[i]
+        dp = dpfield.particles[i]
+
+        scl::R = pfield.sgsscaling(p, pfield) ## This should be able to stay the same
+
+        ## All of the terms with the x+=dt*f(x) terms are replaced with dxdt = f(x)
+        # Update position
+        dp.X .= p.U .+ Uinf
+
+        # Update vectorial circulation
+        ## Vortex stretching contributions
+        if pfield.transposed
+            # Transposed scheme (Γ⋅∇')U
+            dp.Gamma[1] = p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
+            dp.Gamma[2] = p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
+            dp.Gamma[3] = p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+        else
+            # Classic scheme (Γ⋅∇)U
+            dp.Gamma[1] = p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
+            dp.Gamma[2] = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
+            dp.Gamma[3] = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+        end
+
+        ## Subgrid-scale contributions
+        dp.Gamma[1] += scl*get_SGS1(p)*(p.sigma[1]^3/zeta0)
+        dp.Gamma[2] += scl*get_SGS2(p)*(p.sigma[1]^3/zeta0)
+        dp.Gamma[3] += scl*get_SGS3(p)*(p.sigma[1]^3/zeta0)
+
+        # Relaxation now runs through a callback.
+
+    end
+
+    # Since the differential part of the core spreading is only three lines, I moved it to the main derivative calculation function.
+    # Core size resets now occur through callbacks.
+    if iscorespreadingmodified(pfield.viscous)
+        for i=1:pfield.np
+            dpfield.particles[i].sigma[1] = pfield.viscous.nu/pfield.particles[i].sigma[1] # obviously fails if σ is zero, but that should never happen. Right...?
+        end
+    end
+
+end
