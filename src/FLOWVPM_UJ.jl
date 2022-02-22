@@ -65,6 +65,8 @@ function UJ_direct(sources, targets, g_dgdr::Function)
          Pi.U[2] += g_sgm * crss2
          Pi.U[3] += g_sgm * crss3
 
+        # vind = -g_dgdr(r/Pj.sigma[1])[1] / (4 * pi) / r^3 * LA.cross( [dX1, dX2, dX3], Pj.Gamma )
+
          # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
          # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
          aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2

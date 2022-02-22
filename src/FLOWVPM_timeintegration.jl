@@ -62,9 +62,6 @@ function euler(pfield::ParticleField, dt::Real; relax::Bool=false)
     return nothing
 end
 
-
-
-
 """
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.

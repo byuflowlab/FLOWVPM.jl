@@ -44,6 +44,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=(pfield, t, dt)->false,
                       static_particles_function::Function=(pfield, t, dt)->nothing,
+                      ground_particles_function::Function=(pfield, t, dt)->nothing,
                       nsteps_relax::Int64=-1,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
@@ -51,6 +52,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       run_name::String="pfield",
                       save_code::String="",
                       save_static_particles::Bool=true,
+                      save_ground_particles::Bool=true,
                       nsteps_save::Int=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
                       save_time=true)
@@ -100,12 +102,26 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             # Add static particles
             static_particles_function(pfield, pfield.t, dt)
 
-            # Step in time solving governing equations
+            stc_np = get_np(pfield)
+
+            # add ground particles
+            ground_particles_function(pfield, pfield.t, dt)
+
+            g_np = get_np(pfield)
+
+            # Step in time solving governing equations; reset must be true to include effect of ground particles
             nextstep(pfield, dt; relax=relax)
+
+            # Remove ground particles (assumes particles remained sorted)
+            if save_ground_particles==false
+                for pi in g_np:-1:(stc_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
 
             # Remove static particles (assumes particles remained sorted)
             if save_static_particles==false
-                for pi in get_np(pfield):-1:(org_np+1)
+                for pi in stc_np:-1:(org_np+1)
                     remove_particle(pfield, pi)
                 end
             end
@@ -116,6 +132,12 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
                                         overwrite_time=overwrite_time)
+        end
+
+        if i!=0 && save_ground_particles==true
+            for pi in g_np:-1:(stc_np+1)
+                remove_particle(pfield, pi)
+            end
         end
 
         if i!=0 && save_static_particles==true
@@ -190,6 +212,7 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
     h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
+    h5["Velocity"] = [P.U[i] for i in 1:3, P in iterate(self)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self)]
     h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
@@ -261,6 +284,16 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
                             " Dimensions=\"", np, " ", 3,
                             "\" Format=\"HDF\" Precision=\"4\">",
                             h5fname, ":Gamma</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: Velocity
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                          " Name=\"Velocity\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3,
+                            "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":Velocity</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: sigma
