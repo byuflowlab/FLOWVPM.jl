@@ -159,12 +159,12 @@ end
 """
 Transfer particles from the ground field to the particle field with zero circulation.
 """
-function transfer_zeroed_particles!(target::ParticleField, source::ParticleField)
+function transfer_zeroed_particles!(target::ParticleField, source::ParticleField; static::Bool=true)
     for p in iterator(source)
         local X = deepcopy(p.X)
         local Gamma = deepcopy(p.Gamma)
         local sigma = p.sigma[1]
-        add_particle(target, X, zeros(3), sigma)
+        add_particle(target, X, zeros(3), sigma; static=static)
     end
     # # get number of particle locations
     # dof = length(gfield.Gamma_basis)
@@ -199,13 +199,13 @@ end
 """
 Adds ground particles of appropriate strength to `pfield`.
 """
-function ground_effect!(pfield::ParticleField, gfield::GroundField)
+function ground_effect!(pfield::ParticleField, gfield::GroundField; save=true, name="", savepath="")
     # get references
     A = gfield.A
     b = gfield.b
     ngp = gfield.pfield.np
 
-    transfer_zeroed_particles!(pfield, gfield.pfield)
+    transfer_zeroed_particles!(pfield, gfield.pfield; static=true)
 
     np = pfield.np - ngp
 
@@ -216,6 +216,13 @@ function ground_effect!(pfield::ParticleField, gfield::GroundField)
     # update pfield ground Gammas
     for (i_location, p) in enumerate(pfield.particles[np+1:pfield.np])
         p.Gamma .= gfield.pfield.particles[i_location].Gamma .* Gammas[i_location]
+    end
+
+    # save particle field
+    if save
+        start_i = np+1
+        end_i = np+1+ngp
+        save(pfield, name*"_ground"; path=savepath, start_i=start_i, end_i=end_i)
     end
     return nothing
 end

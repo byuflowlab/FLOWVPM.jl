@@ -159,7 +159,7 @@ visualization.
 """
 function save(self::ParticleField, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing)
+                overwrite_time=nothing, start_i=1, end_i=-1)
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
@@ -196,17 +196,17 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Velocity"] = [P.U[i] for i in 1:3, P in iterate(self)]
-    h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true)]
-    h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true)]
-    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
-    h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
+    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["Velocity"] = [P.U[i] for i in 1:3, P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
+    h5["i"] = [P.index[1] for P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
 
     if isLES(self)
-        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
+        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true, start_i=start_i, end_i=end_i)]
     end
 
     # # Connectivity information
