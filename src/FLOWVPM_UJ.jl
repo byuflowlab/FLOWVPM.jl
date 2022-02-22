@@ -33,7 +33,9 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_direct(source::ParticleField, target::ParticleField)
-  return UJ_direct(iterator(source), iterator(target), source.kernel)
+  return UJ_direct( iterator(source; include_static=true),
+                    iterator(target; include_static=true),
+                    source.kernel)
 end
 
 function UJ_direct(sources, targets, kernel::Kernel)
@@ -122,7 +124,7 @@ function UJ_fmm(pfield::ParticleField; optargs...)
     aux1 = RealFMM(1/(4*pi))
 
     # Build velocity and velocity Jacobian from the FMM's vector potential
-    for P in iterator(pfield)
+    for P in iterator(pfield; include_static=true)
         # Velocity U = ∇ × ψ
         P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])
         P.U[2] += aux1*(P.Jexa[3,1] - P.Jexa[1,3])
@@ -147,14 +149,20 @@ function UJ_fmm(pfield::ParticleField; optargs...)
 end
 
 function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                                            rbf::Bool=false, sort::Bool=true)
+                            rbf::Bool=false, sfs::Bool=false, sfs_type::Int=-1,
+                            transposed_sfs::Bool=true,
+                            reset::Bool=true, reset_sfs::Bool=false,
+                            sort::Bool=true)
     try
         fmm.calculate(pfield.bodies,
                         Int32(get_np(pfield)),
                         Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
                         RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
                         Int32(pfield.kernel.EXAFMM_P2P),
-                        Int32(pfield.kernel.EXAFMM_L2P), rbf, sort)
+                        Int32(pfield.kernel.EXAFMM_L2P),
+                        Int32(sfs_type),
+                        rbf, sfs, transposed_sfs,
+                        reset, reset_sfs, sort)
     catch e
         error("ExaFMM unexpected error: $(e)")
     end

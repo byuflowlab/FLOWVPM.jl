@@ -29,7 +29,6 @@ Solves `nsteps` of the particle field with a time step of `dt`.
                             solving the governing equations, and any new
                             particles added by this function are immediately
                             removed.
-* `nsteps_relax::Int`   : Relaxes the particle field every this many time steps.
 * `save_path::String`   : Give it a string for saving VTKs of the particle
                             field. Creates the given path.
 * `run_name::String`    : Name of output files.
@@ -42,24 +41,21 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 """
 function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
-                      runtime_function::Function=(pfield, t, dt)->false,
-                      static_particles_function::Function=(pfield, t, dt)->nothing,
-                      ground_particles_function::Function=(pfield, t, dt)->nothing,
-                      nsteps_relax::Int64=-1,
+                      runtime_function::Function=runtime_default,
+                      static_particles_function::Function=static_particles_default,
+                      ground_particles_function::Function=ground_particles_default,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
                       create_savepath::Bool=true,
                       run_name::String="pfield",
                       save_code::String="",
-                      save_static_particles::Bool=true,
-                      save_ground_particles::Bool=true,
                       nsteps_save::Int=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
                       save_time=true)
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
-    compatible_kernels = kernel_compatibility[typeof(pfield.viscous).name]
+    compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
 
     if !(pfield.kernel in compatible_kernels)
         error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
@@ -67,65 +63,72 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 " $(compatible_kernels)")
     end
 
-    # Creates save path and save code
-    if save_path!=nothing && create_savepath
-        create_path(save_path, prompt)
-    end
-    # Save code
-    if save_path!=nothing && save_code!=""
-        cp(save_code, save_path*"/"; force=true)
+    if save_path!=nothing
+        # Create save path
+        if create_savepath; create_path(save_path, prompt); end;
+
+        # Save code
+        if save_code!=""
+            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
+        end
+
+        # Save settings
+        save_settings(pfield, run_name; path=save_path)
     end
 
-    run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
-
-    if verbose
-        time_beg = Dates.DateTime(Dates.now())
-        println("\t"^v_lvl*"*"^(73-8*v_lvl)*"\n"*"\t"^v_lvl*"START $run_id\t$time_beg\n"*
-                "\t"^v_lvl*"*"^(73-8*v_lvl))
-    end
+    # Initialize verbose
+    (line1, line2, run_id, file_verbose,
+        vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
+                                                    dt, nsteps_save,
+                                                    runtime_function,
+                                                    static_particles_function, v_lvl)
 
     # RUN
     for i in 0:nsteps
 
-        if verbose && i%verbose_nsteps==0
-            println("\t"^(v_lvl+1)*"Time step $i out of $nsteps"*
-            "\tParticles: $(get_np(pfield))")
+        if i%verbose_nsteps==0
+            vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
         end
 
         # Relaxation step
-        relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+        relax = pfield.relaxation != relaxation_none &&
+                pfield.relaxation.nsteps_relax >= 1 &&
+                i>0 && (i%pfield.relaxation.nsteps_relax == 0)
 
         org_np = get_np(pfield)
 
         # Time step
         if i!=0
             # Add static particles
-            static_particles_function(pfield, pfield.t, dt)
+            remove = static_particles_function(pfield, pfield.t, dt)
 
             stc_np = get_np(pfield)
 
             # add ground particles
             ground_particles_function(pfield, pfield.t, dt)
 
-            g_np = get_np(pfield)
+            # g_np = get_np(pfield)
 
             # Step in time solving governing equations; reset must be true to include effect of ground particles
             nextstep(pfield, dt; relax=relax)
 
             # Remove ground particles (assumes particles remained sorted)
-            if save_ground_particles==false
-                for pi in g_np:-1:(stc_np+1)
-                    remove_particle(pfield, pi)
-                end
+            for pi in get_np(pfield):-1:(stc_np+1)
+                remove_particle(pfield, pi)
             end
 
             # Remove static particles (assumes particles remained sorted)
-            if save_static_particles==false
-                for pi in stc_np:-1:(org_np+1)
+            if isnothing(remove) || remove
+                for pi in get_np(pfield):-1:(org_np+1)
                     remove_particle(pfield, pi)
                 end
             end
         end
+
+        # Calls user-defined runtime function
+        breakflag = runtime_function(pfield, pfield.t, dt;
+                                     vprintln= (str)-> i%verbose_nsteps==0 ?
+                                            vprintln(str, v_lvl+2) : nothing)
 
         # Save particle field
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
@@ -134,21 +137,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                         overwrite_time=overwrite_time)
         end
 
-        if i!=0 && save_ground_particles==true
-            for pi in g_np:-1:(stc_np+1)
-                remove_particle(pfield, pi)
-            end
-        end
-
-        if i!=0 && save_static_particles==true
-            for pi in get_np(pfield):-1:(org_np+1)
-                remove_particle(pfield, pi)
-            end
-        end
-
-        # Calls user-defined runtime function
-        breakflag = runtime_function(pfield, pfield.t, dt)
-
         # User-indicated end of simulation
         if breakflag
             break
@@ -156,18 +144,11 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     end
 
-    if verbose
-        time_end = Dates.DateTime(Dates.now())
-        hrs,mins,secs = timeformat(time_beg, time_end)
-        println("\t"^v_lvl*"*"^(73-8*v_lvl))
-        println("\t"^v_lvl*"END $run_id\t$time_end")
-        println("\t"^v_lvl*"*"^(73-8*v_lvl))
-        println("\t"^v_lvl*"ELAPSED TIME: $hrs hours $mins minutes $secs seconds")
-    end
+    # Finalize verbose
+    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
     return nothing
 end
-
 
 """
   `save(pfield, file_name; path="")`
@@ -176,13 +157,14 @@ Saves the particle field in HDF5 format and a XDMF file especifying its the
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-function save(self::ParticleField{T}, file_name::String; path::String="",
+function save(self::ParticleField, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing) where {T}
+                overwrite_time=nothing)
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1; nt=self.nt, t=self.t)
+        dummy_pfield = ParticleField(1; nt=self.nt, t=self.t,
+                                            formulation=formulation_classic)
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
@@ -210,15 +192,25 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
     # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
-    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
+    # UPDATE 2021/11: I tried multiple ways of pre-allocating memory in the disk
+    #   through HDF5 and then dumping data into it from pfield through
+    #   iterators, but for some reason HDF5 always re-allocates memory
+    #   when trying to write anything but arrays.
+    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["Velocity"] = [P.U[i] for i in 1:3, P in iterate(self)]
-    h5["sigma"] = [P.sigma[1] for P in iterate(self)]
-    h5["vol"] = [P.vol[1] for P in iterate(self)]
-    h5["i"] = [P.index[1] for P in iterate(self)]
+    h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true)]
+    h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true)]
+    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
+    h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
 
-    # Connectivity information
-    h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
+    if isLES(self)
+        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
+    end
+
+    # # Connectivity information
+    # h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
 
     # # Write fields
     # dtype = HDF5.datatype(T)
@@ -229,7 +221,7 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     #     chunk = dim==1 && false ? (np,) : (1, np)
     #     dset = HDF5.d_create(h5, field, dtype, dims, "chunk", chunk)
     #
-    #     for (pi, P) in enumerate(iterator(self))
+    #     for (pi, P) in enumerate(iterator(self; include_static=true))
     #         dset[:, pi] .= getproperty(P, Symbol(field))
     #     end
     #
@@ -255,34 +247,25 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
     print(xmf, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
     print(xmf, "<Xdmf xmlns:xi=\"http://www.w3.org/2001/XInclude\" Version=\"3.0\">\n")
         print(xmf, "\t<Domain>\n")
-          print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
-            print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
+          print(xmf, "\t\t<Grid Name=\"particles\" GridType=\"Uniform\">\n")
 
-        			  print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
+              print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
 
               # Nodes: particle positions
-              print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
+              print(xmf, "\t\t\t\t<Geometry Type=\"XYZ\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
                             " Dimensions=\"", np, " ", 3,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":X</DataItem>\n")
               print(xmf, "\t\t\t\t</Geometry>\n")
 
               # Topology: every particle as a point cell
-              print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Mixed\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-                            " Dimensions=\"", np*3,
-                            "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":connectivity</DataItem>\n")
-              print(xmf, "\t\t\t\t</Topology>\n")
+              print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Polyvertex\"/>\n")
 
               # Attribute: Gamma
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"Gamma\" Type=\"Vector\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"Gamma\" Type=\"Vector\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":Gamma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
@@ -297,79 +280,236 @@ function save(self::ParticleField{T}, file_name::String; path::String="",
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: sigma
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"sigma\" Type=\"Scalar\">\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"sigma\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":sigma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
-              # Attribute: vol
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"vol\" Type=\"Scalar\">\n")
+              # Attribute: circulation
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"circulation\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":circulation</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: vol
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"vol\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":vol</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: static
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"static\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":static</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
 
               # Attribute: index
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
-                          " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
-                          " Name=\"i\" Type=\"Scalar\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 1,
-                            "\" Format=\"HDF\" Precision=\"4\">",
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
                             h5fname, ":i</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
-            print(xmf, "\t\t\t</Grid>\n")
+              if isLES(self)
+                  # Attribute: C
+                  print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"C\" Type=\"Vector\">\n")
+                    print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                                " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                                h5fname, ":C</DataItem>\n")
+                  print(xmf, "\t\t\t\t</Attribute>\n")
+              end
+
           print(xmf, "\t\t</Grid>\n")
         print(xmf, "\t</Domain>\n")
     print(xmf, "</Xdmf>\n")
 
     close(xmf)
+
+    return fname*".xmf;"
 end
 
+"""
+Return a hash table with the solver settings of the particle field.
+"""
+function _get_settings(pfield::ParticleField)
+    settings = OrderedDict()
 
+    for sym in _pfield_settings
 
-# """
-#   `read(pfield, h5_fname; path="")`
-#
-# Reads an HDF5 file containing particle data created with `save()` and adds
-# all particles the the particle field `pfield`.
-# """
-# function read(pfield::ParticleField, h5_fname::String;
-#                             path::String="", load_time::Bool=false)
-#
-#     # Opens the HDF5 file
-#     fname = h5_fname * (h5_fname[end-3:end]==".h5" ? "" : ".h5")
-#     h5 = HDF5.h5open(joinpath(path, h5_fname), "r")
-#
-#     # Number of particles
-#     np = load(h5["np"])
-#
-#     # Data
-#     X = h5["X"]
-#     Gamma = h5["Gamma"]
-#     sigma = h5["sigma"]
-#     vol = h5["vol"]
-#
-#     # Loads particles
-#     for i in 1:np
-#         add_particle(pfield, X[1:3, i], Gamma[1:3, i], sigma[i]; vol=vol[i])
-#     end
-#
-#     # Loads time stamp
-#     if load_time
-#         pfield.t = load(h5["t"])
-#         pfield.nt = load(h5["nt"])
-#     end
-# end
+        if sym in _pfield_settings_functions
+
+            fun = getproperty(pfield, sym)
+            if fun in _standardfunctions
+                settings[String(sym)] = _fun2key[fun]
+            else
+                settings[String(sym)] = (_key_userfun, "$fun")
+                # settings[String(sym)] = _key_userfun
+            end
+
+        else
+            settings[String(sym)] = getproperty(pfield, sym)
+        end
+
+    end
+
+    return settings
+end
+
+function _get_settings_string(pfield::ParticleField; tab=0)
+    settings = _get_settings(pfield)
+
+    str = ""
+    for (key, val) in settings
+        str *= "\t"^(tab)
+
+        valstr = val in _lengthyoptions ? "$(_lengthy2key[val])" : "$(val)"
+
+        str *= Printf.@sprintf "%14.14s----> %s\n" key valstr
+    end
+
+    return str
+end
+
+function save_settings(pfield::ParticleField, file_name::String;
+                                        path::String="", suff="_settings")
+    settings = _get_settings(pfield)
+    JLD.save(joinpath(path, file_name*suff*".jld"), settings)
+end
+
+function read_settings(fname::String; path::String="")
+    # Read settings as a dictionary with String keys
+    settings_dict = JLD.load(joinpath(path, fname))
+
+    # Convert into dictionary with Symbol keys and get rid of user functions
+    settings_args = Dict( (Symbol(key), typeof(val)==Symbol ? eval(val) : val)
+                                                for (key, val) in settings_dict)
+
+    return settings_args
+end
+
+function _overwrite_settings!(settings, overwrite_settings)
+    for (key, val) in overwrite_settings
+        settings[Symbol(key)] = val
+    end
+end
+
+function _check_userfun(settings)
+    userfuns = [(key, val[2]) for (key, val) in settings
+                                if isa(val, Tuple) && length(val)>1 && val[1]==_key_userfun]
+
+    if length(userfuns)!=0
+        error("Reading VPM settings: The following user-defined functions are"*
+                " missing: $(userfuns)."*
+                " Please overwrite with read(h5_fname, settings_fname;"*
+                " overwrite_settings=( (:arg1, val1), (:arg2, val2), ...))")
+    end
+end
+
+function generate_particlefield(settings_fname::String;
+                                        path::String="",
+                                        overwrite_settings=(),
+                                        check_userfun=true)
+
+    # Open settings file
+    setfname = settings_fname * (settings_fname[end-3:end]==".jld" ? "" : ".jld")
+    settings = read_settings(setfname; path=path)
+
+    # Overwrite settings requested by user
+    _overwrite_settings!(settings, overwrite_settings)
+
+    # Check that no user-defined function is missing
+    if check_userfun; _check_userfun(settings); end;
+
+    # Initiate particle field
+    maxparticles = pop!(settings, :maxparticles)
+    pfield = ParticleField(maxparticles; settings...)
+
+    return pfield
+end
+
+function read(h5_fname::String, settings_fname::String; overwrite_settings=(),
+                                                                     optargs...)
+    # Initiate particle field
+    pfield = generate_particlefield(settings_fname;
+                                    overwrite_settings=overwrite_settings,
+                                                                     optargs...)
+
+    # Load field from file
+    return read!(pfield, h5_fname; optargs...)
+end
+
+"""
+  `read(h5_fname; path="")`
+
+Reads an HDF5 file containing a particle field created with `save(pfield)`.
+"""
+function read!(pfield::ParticleField{R, F, V}, h5_fname::String;
+                                        path::String="",
+                                        overwrite::Bool=true,
+                                        load_time::Bool=true) where{R<:Real, F, V}
+
+    # Delete existing particles
+    if overwrite
+        for i in get_np(pfield):-1:1
+            remove_particle(pfield, i)
+        end
+    end
+
+    maxparticles = pfield.maxparticles
+
+    # Open HDF5 file
+    h5fname = h5_fname * (h5_fname[end-2:end]==".h5" ? "" : ".h5")
+    h5 = HDF5.h5open(joinpath(path, h5fname), "r")
+
+    # Number of particles in field
+    np = HDF5.read(h5["np"])
+
+    # Error case: Particle overflow
+    if np>maxparticles
+        error("The field to be read ($(h5_fname)) contains $(np) particles"*
+                " but max number of particles is $(maxparticles).")
+    end
+
+    # Use time stamp
+    if load_time
+        pfield.t = HDF5.read(h5["t"])
+        pfield.nt = HDF5.read(h5["nt"])
+    end
+
+    # Read HDF5 fields
+    X = h5["X"][:, :]
+    Gamma = h5["Gamma"][:, :]
+    sigma = h5["sigma"][:]
+    vol = h5["vol"][:]
+    circulation = h5["circulation"][:]
+
+    # Hash to optional arguments of add_particles(...)
+    hash_optargs = [(:circulation, i->circulation[i]), (:vol, i->vol[i])]
+    gen_optargs(i) = ((sym, fun(i)) for (sym, fun) in hash_optargs)
+
+    if "static" in keys(h5)
+        static = h5["static"][:]
+        push!( hash_optargs, (:static, i->static[i]) )
+    end
+    if "C" in keys(h5)
+        C = h5["C"][:, :]
+        push!( hash_optargs, (:C, i->view(C, 1:3, i)) )
+    end
+
+    # Load particles
+    for i in 1:np
+        optargs = gen_optargs(i)
+        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
+                                                                     optargs...)
+    end
+
+    return pfield
+end
 
 
 """
@@ -407,4 +547,60 @@ function timeformat(time_beg, time_end)
     mins = Int(floor((time_delta-hrs*60*60*1000)/1000/60))
     secs = Int(floor((time_delta-hrs*60*60*1000-mins*1000*60)/1000))
     return hrs,mins,secs
+end
+
+
+function initialize_verbose(verbose, save_path, run_name, pfield, dt,
+                            nsteps_save,
+                            runtime_function, static_particles_function, v_lvl)
+    line1 = "*"^(73-8*v_lvl)
+    line2 = "-"^(length(line1))
+    run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
+
+    # Set up IO streams for verbose
+    file_verbose = save_path != nothing ? joinpath(save_path, run_name*".log") : nothing
+
+    function vprintln(str, v_lvl)
+        if verbose; println("\t"^v_lvl*str); end;
+        if file_verbose != nothing
+            f = open(file_verbose, "a")
+            println(f, "\t"^v_lvl*str)
+            close(f)
+        end
+    end
+
+    # Initial verbose
+    vprintln(line2, v_lvl)
+    vprintln("", v_lvl)
+    vprintln("SOLVER SETTINGS", v_lvl+1)
+    # vprintln(_get_settings_string(pfield; tab=v_lvl+2), v_lvl)
+    vprintln(_get_settings_string(pfield; tab=v_lvl+2), 0)
+    vprintln("SIMULATION SETTINGS", v_lvl+1)
+    vprintln("dt:\t\t\t$(dt)", v_lvl+2)
+    vprintln("Runtime function:\t"*( runtime_function==runtime_default ?
+                                "Nothing" : "Yes"), v_lvl+2)
+    vprintln("Static particles:\t"*( static_particles_function==static_particles_default ?
+                                "Nothing" : "Yes"), v_lvl+2)
+    vprintln("nsteps_save:\t\t$(nsteps_save)", v_lvl+2)
+    vprintln("", v_lvl)
+    vprintln(line2, v_lvl)
+
+    time_beg = Dates.DateTime(Dates.now())
+    vprintln(line1, v_lvl)
+    vprintln("START $run_id", v_lvl)
+    vprintln("$time_beg", v_lvl+1)
+    vprintln(line1, v_lvl)
+
+    return line1, line2, run_id, file_verbose, vprintln, time_beg
+end
+
+
+function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    time_end = Dates.DateTime(Dates.now())
+    hrs,mins,secs = timeformat(time_beg, time_end)
+    vprintln(line1, v_lvl)
+    vprintln("END $run_id", v_lvl)
+    vprintln("$time_end", v_lvl+1)
+    vprintln(line1, v_lvl)
+    vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
 end

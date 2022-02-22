@@ -39,7 +39,7 @@ Parameters for FMM solver.
                 ( dx = r-(R1+R2) ). This means that at φ = 1, P2P is done on
                 cells with boundaries closer than the average smoothing radius;
                 at φ = 0.5, P2P is done on cells closer than two times the
-                smoothing radius; at φ = 0.5, P2P is done on cells closer than
+                smoothing radius; at φ = 0.25, P2P is done on cells closer than
                 four times the smoothing radius.
 """
 mutable struct FMM
