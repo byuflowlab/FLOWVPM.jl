@@ -16,11 +16,11 @@ struct GroundField{TF,V}
     A_epsilon::Vector{TF}
 end
 
-function GroundField(pfield::ParticleField, Gamma_basis; ground_unit_normal = [0.0, 0.0, 1.0], A_epsilon=1e-3)
+function GroundField(pfield::ParticleField, Gamma_basis; ground_unit_normal = [0.0, 0.0, 1.0], A_epsilon=0.0, optargs...)
     # initialize arrays
-    np = pfield.np
-    A = zeros(np, np)
-    b = zeros(np)
+    n_sources = get_nsources(pfield)
+    A = zeros(n_sources, n_sources)
+    b = zeros(n_sources)
 
     # build A matrix
     update_A!(A, pfield, ground_unit_normal; epsilon = A_epsilon)
@@ -28,42 +28,53 @@ function GroundField(pfield::ParticleField, Gamma_basis; ground_unit_normal = [0
     return GroundField(pfield, A, b, Gamma_basis, ground_unit_normal, [A_epsilon])
 end
 
-function GroundField(xs, ys, zs, Gamma_basis, overlap; optargs...)
-    gfield = build_gfield(xs, ys, zs, Gamma_basis, overlap)
+function GroundField(xs_source, ys_source, zs_source, xs_cp, ys_cp, zs_cp; Gamma_basis=[[1.0,0,0], [0,1.0,0]], optargs...)
+    gfield = build_gfield(xs_source, ys_source, zs_source, xs_cp, ys_cp, zs_cp; Gamma_basis=Gamma_basis, optargs...)
 
     return GroundField(gfield, Gamma_basis; optargs...)
 end
 
-function build_gfield(xs, ys, zs, Gamma_basis, overlap)
+function build_gfield(xs_source, ys_source, zs_source, xs_cp, ys_cp, zs_cp;
+        Gamma_basis = [[1.0,0,0], [0,1.0,0]],
+        overlap = 2.0,
+        sigma_cp = 1.0,
+        optargs...
+    )
+    # check array lengths
+    @assert length(xs_cp) == length(xs_source) "Length of control points and sources inconsistent. Length(xs_cp) = $(length(xs_cp)), length(xs_source) = $(length(xs_source))"
+    @assert length(ys_cp) == length(ys_source) "Length of control points and sources inconsistent. Length(ys_cp) = $(length(ys_cp)), length(ys_source) = $(length(ys_source))"
+    @assert length(zs_cp) == length(zs_source) "Length of control points and sources inconsistent. Length(zs_cp) = $(length(zs_cp)), length(zs_source) = $(length(zs_source))"
+
     # prepare offset
     dof = length(Gamma_basis)
-    lx = length(xs)
-    ly = length(ys)
+    lx = length(xs_source)
+    ly = length(ys_source)
+    lz = length(zs_source)
     offset_x = lx%dof == 0 ? 1 : 0
     offset_y = (lx*ly)%dof == 0 ? 1 : 0
 
     # build particle field
-    gfield = ParticleField(length(xs) * length(ys) * length(zs))
+    gfield = ParticleField(2*lx*ly*lz)
 
-    # add particles
+    # add source particles
     counter = 0
-    for (zi,z) in enumerate(zs)
-        if length(zs) > 1
-            dz = zi > 1 ? zs[zi] - zs[zi-1] : zs[zi+1] - zs[zi]
+    for (zi,z) in enumerate(zs_source)
+        if length(zs_source) > 1
+            dz = zi > 1 ? zs_source[zi] - zs_source[zi-1] : zs_source[zi+1] - zs_source[zi]
         else
             dz = 0.0
         end
         counter += offset_y
-        for (yi,y) in enumerate(ys)
-            if length(ys) > 1
-                dy = yi > 1 ? ys[yi] - ys[yi-1] : ys[yi+1] - ys[yi]
+        for (yi,y) in enumerate(ys_source)
+            if length(ys_source) > 1
+                dy = yi > 1 ? ys_source[yi] - ys_source[yi-1] : ys_source[yi+1] - ys_source[yi]
             else
                 dy = 0.0
             end
             counter += offset_x
-            for (xi,x) in enumerate(xs)
-                if length(xs) > 1
-                    dx = xi > 1 ? xs[xi] - xs[xi-1] : xs[xi+1] - xs[xi]
+            for (xi,x) in enumerate(xs_source)
+                if length(xs_source) > 1
+                    dx = xi > 1 ? xs_source[xi] - xs_source[xi-1] : xs_source[xi+1] - xs_source[xi]
                 else
                     dx = 0.0
                 end
@@ -77,114 +88,120 @@ function build_gfield(xs, ys, zs, Gamma_basis, overlap)
         end
     end
 
+    # add control point particles
+    Gamma_cp = zeros(Float64, 3)
+    for z in zs_cp
+        for y in ys_cp
+            for x in xs_cp
+                add_particle(gfield, [x,y,z], Gamma_cp, sigma_cp)
+            end
+        end
+    end
+
     return gfield
 end
 
-function update_A!(A, pfield, ground_unit_normal; epsilon = 1e-3)
+get_nsources(gfield::ParticleField) = Int(gfield.np/2)
+
+get_sources_i(gfield::ParticleField) = range(1, stop=get_nsources(gfield), step=1)
+
+get_sources(gfield::ParticleField) = iterator(gfield; start_i=1, end_i=get_nsources(gfield))
+
+get_cps_i(gfield::ParticleField) = range(get_nsources(gfield)+1, stop=gfield.np, step=1)
+
+get_cps(gfield::ParticleField) = iterator(gfield; start_i=get_nsources(gfield)+1, end_i=-1)
+
+"""
+gfield, i_source
+    update_A!
+
+gfield, i_source:
+
+* `A::Matrix{Float64}`- influence matrix, preallocated for speed
+*
+* `source_i`- iterable of indices of the source ground particles contained in `pfield`
+* `source_i`- iterable of indices of the particles representing collocation points in `pfield`
+
+"""
+function update_A!(A, gfield, ground_unit_normal; epsilon = 0.0)
     # check sizes
-    np = pfield.np
-    @assert np == size(A)[1] "Ground pfield.np = $(pfield.np) and A matrix size $(size(A)) do not match."
+    n_sources = get_nsources(gfield)
+    @assert n_sources == size(A)[1] "Number of ground source particles = $(n_sources) and A matrix size $(size(A)) do not match."
 
     # reset field velocities
-    _reset_particles(pfield)
+    _reset_particles(gfield)
 
-    for (j,pj) in enumerate(iterator(pfield))
-        # update circulation
-        # pj.Gamma .= Gamma_basis[(j-1)%dof + 1]
+    # get particle iterators for control points and sources
+    sources = get_sources(gfield)
+    # source_js = get_sources_i(gfield)
+    cps = get_cps(gfield)
+    cp_is = get_cps_i(gfield)
 
+    # get influence coefficients
+    for (j,source_j) in enumerate(sources) # iterate over source particles
         # get induced velocity
-        UJ_direct([pj], iterator(pfield), pfield.kernel)
+        UJ_direct([source_j], cps, gfield.kernel)
 
         # iterate over particles
-        for (i,pi) in enumerate(iterator(pfield))
-            normal_vi = sum(pi.U .* ground_unit_normal)
+        for (i,cp_i) in enumerate(cp_is)
+            U = get_U(gfield, cp_i)
+            normal_vi = sum(U .* ground_unit_normal)
+            A[i, j] = normal_vi
             # precondition by zeroing small entries
-            A[i, j] = abs(normal_vi) < epsilon ? 0 : normal_vi
+            # A[i, j] = abs(normal_vi) < epsilon ? 0 : normal_vi
         end
 
         # reset particles
-        _reset_particles(pfield)
+        _reset_particles(gfield)
     end
-    # # cycle through basis vectors
-    # for (i_Gamma, Gamma_hat) in enumerate(Gamma_basis)
-    #     # reset particle field
-    #     _reset_particles(pfield)
 
-    #     for (j,pj) in enumerate(iterator(pfield))
-    #         # update circulation
-    #         pj.Gamma .= Gamma_hat
-
-    #         # get induced velocity
-    #         UJ_direct([pj], iterator(pfield), pfield.kernel)
-
-    #         # iterate over particles
-    #         for (i,pi) in enumerate(iterator(pfield))
-    #             normal_vi = sum(pi.U .* ground_unit_normal)
-    #             # precondition by zeroing small entries
-    #             A[(i-1)*dof + i_Gamma, (j-1)*dof + i_Gamma] = abs(normal_vi) < epsilon ? 0 : normal_vi
-    #         end
-
-    #         # reset particles
-    #         _reset_particles(pfield)
-    #     end
-    # end
     return nothing
 end
 
 """
-Assumes zero-strength ground particles have already been added to `pfield`, as using `transfer_particles!(pfield, gfield)`.
+Assumes zero-strength ground particles have already been added to `pfield` at each collocation point, as using `transfer_particles!(pfield, gfield)`.
 
-Note: `b` should contain the number of `gfield` particles, which is equal to `gfield.pfield.np`.
+Note: `b` should contain the number of `gfield` source particles, which is equal to `gfield.pfield.np/2`.
 """
-function update_b!(pfield::ParticleField, gfield::GroundField)
+function update_b!(pfield::ParticleField, groundfield::GroundField)
     # get references
-    b = gfield.b
-    ground_unit_normal = gfield.ground_unit_normal
-    n_locations = gfield.pfield.np
-    @assert length(b) == n_locations "Inconsistent lengths: n_particles = $n_particles and length(b) = $(length(b))"
+    b = groundfield.b
+    ground_unit_normal = groundfield.ground_unit_normal
+    gfield = groundfield.pfield
+    n_cps = get_nsources(gfield) # number of cps should equal number of sources for a unique solution to exist
+    @assert length(b) == n_cps "Inconsistent lengths: n_particles = $n_particles and length(b) = $(length(b))"
 
     # get induced velocity from `pfield` at each particle location
     _reset_particles(pfield)
     pfield.UJ(pfield)
 
     # update b
-    np = pfield.np - n_locations
-    for i_location=1:n_locations # iterate over all ground particle locations
-        local vi = pfield.particles[np+i_location].U # get the velocity at the corresponding merged particle
-        b[i_location] = -sum(vi .* ground_unit_normal)
+    np = pfield.np - n_cps
+
+    for (bi_cp, i_cp) in enumerate(np+1:1:np+n_cps) # iterate over all control points
+        local vi = get_U(pfield, i_cp) # get the velocity at the corresponding control point
+        b[bi_cp] = -sum(vi .* ground_unit_normal)
     end
     return nothing
 end
 
 """
-Transfer particles from the ground field to the particle field with zero circulation.
+Transfer source particles from the ground field to the particle field with zero circulation.
 """
-function transfer_zeroed_particles!(target::ParticleField, source::ParticleField; static::Bool=true)
-    for p in iterator(source)
-        local X = deepcopy(p.X)
-        local Gamma = deepcopy(p.Gamma)
-        local sigma = p.sigma[1]
-        add_particle(target, X, zeros(3), sigma; static=static)
+function transfer_source_particles!(pfield::ParticleField, gfield::ParticleField; static::Bool=true)
+    n_sources = get_nsources(gfield)
+    for i_source in 1:n_sources
+        local X = deepcopy(get_X(gfield, i_source))
+        # local Gamma = deepcopy(get_Gamma(source_p))
+        local sigma = get_sigma(gfield, i_source)
+        add_particle(pfield, X, zeros(3), sigma; static=static)
     end
-    # # get number of particle locations
-    # dof = length(gfield.Gamma_basis)
-    # n_locations = Int(gfield.pfield.np / dof) # number of ground particle locations
-
-    # # loop over particle locations (there are `dof` particles per location)
-    # for i_location=1:n_locations
-    #     local X = deepcopy(gfield.pfield.particles[(i_location-1) * dof + 1].X)
-    #     local sigma = deepcopy(gfield.pfield.particles[(i_location-1) * dof + 1].sigma)
-    #     add_particle(pfield, X, zeros(3), sigma)
-    #     # for i_dof = 1:dof
-    #     #     pfield.particles[pfield.np].Gamma .+= gfield.pfield[(i_location-1) * dof + i_dof].Gamma
-    #     # end
-    # end
 
     return nothing
 end
 
 function remove_ground_particles!(pfield::ParticleField, gfield::GroundField)
-    np = pfield.np - gfield.pfield.np
+    np = pfield.np - get_nsources(gfield)
     for ip = pfield.np:-1:np+1
         remove_particle(pfield, ip)
     end
@@ -193,35 +210,41 @@ end
 
 function solve_Gammas(A,b)
     Gammas = A \ b
+    resid_vec = A*Gammas .- b
+    resid = transpose(resid_vec) * resid_vec
+    # condition = cond(A)
+    println("resid = $resid")
     return Gammas
 end
 
 """
 Adds ground particles of appropriate strength to `pfield`.
 """
-function ground_effect!(pfield::ParticleField, gfield::GroundField; save=true, name="", savepath="")
+function ground_effect!(pfield::ParticleField, groundfield::GroundField; save_field=true, name="", savepath="")
     # get references
-    A = gfield.A
-    b = gfield.b
-    ngp = gfield.pfield.np
+    A = groundfield.A
+    b = groundfield.b
+    gfield = groundfield.pfield
+    n_sources = get_nsources(gfield)
 
-    transfer_zeroed_particles!(pfield, gfield.pfield; static=true)
+    transfer_source_particles!(pfield, gfield; static=true)
 
-    np = pfield.np - ngp
+    np = pfield.np - n_sources
 
-    update_b!(pfield, gfield)
+    update_b!(pfield, groundfield)
 
     Gammas = solve_Gammas(A, b)
 
     # update pfield ground Gammas
-    for (i_location, p) in enumerate(pfield.particles[np+1:pfield.np])
-        p.Gamma .= gfield.pfield.particles[i_location].Gamma .* Gammas[i_location]
+    for (ig_source, ip_source) in enumerate(np+1:1:pfield.np)
+        Gamma = get_Gamma(pfield, ip_source)
+        Gamma .= get_Gamma(gfield, ig_source) * Gammas[ig_source]
     end
 
     # save particle field
-    if save
+    if save_field
         start_i = np+1
-        end_i = np+1+ngp
+        end_i = np+n_sources
         save(pfield, name*"_ground"; path=savepath, start_i=start_i, end_i=end_i)
     end
     return nothing
