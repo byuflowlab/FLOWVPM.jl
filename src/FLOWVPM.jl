@@ -25,6 +25,8 @@ import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
+# import IterativeSolvers
+# const IS = IterativeSolvers
 
 # ------------ FLOW CODES ------------------------------------------------------
 import FLOWExaFMM
@@ -157,7 +159,7 @@ const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
                                  :rungekutta3, standard_kernels...,
                                                standard_relaxations...,
                                                standard_SFSs...)
-const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
+const _fun2key = IdDict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))
 const _key_userfun = Symbol("*userfunction")

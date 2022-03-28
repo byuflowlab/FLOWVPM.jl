@@ -132,7 +132,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                             vprintln(str, v_lvl+2) : nothing)
 
         # Save particle field
-        @show save_path
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
