@@ -28,6 +28,10 @@ field can also be added with the optional argument `add_J=true`.
                                 each grid, where Ji[j]=dUi/dxj.
 * `add_Uinf::Bool`          : It evaluates and adds a uniform freestream to the
                                 `U` field.
+* `add_Wapprox::Bool`       : It evaluates and adds the RBF-approximated
+                                vorticity field.
+* `zeta::Function`          : Method for evaluating RBF-approximated vorticity
+                                (used only if `add_Wapprox==true`).
 * `scale_sigma::Real`       : It rescales the smoothing radius of each particle
                                 by this factor before evaluating the particle
                                 field.
@@ -55,6 +59,8 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
                                     # PROCESSING OPTIONS
                                     add_J=false,
                                     add_Uinf=false,
+                                    add_Wapprox=false,
+                                    zeta=vpm.zeta_fmm,
                                     scale_sigma=1.0,
                                     f_Gamma=1e-2,
                                     f_sigma=0.5,
@@ -110,8 +116,12 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
     end
 
     # Pre-allocate memory for U and W in grids
+    fields = ["U", "W"]
+    if add_J; for i in 1:3; push!(fields, "J$i"); end; end;
+    if add_Wapprox; push!(fields, "Wapprox"); end;
+
     t = @elapsed begin
-        for field_name in ("U", "W", "J1", "J2", "J3")[1:(add_J ? end : 2)]
+        for field_name in fields
             for grid in grids
                 if !(field_name in keys(grid.field))
                     arr = zeros(3, grid.nnodes)
@@ -141,6 +151,15 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
         end
     end
 
+    # Evaluate RBF-approximated W
+    if add_Wapprox
+        t = @elapsed zeta(pfield)
+
+        if verbose
+            println("\t"^(v_lvl)*"Evaluate Wapprox:\t\t$(round(t, digits=1)) s")
+        end
+    end
+
     t = @elapsed begin
 
         prev_np = np
@@ -163,6 +182,11 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
                     Ji = grid.field["J$(i)"]["field_data"]
                     Ji .= (P.J[i, j] for j in 1:3, P in particles)
                 end
+            end
+
+            if add_Wapprox
+                Wapprox = grid.field["Wapprox"]["field_data"]
+                Wapprox .= (P.Jexa[i] for i in 1:3, P in particles)
             end
 
             # Save fluid domain as VTK file
