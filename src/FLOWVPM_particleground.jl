@@ -1,12 +1,4 @@
 """
-Panel defining source particle indices and their corresponding control point particle index.
-"""
-struct LagrangianQuadPanel{TF}
-    source_i::Tuple{TF,TF,TF,TF}
-    control_i::Int64
-end
-
-"""
 Contains:
 
 * `pfield::ParticleField`: particle field with one particle at each desired ground particle location.
@@ -15,7 +7,7 @@ Contains:
 * `Gamma_basis::Vector{Vector{Float64}}`: vector containing unit vectors used to solve for circulation strengths.
 * `ground_normal::Vector{Float64}`: unit vector defines the ground normal vector.
 """
-struct GroundField{TF,V}
+struct ParticleGround{TF,V}
     sources::ParticleField{TF, V}
     cps::ParticleField{TF, V}
     sources_per_panel::Int64
@@ -27,7 +19,7 @@ struct GroundField{TF,V}
     ground_normal::Vector{TF}
 end
 
-function GroundField(sources::ParticleField, cps::ParticleField, unique, ground_normal; invert_A = true, benchmark=false, sources_per_panel =4, optargs...)
+function ParticleGround(sources::ParticleField, cps::ParticleField, unique, ground_normal; invert_A = true, benchmark=false, sources_per_panel =4, optargs...)
     if benchmark
         println("\nBuild A and b arrays\n")
         @time begin
@@ -71,22 +63,22 @@ function GroundField(sources::ParticleField, cps::ParticleField, unique, ground_
         end
     end
 
-    return GroundField(sources, cps, sources_per_panel, n_control, unique, A, Ainv, b, ground_normal)
+    return ParticleGround(sources, cps, sources_per_panel, n_control, unique, A, Ainv, b, ground_normal)
 end
 
-function GroundField(xs_cp, ys_cp, zs_cp, overlap; n_per_panel=4, ground_normal=[0.0, 0.0, 1.0], benchmark=false, optargs...)
+function ParticleGround(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4, ground_normal=[0.0, 0.0, 1.0], benchmark=false, optargs...)
     if benchmark
         println("\nbuild_sources:\n")
-        sources, unique = @time build_sources(xs_cp, ys_cp, zs_cp, overlap)
+        sources, unique = @time build_sources(xs_cp, ys_cp, zs_cp, sigma)
         println("\nbuild_cps:\n")
         cps = @time build_cps(xs_cp, ys_cp, zs_cp, n_per_panel)
     else
-        sources, unique = build_sources(xs_cp, ys_cp, zs_cp, overlap)
+        sources, unique = build_sources(xs_cp, ys_cp, zs_cp, sigma)
         cps = build_cps(xs_cp, ys_cp, zs_cp, n_per_panel)
     end
 
 
-    return GroundField(sources, cps, unique, ground_normal; benchmark, optargs...)
+    return ParticleGround(sources, cps, unique, ground_normal; benchmark, optargs...)
 end
 
 # function unique_indices(n_per_panel, panels)
@@ -126,7 +118,7 @@ function get_distances(list)
     return deltas
 end
 
-function build_sources(xs_cp, ys_cp, zs_cp, overlap; n_per_panel=4, sigma::Union{Nothing,Float64} = nothing)
+function build_sources(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4)
     # 4 source particles per control point
     lx_cp = length(xs_cp)
     ly_cp = length(ys_cp)
@@ -161,8 +153,9 @@ function build_sources(xs_cp, ys_cp, zs_cp, overlap; n_per_panel=4, sigma::Union
                 X_south = [xs_cp[ix], ys_cp[iy] - dy_south, zs_cp[iz]]
 
                 # get smoothing radii
-                sigma_west_east = (dy_south + dy_north) * overlap
-                sigma_south_north = (dx_west + dx_east) * overlap
+                # sigma_west_east = (dy_south + dy_north) * overlap
+                # sigma_south_north = (dx_west + dx_east) * overlap
+                sigma_west_east = sigma_south_north = sigma
 
                 # add particles
 
@@ -293,17 +286,17 @@ end
 #     return gfield
 # end
 
-get_nsources(ground_field::GroundField) = get_np(ground_field.sources)
+get_nsources(ground_field::ParticleGround) = get_np(ground_field.sources)
 
-get_sources_i(ground_field::GroundField) = range(1, stop=get_nsources(ground_field.gfield), step=1)
+get_sources_i(ground_field::ParticleGround) = range(1, stop=get_nsources(ground_field.gfield), step=1)
 
-get_sources(ground_field::GroundField) = iterator(ground_field.gfield; start_i=1, end_i=get_nsources(ground_field.gfield))
+get_sources(ground_field::ParticleGround) = iterator(ground_field.gfield; start_i=1, end_i=get_nsources(ground_field.gfield))
 
-get_cps_i(ground_field::GroundField) = range(get_nsources(ground_field.gfield)+1, stop=gfield.np, step=1)
+get_cps_i(ground_field::ParticleGround) = range(get_nsources(ground_field.gfield)+1, stop=gfield.np, step=1)
 
-get_cps(ground_field::GroundField) = iterator(ground_field.gfield; start_i=get_nsources(ground_field.gfield)+1, end_i=-1)
+get_cps(ground_field::ParticleGround) = iterator(ground_field.gfield; start_i=get_nsources(ground_field.gfield)+1, end_i=-1)
 
-function update_A!(ground_field::GroundField)
+function update_A!(ground_field::ParticleGround)
     # extract variables
     cps = ground_field.cps # all particles should have null strength
     sources = ground_field.sources # all particles should have unit strengths
@@ -361,7 +354,7 @@ Assumes zero-strength ground particles have already been added to `pfield` at ea
 
 Note: `b` should contain the number of `gfield` source particles, which is equal to `gfield.pfield.np/2`.
 """
-function update_b!(pfield::ParticleField, ground_field::GroundField)
+function update_b!(pfield::ParticleField, ground_field::ParticleGround)
     # get references
     b = ground_field.b
     ground_normal = ground_field.ground_normal
@@ -412,7 +405,7 @@ function solve_Gammas(ground_field)
 end
 
 "Assumes A and b have been updated."
-function add_sources!(pfield::ParticleField, ground_field::GroundField, Gammas)
+function add_sources!(pfield::ParticleField, ground_field::ParticleGround, Gammas)
     unique = ground_field.unique
     cps = ground_field.cps
     n_control = cps.np
@@ -481,7 +474,7 @@ end
 """
 Adds ground particles of appropriate strength to `pfield`.
 """
-function ground_effect!(pfield::ParticleField, ground_field::GroundField; save_field=true, name="", savepath="", update_A = false)
+function ground_effect!(pfield::ParticleField, ground_field::ParticleGround; save_field=true, name="", savepath="", update_A = false)
     # get references
     A = ground_field.A
     b = ground_field.b

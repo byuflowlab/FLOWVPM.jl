@@ -42,7 +42,7 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "relaxation", "subfilterscale",
-                    "particlefield", "groundfield",
+                    "particlefield", "particleground",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
@@ -129,7 +129,7 @@ const Uinf_default = nofreestream
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
 const runtime_default = monitor_enstrophy
 const static_particles_default(pfield, t, dt) = nothing
-const ground_particles_default(pfield, t, dt) = nothing
+const ground_particles_default(pfield, t, dt; optargs...) = nothing
 
 
 # ------------ Compatibility between kernels and viscous schemes
