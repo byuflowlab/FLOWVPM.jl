@@ -66,17 +66,16 @@ function ParticleGround(sources::ParticleField, cps::ParticleField, unique, grou
     return ParticleGround(sources, cps, sources_per_panel, n_control, unique, A, Ainv, b, ground_normal)
 end
 
-function ParticleGround(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4, ground_normal=[0.0, 0.0, 1.0], benchmark=false, optargs...)
+function ParticleGround(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4, ground_normal=[0.0, 0.0, 1.0], benchmark=false, uj_function=fmm, optargs...)
     if benchmark
         println("\nbuild_sources:\n")
         sources, unique = @time build_sources(xs_cp, ys_cp, zs_cp, sigma)
         println("\nbuild_cps:\n")
-        cps = @time build_cps(xs_cp, ys_cp, zs_cp, n_per_panel)
+        cps = @time build_cps(xs_cp, ys_cp, zs_cp, n_per_panel; uj_function)
     else
         sources, unique = build_sources(xs_cp, ys_cp, zs_cp, sigma)
-        cps = build_cps(xs_cp, ys_cp, zs_cp, n_per_panel)
+        cps = build_cps(xs_cp, ys_cp, zs_cp, n_per_panel; uj_function)
     end
-
 
     return ParticleGround(sources, cps, unique, ground_normal; benchmark, optargs...)
 end
@@ -89,19 +88,30 @@ end
 #     end
 # end
 
-function build_cps(xs_cp, ys_cp, zs_cp, n_per_panel)
+function build_cps(xs_cp, ys_cp, zs_cp, n_per_panel; uj_function=fmm)
     lx = length(xs_cp)
     ly = length(ys_cp)
     lz = length(zs_cp)
     @assert lz == 1 "multiple layers in z not supported yet; got $lz"
 
-    cps = ParticleField(lx*ly*lz + n_per_panel)
+    cps = ParticleField((lx*ly*lz + (lx-1)*(ly-1)) + n_per_panel; UJ=uj_function)
 
     # add particles
     for z in zs_cp
         for y in ys_cp
             for x in xs_cp
                 add_particle(cps, [x,y,z], zeros(3), 1.0)
+            end
+        end
+    end
+
+    @show ys_cp xs_cp
+    for z in zs_cp
+        for (j,y) in enumerate(ys_cp)
+            for (i,x) in enumerate(xs_cp)
+                if j < ly && i < lx
+                    add_particle(cps, [(xs_cp[i] + xs_cp[i+1])/2, (ys_cp[j] + ys_cp[j+1])/2, z], zeros(3), 1.0)
+                end
             end
         end
     end
@@ -123,7 +133,7 @@ function build_sources(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4)
     lx_cp = length(xs_cp)
     ly_cp = length(ys_cp)
     lz_cp = length(zs_cp)
-    n_sources = lx_cp * ly_cp * lz_cp * n_per_panel
+    n_sources = (lx_cp * ly_cp * lz_cp + (lx_cp-1) * (ly_cp-1)) * n_per_panel
     sources = ParticleField(n_sources)
 
     dxs = get_distances(xs_cp)
@@ -132,10 +142,11 @@ function build_sources(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4)
     # dzs = zeros(lz_cp + 1)
 
     # map = zeros(Int64, n_per_panel, lz_cp * ly_cp * lx_cp)
-    unique = zeros(Int64, n_per_panel, lz_cp * ly_cp * lx_cp)
+    unique = zeros(Int64, n_per_panel, lz_cp * ly_cp * lx_cp + (ly_cp-1) * (lx_cp-1))
     cp_i = 1
     sp_i = 1
 
+    # FCC control points
     for iz in 1:lz_cp
         for iy in 1:ly_cp
             for ix in 1:lx_cp
@@ -205,6 +216,30 @@ function build_sources(xs_cp, ys_cp, zs_cp, sigma; n_per_panel=4)
                         unique[4,cp_i] = unique[2,cp_i-1]
                     end
                 end
+
+                cp_i += 1
+            end
+        end
+    end
+
+    # HCP control points
+    for iz in 1:lz_cp
+        for iy in 1:ly_cp-1
+            for ix in 1:lx_cp-1
+
+                # look at the control point to the north-east
+                i_linear = (ix+1) + iy * lx_cp
+                add_particle(sources, get_X(sources, 4 + 4*(i_linear-1)), [1.0,0,0], sigma)
+                unique[1,cp_i] = unique[4,i_linear]
+                add_particle(sources, get_X(sources, 3 + 4*(i_linear-1)), [0,-1.0,0], sigma)
+                unique[2,cp_i] = unique[3,i_linear]
+
+                # look at the control point to the south-west
+                i_linear = ix + (iy-1) * lx_cp
+                add_particle(sources, get_X(sources, 2 + 4*(i_linear-1)), [-1.0,0,0], sigma)
+                unique[3,cp_i] = unique[2,i_linear]
+                add_particle(sources, get_X(sources, 1 + 4*(i_linear-1)), [0,1.0,0], sigma)
+                unique[4,cp_i] = unique[1,i_linear]
 
                 cp_i += 1
             end
@@ -312,7 +347,7 @@ function update_A!(A, sources, cps, n_per_panel, ground_normal)
     n_control = cps.np
     # @show n_control
 
-    # iterate over source panels
+    # iterate over source "panels"
     for i_source in 1:n_control
         # add source particles to the control point field
         for pi in 1:n_per_panel

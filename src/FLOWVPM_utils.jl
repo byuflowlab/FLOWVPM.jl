@@ -342,6 +342,15 @@ function save(self::ParticleField, file_name::String; path::String="",
     return fname*".xmf;"
 end
 
+function save(self::ParticleGround, file_name::String; path::String="",
+    add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
+    overwrite_time=nothing, start_i=1, end_i=-1)
+
+    cps_file = save(self.cps, file_name*"_cps"; path, add_num, num, createpath, overwrite_time, start_i, end_i)
+    sources_file = save(self.sources, file_name*"_sources"; path, add_num, num, createpath, overwrite_time, start_i, end_i)
+    return cps_file, sources_file
+end
+
 """
 Return a hash table with the solver settings of the particle field.
 """
