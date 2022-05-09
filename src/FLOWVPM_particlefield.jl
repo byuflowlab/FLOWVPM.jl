@@ -32,7 +32,8 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
-    SFS::S                                    # Subfilter-scale contributions scheme
+    Uextra::Union{Function, Nothing}            # extra induced velocity function
+    SFS::S                                      # Subfilter-scale contributions scheme
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
@@ -48,6 +49,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
+                                Uextra=nothing,
                                 SFS=SFS_default,
                                 integration=rungekutta3,
                                 transposed=true,
@@ -61,6 +63,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 kernel,
                                 UJ,
                                 Uinf,
+                                Uextra,
                                 SFS,
                                 integration,
                                 transposed,

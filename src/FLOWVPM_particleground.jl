@@ -105,7 +105,6 @@ function build_cps(xs_cp, ys_cp, zs_cp, n_per_panel; uj_function=fmm)
         end
     end
 
-    @show ys_cp xs_cp
     for z in zs_cp
         for (j,y) in enumerate(ys_cp)
             for (i,x) in enumerate(xs_cp)

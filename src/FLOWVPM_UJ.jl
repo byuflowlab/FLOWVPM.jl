@@ -153,6 +153,8 @@ function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
                             transposed_sfs::Bool=true,
                             reset::Bool=true, reset_sfs::Bool=false,
                             sort::Bool=true)
+
+    # debug
     try
         fmm.calculate(pfield.bodies,
                         Int32(get_np(pfield)),

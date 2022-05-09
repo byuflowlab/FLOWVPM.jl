@@ -32,6 +32,11 @@ import DataStructures: OrderedDict
 import FLOWExaFMM
 const fmm = FLOWExaFMM
 
+# ------------ OTHER CODES -----------------------------------------------------
+PanelSolver_path = "/Users/randerson/Dropbox/research/projects/PanelSolver" 
+include(joinpath(PanelSolver_path,"src","PanelSolver.jl"))
+PS = PanelSolver # grab module
+
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
@@ -42,7 +47,7 @@ const RealFMM = exafmm_single_precision ? Float32 : Float64
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "relaxation", "subfilterscale",
-                    "particlefield", "particleground",
+                    "particlefield", "particleground", "panelground",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
@@ -129,7 +134,7 @@ const Uinf_default = nofreestream
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
 const runtime_default = monitor_enstrophy
 const static_particles_default(pfield, t, dt) = nothing
-const ground_particles_default(pfield, t, dt; optargs...) = nothing
+const ground_effect_default(pfield, t, dt; optargs...) = nothing
 
 
 # ------------ Compatibility between kernels and viscous schemes
@@ -151,7 +156,7 @@ const _SFS = :Jexa
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
-const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
+const _pfield_settings_functions = (:Uinf, :Uextra, :UJ, :integration, :kernel,
                                             :relaxation, :SFS, :viscous)
 
 # Hash table between functions that are solver settings and their symbol
