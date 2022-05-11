@@ -395,8 +395,11 @@ end
 
 function save_settings(pfield::ParticleField, file_name::String;
                                         path::String="", suff="_settings")
-    settings = _get_settings(pfield)
-    JLD.save(joinpath(path, file_name*suff*".jld"), settings)
+    sl = Base.Threads.SpinLock()
+    lock(sl)
+        settings = _get_settings(pfield)
+        JLD.save(joinpath(path, file_name*suff*".jld"), settings)
+    unlock(sl)
 end
 
 function read_settings(fname::String; path::String="")
