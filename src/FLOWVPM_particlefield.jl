@@ -32,6 +32,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
+    Uextra::Function                            # extra induced velocity function
     sgsmodel::Function                          # Subgrid-scale contributions model
     sgsscaling::Function                        # Scaling factor of SGS contributions
     integration::Function                       # Time integration scheme
@@ -51,6 +52,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
+                                Uextra=Uextra_default,
                                 sgsmodel=sgs_default,
                                 sgsscaling=sgs_scaling_default,
                                 integration=rungekutta3,
@@ -66,6 +68,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme}
                                 kernel,
                                 UJ,
                                 Uinf,
+                                Uextra,
                                 sgsmodel,
                                 sgsscaling,
                                 integration,

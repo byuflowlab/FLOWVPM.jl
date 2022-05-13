@@ -44,6 +44,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
+                      ground_effect_function::Function=ground_effect_default,
                       nsteps_relax::Int64=-1,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
@@ -101,6 +102,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             # Add static particles
             static_particles_function(pfield, pfield.t, dt)
 
+            # add ground; use t+dt since step doesn't increment until nextstep() is run
+            ground_effect_function(pfield, pfield.t + dt, dt; name=run_name, savepath=save_path)
+
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax)
 
@@ -115,6 +119,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                      vprintln= (str)-> i%verbose_nsteps==0 ?
                                             vprintln(str, v_lvl+2) : nothing)
 
+        # return breakflag # sherlock
         # Save particle field
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
@@ -349,6 +354,7 @@ end
 function save_settings(pfield::ParticleField, file_name::String;
                                         path::String="", suff="_settings")
     settings = _get_settings(pfield)
+
     JLD.save(joinpath(path, file_name*suff*".jld"), settings)
 end
 

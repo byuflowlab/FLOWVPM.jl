@@ -28,6 +28,9 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    # initialize Uextra
+    Uextra = zeros(R, 3)
+
     zeta0::R = pfield.kernel.zeta(0)
 
     # Update the particle field: convection and stretching
@@ -35,10 +38,12 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
 
         scl::R = pfield.sgsscaling(p, pfield)
 
+        Uextra .= pfield.Uextra(p.X)
+
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        p.X[1] += dt*(p.U[1] + Uinf[1] + Uextra[1])
+        p.X[2] += dt*(p.U[2] + Uinf[2] + Uextra[2])
+        p.X[3] += dt*(p.U[3] + Uinf[3] + Uextra[3])
 
         # Update vectorial circulation
         ## Vortex stretching contributions
@@ -101,6 +106,9 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    # initialize Uextra
+    Uextra = zeros(R, 3)
+
     MM::Array{<:Real, 1} = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
@@ -110,10 +118,12 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
         scl::R = pfield.sgsscaling(p, pfield)
 
+        Uextra .= pfield.Uextra(p.X)
+
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        p.X[1] += dt*(p.U[1] + Uinf[1] + Uextra[1])
+        p.X[2] += dt*(p.U[2] + Uinf[2] + Uextra[2])
+        p.X[3] += dt*(p.U[3] + Uinf[3] + Uextra[3])
 
         # Store stretching S under MM[1:3]
         if pfield.transposed
@@ -179,6 +189,9 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    # initialize Uextra
+    Uextra = zeros(R, 3)
+
     zeta0::R = pfield.kernel.zeta(0)
 
     # Reset storage memory to zero
@@ -202,11 +215,13 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V},
 
             scl::R = pfield.sgsscaling(p, pfield)
 
+            Uextra .= pfield.Uextra(p.X)
+
             # Low-storage RK step
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1] + Uextra[1])
+            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2] + Uextra[2])
+            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3] + Uextra[3])
 
             # Update position
             p.X[1] += b*p.M[1, 1]
@@ -286,6 +301,9 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
+    # initialize Uextra
+    Uextra = zeros(R, 3)
+
     MM::Array{<:Real, 1} = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
@@ -311,11 +329,13 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
             scl::R = pfield.sgsscaling(p, pfield)
 
+            Uextra .= pfield.Uextra(p.X)
+
             # Low-storage RK step
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1] + Uextra[1])
+            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2] + Uextra[2])
+            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3] + Uextra[3])
 
             # Update position
             p.X[1] += b*p.M[1, 1]

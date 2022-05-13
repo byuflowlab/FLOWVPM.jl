@@ -106,10 +106,12 @@ const standard_sgsscalings = (:sgs_scaling_none, )
 # Other default functions
 const nofreestream(t) = zeros(3)
 const Uinf_default = nofreestream
+const Uextra_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gamma2
 const runtime_default = monitor_enstrophy
 const static_particles_default(pfield, t, dt) = nothing
+const ground_effect_default(pfield, t, dt; optargs...) = nothing
 
 
 # Compatibility between kernels and viscous schemes
@@ -135,7 +137,7 @@ const _SGS = :Jexa
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
-const _pfield_settings_functions = (:Uinf, :UJ, :integration, :kernel,
+const _pfield_settings_functions = (:Uinf, :Uextra, :UJ, :integration, :kernel,
                                             :relaxation, :sgsmodel, :sgsscaling, :viscous)
 
 # Hash table between functions that are solver settings and their symbol
@@ -144,7 +146,7 @@ const _keys_standardfunctions = (:nofreestream, :UJ_direct, :UJ_fmm, :euler,
                                                standard_relaxations...,
                                                standard_sgsmodels...,
                                                standard_sgsscalings...)
-const _fun2key = Dict( (eval(sym), sym) for sym in _keys_standardfunctions )
+const _fun2key = IdDict( (eval(sym), sym) for sym in _keys_standardfunctions )
 const _key2fun = Dict( (sym, fun) for (fun, sym) in _fun2key )
 const _standardfunctions = Tuple(keys(_fun2key))
 const _key_userfun = Symbol("*userfunction")
