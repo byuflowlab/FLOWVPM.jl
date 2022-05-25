@@ -344,7 +344,6 @@ end
 
 function update_A!(A, sources, cps, n_per_panel, ground_normal)
     n_control = cps.np
-    # @show n_control
 
     # iterate over source "panels"
     for i_source in 1:n_control

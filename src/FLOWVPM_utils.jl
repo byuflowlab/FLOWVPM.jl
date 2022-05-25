@@ -103,7 +103,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             static_particles_function(pfield, pfield.t, dt)
 
             # add ground; use t+dt since step doesn't increment until nextstep() is run
-            ground_effect_function(pfield, pfield.t + dt, dt; name=run_name, savepath=save_path)
+            ground_effect_function(pfield, pfield.t + dt, dt)
 
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax)
@@ -119,7 +119,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                      vprintln= (str)-> i%verbose_nsteps==0 ?
                                             vprintln(str, v_lvl+2) : nothing)
 
-        # return breakflag # sherlock
+
         # Save particle field
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
@@ -149,7 +149,7 @@ visualization.
 """
 function save(self::ParticleField, file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing)
+                overwrite_time=nothing, start_i=1, end_i=-1)
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
@@ -165,7 +165,7 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     fname = file_name*(add_num ? num==-1 ? ".$(self.nt)" : ".$num" : "")
     h5fname = fname*".h5"
-    np = get_np(self)
+    np = end_i < 0 ? get_np(self) - start_i + 1 : end_i - start_i + 1
 
     time = overwrite_time != nothing ? overwrite_time :
             typeof(self.t) in [Float64, Int64] ? self.t :
@@ -182,12 +182,12 @@ function save(self::ParticleField, file_name::String; path::String="",
     # Writes fields
     # NOTE: It is very inefficient to convert the data structure to a matrices
     # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self)]
-    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self)]
-    h5["sigma"] = [P.sigma[1] for P in iterate(self)]
-    h5["circulation"] = [P.circulation[1] for P in iterate(self)]
-    h5["vol"] = [P.vol[1] for P in iterate(self)]
-    h5["i"] = [P.index[1] for P in iterate(self)]
+    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; start_i=start_i, end_i=end_i)]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; start_i=start_i, end_i=end_i)]
+    h5["sigma"] = [P.sigma[1] for P in iterate(self; start_i=start_i, end_i=end_i)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self; start_i=start_i, end_i=end_i)]
+    h5["vol"] = [P.vol[1] for P in iterate(self; start_i=start_i, end_i=end_i)]
+    h5["i"] = [P.index[1] for P in iterate(self; start_i=start_i, end_i=end_i)]
 
     # Connectivity information
     h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]

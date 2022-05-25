@@ -313,7 +313,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
-
         # Reset U and J from previous step
         _reset_particles(pfield)
 
@@ -330,7 +329,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             scl::R = pfield.sgsscaling(p, pfield)
 
             Uextra .= pfield.Uextra(p.X)
-
             # Low-storage RK step
             ## Velocity
             p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1] + Uextra[1])
@@ -358,8 +356,8 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ + f/(1+3f) * M3⋅Γ ] / mag(Γ)^2 and M3=(M2+E)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
             MM[4] += f/(1+3*f) * (scl*get_SGS1(p)*p.Gamma[1]
-                                    + scl*get_SGS2(p)*p.Gamma[2]
-                                    + scl*get_SGS3(p)*p.Gamma[3])*(p.sigma[1]^3/zeta0)
+            + scl*get_SGS2(p)*p.Gamma[2]
+            + scl*get_SGS3(p)*p.Gamma[3])*(p.sigma[1]^3/zeta0)
             MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
@@ -380,7 +378,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             p.sigma[1] += b*p.M[2, 3]
 
         end
-
         # Update the particle field: viscous diffusion
         viscousdiffusion(pfield, dt; aux1=a, aux2=b)
 

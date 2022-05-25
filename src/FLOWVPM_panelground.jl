@@ -18,9 +18,6 @@ function PanelGround(panels::PS.Panels; formulation=formulation_default, viscous
         for j in 1:n
             for i in 1:m
                 add_particle(cp_pfield, centroids[:,i,j,k], null_gamma, 1.0)
-                # @show ip PS._index_mat_2_vec(panels, i, j, k)
-                # ip+=1
-                # note: (i,j,k) corresponds to
             end
         end
     end
