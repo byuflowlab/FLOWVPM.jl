@@ -66,7 +66,6 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V},
         end
 
     end
-
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
 
@@ -442,4 +441,143 @@ function relaxation_correctedpedrizzetti(rlxf::Real, p::Particle)
     p.Gamma ./= sqrt(b2)
 
     return nothing
+end
+
+################################################################################
+################################################################################
+################################################################################
+
+# Eric Green's additions:
+
+"""
+This provides a function of the form f(dx,x,p) for interfacing with DifferentialEquations. Extra methods were defined for adding two ParticleFields
+    and for multiplying a number by a ParticleField (i.e. n*ParticleField). It should be (mostly) in-place.
+"""
+
+# function DiffEQ_derivative_function!(dpfield::ParticleField{R,F,V}, pfield::ParticleField{R,F,V}, param,t) where {R,F,V}
+function DiffEQ_derivative_function!(dpfield,pfield,settings,t)
+
+    ## format for computations taken from Euler step implementation.
+    # So I might need to split the simulation settings off from ParticleField entirely and put them in the setting struct. This might mean that the setting struct needs to be passed into the UJ function to get the right values for npi and npj
+    # This will look like adding the relevant elements to SolverSettings and then adding some access functions. I'll also need to add a function to read a ParticleField and add the relevant settings to the settings struct.
+
+    #np = get_np(pfield)
+    #transposed = get_transposed(pfield)
+    #viscous = get_viscous(pfield)
+    #=if t > 0.66666
+        if typeof(settings) <: SolverSettings
+            settings.np = 30
+        else
+            settings.value.np = 30
+        end
+    elseif t > 0.33333
+        if typeof(settings) <: SolverSettings
+            settings.np = 20
+        else
+            settings.value.np = 20
+        end
+    else
+        if typeof(settings) <: SolverSettings
+            settings.np = 10
+        else
+            settings.value.np = 10
+        end
+    end=#
+    np = get_np(settings)
+    #=if typeof(settings) <: SolverSettings
+        np = Int(settings[5])
+    else
+        np = Int(settings.value[5])
+    end=#
+
+    if np < 1
+        dpfield .= zero(eltype(dpfield))
+        println("No active particles!")
+        return nothing
+    end
+
+    #println(np)
+    transposed = get_transposed(settings)
+    viscous = get_viscous(settings)
+
+    dpfield .= zero(eltype(dpfield))
+
+    UJ_direct_3!(pfield,pfield,dpfield,gaussianerf,settings)
+    # Calculate subgrid-scale contributions - currently disabled; will need to be updated for compatibility with current calculation approaches
+    #_reset_particles_sgs(pfield)
+    # pfield.sgsmodel(pfield)
+
+    # Calculate freestream
+    Uinf = get_Uinf(settings)(t)
+    #Uinf = (typeof(pfield) <: ParticleField) ? pfield.Uinf(pfield.t) : pfield.value.Uinf(t)
+    #Uinf = 1e-12*ones(3)
+    # Currently disabled sgs calculations.
+    #zeta0::R = pfield.kernel.zeta(0)
+    #zeta0 = pfield.kernel.zeta(0)
+    #ν = param[1]
+    ##
+
+    # Update the particle field: convection and stretching
+    for i=1:np
+        i0 = (i-1)*size(Particle) # stores 1 less than the index associated with the beginning of particle i.
+        # Currently disabled sgs stuff
+        #scl = pfield.sgsscaling(p, pfield)
+
+        # Update position
+        #dp.X .= p.U .+ Uinf
+        dpfield[i0+1] = dpfield[i0+10] + Uinf[1]
+        dpfield[i0+2] = dpfield[i0+11] + Uinf[2]
+        dpfield[i0+3] = dpfield[i0+12] + Uinf[3]
+
+        # Update vectorial circulation
+        ## Vortex stretching contributions
+        if transposed
+            # Transposed scheme (Γ⋅∇')U
+            dpfield[i0+4] = dpfield[i0+13]*pfield[i0+4] + dpfield[i0+14]*pfield[i0+5] + dpfield[i0+15]*pfield[i0+6]
+            dpfield[i0+5] = dpfield[i0+16]*pfield[i0+4] + dpfield[i0+17]*pfield[i0+5] + dpfield[i0+18]*pfield[i0+6]
+            dpfield[i0+6] = dpfield[i0+19]*pfield[i0+4] + dpfield[i0+20]*pfield[i0+5] + dpfield[i0+21]*pfield[i0+6]
+        else
+            # Classic scheme (Γ⋅∇)U
+            dpfield[i0+4] = dpfield[i0+13]*pfield[i0+4] + dpfield[i0+16]*pfield[i0+5] + dpfield[i0+19]*pfield[i0+6]
+            dpfield[i0+5] = dpfield[i0+14]*pfield[i0+4] + dpfield[i0+17]*pfield[i0+5] + dpfield[i0+20]*pfield[i0+6]
+            dpfield[i0+6] = dpfield[i0+15]*pfield[i0+4] + dpfield[i0+18]*pfield[i0+5] + dpfield[i0+21]*pfield[i0+6]
+        end
+    
+        # Currently disabled LES calculations, but they should be pretty straightforward to enable.
+        #dp[4] += scl*get_SGS1(p)*(p.sigma[1]^3/zeta0)
+        #dp[5] += scl*get_SGS2(p)*(p.sigma[1]^3/zeta0)
+        #dp[6] += scl*get_SGS3(p)*(p.sigma[1]^3/zeta0)
+
+    # Since the differential part of the core spreading is only three lines, I moved it to the main derivative calculation function.
+    # Core size resets now occur through callbacks.
+        if iscorespreadingmodified(viscous)
+            #dpfield[i0+7] = viscous.nu/pfield[i0+7]
+            if pfield[i0+7] > 0
+                dpfield[i0+7] = settings[1]/pfield[i0+7]
+            else
+                #println(t)
+                #error("sigma is $(pfield[i0+7]) for particle $(i)!")
+            end
+        else
+            error("viscous scheme not identified")
+        end
+
+        dpfield[i0+8] = zero((eltype(dpfield)))
+        dpfield[i0+9] = zero((eltype(dpfield)))
+        dpfield[i0+10:i0+21] .= zero(eltype(dpfield))
+    
+    end
+
+    #println(settings)
+
+    #=if !(typeof(pfield) <: ParticleField)
+        println(pfield[1])
+        println(pfield.value[1])
+        println(pfield.value.particles[1])
+        println(t)
+        println("\n")
+    end=#
+    #println(t)
+    #println("\n")
+
 end

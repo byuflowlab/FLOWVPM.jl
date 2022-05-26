@@ -52,13 +52,14 @@ g_sing(r::Real) = 1
 dgdr_sing(r::Real) = 0
 g_dgdr_sing(r::Real) = (g_sing(r), dgdr_sing(r))
 
-# erf Gaussian kernel
+# erf Gaussian kernel # update: removed type restrictions. I might replace this with a parametric type
 zeta_gauserf(r::Real) = const1*exp(-r^2/2)
 g_gauserf(r::Real) = SpecialFunctions.erf(r/sqr2) - const2*r*exp(-r^2/2)
 dgdr_gauserf(r::Real) = const2*r^2*exp(-r^2/2)
 function g_dgdr_gauserf(r::Real)
+  
   aux = const2*r*exp(-r^2/2)
-  return SpecialFunctions.erf(r/sqr2)-aux, r*aux
+  return SpecialFunctions.erf(r/sqr2)-aux, r*aux # does SpecialFunctions work with ReverseDiff?
 end
 
 # Gaussian kernel

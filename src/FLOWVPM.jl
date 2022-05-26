@@ -35,13 +35,13 @@ const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
 # Determine the floating point precision of ExaFMM
 const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float32 : Float64
+const RealFMM = exafmm_single_precision ? Float64 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "particlefield",
                     "UJ", "sgsmodels", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "settings", "reformatODE"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

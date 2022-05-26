@@ -42,7 +42,7 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
-Inviscid() = Inviscid{RealFMM}()
+Inviscid(;R=RealFMM) = Inviscid{R}()
 
 """
     `isinviscid(scheme::ViscousScheme)`
@@ -107,8 +107,8 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreading(nu, sgm0, args...; optargs...
-                    ) = CoreSpreading{RealFMM}(RealFMM(nu), RealFMM(sgm0), args...; optargs...)
+CoreSpreading(nu, sgm0, args...; R=RealFMM,optargs...
+                    ) = CoreSpreading{R}(R(nu), R(sgm0), args...; optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`
@@ -211,8 +211,8 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
                                 )
 end
 
-ParticleStrengthExchange(nu, args...; optargs...
-                    ) = ParticleStrengthExchange{RealFMM}(RealFMM(nu), args...; optargs...)
+ParticleStrengthExchange(nu, args...; R=RealFMM,optargs...
+                    ) = ParticleStrengthExchange{R}(R(nu), args...; optargs...)
 
 function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
 
@@ -479,4 +479,113 @@ the FMM neglecting the far field, saving the results under P.Jexa[1:3].
 function zeta_fmm(pfield)
     call_FLOWExaFMM(pfield; rbf=true)
 end
+
 ################################################################################
+# Eric Green's additions:
+################################################################################
+
+# Core spreading scheme that holds an additional data field for the last time core sizes were reset
+mutable struct CoreSpreadingModified{R} <: ViscousScheme{R}
+    # User inputs
+    nu::R                                 # Kinematic viscosity
+    sgm0::R                               # Core size after reset
+    zeta::Function                        # Basis function evaluation method
+
+    # Optional inputs
+    beta::R                               # Maximum core size growth σ/σ_0
+    itmax::Int                            # Maximum number of RBF iterations
+    tol::R                                # RBF interpolation tolerance
+    iterror::Bool                         # Throw error if RBF didn't converge
+    verbose::Bool                         # Verbose on RBF interpolation
+    v_lvl::Int                            # Verbose printing tab level
+    debug::Bool                           # Print verbose for debugging
+
+    # Internal properties
+    t_sgm::R                              # Time since last core size reset ## not used anymore
+    t_sgm_r::R                            # Time of last core size reset
+    t_sgm_crit::R                         # Time at which core sizes will next need to be reset
+    rbf::Function                         # RBF function
+    rr0s::Array{R, 1}                     # Initial field residuals
+    rrs::Array{R, 1}                      # Current field residuals
+    prev_rrs::Array{R, 1}                 # Previous field residuals
+    pAps::Array{R, 1}                     # pAp product
+    alphas::Array{R, 1}                   # Alpha coefficients
+    betas::Array{R, 1}                    # Beta coefficients
+    flags::Array{Bool, 1}                 # Convergence flags
+
+    CoreSpreadingModified{R}(
+                        nu, sgm0, zeta;
+                        beta=R(1.5),
+                        itmax=R(15), tol=R(1e-3),
+                        iterror=true, verbose=false, v_lvl=2, debug=false,
+                        t_sgm=R(0.0),
+                        t_sgm_r = R(0.0),
+                        t_sgm_crit = R(sgm0^2*(beta^2-1)/(2*nu)),
+                        rbf=rbf_conjugategradient,
+                        rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
+                        pAps=zeros(R, 3), alphas=zeros(R, 3), betas=zeros(R, 3),
+                        flags=zeros(Bool, 3)
+                    ) where {R} = new(
+                        nu, sgm0, zeta,
+                        beta,
+                        itmax, tol,
+                        iterror, verbose, v_lvl, debug,
+                        t_sgm,
+                        t_sgm_r,
+                        t_sgm_crit,
+                        rbf,
+                        rr0s, rrs, prev_rrs,
+                        pAps, alphas, betas,
+                        flags
+                    )
+end
+
+CoreSpreadingModified(nu, sgm0, args...; R=RealFMM,optargs...
+                    ) = CoreSpreadingModified{R}(R(nu), R(sgm0), args...; optargs...)
+
+"""
+   `iscorespreadingmodified(scheme::ViscousScheme)`
+
+Returns true if viscous scheme is modified core spreading.
+"""
+iscorespreadingmodified(scheme::ViscousScheme
+                            ) = typeof(scheme).name == CoreSpreadingModified.body.name
+
+function CoreSpreadingCondition(pfield,t,integrator)
+    if iscorespreadingmodified(pfield.viscous)
+        pfield.viscous.t_sgm_crit - t == 0 # checks for time reaching the next time for core resizing
+    else
+        1
+    end
+end
+
+function CoreSpreadingAffect!(integrator)
+    pfield = integrator.u # get state at next proposed step
+    t = integrator.t # get time at next proposed step
+    scheme = pfield.viscous # get viscous scheme
+    scheme.t_sgm_r = t # update last reset time
+    scheme.t_sgm_crit += R(sgm0^2*(beta^2-1)/(2*nu)) # shifted whenever the core sizes are reset
+
+    if scheme.verbose
+        println("\t"^scheme.v_lvl*
+                "Current sigma growth: $(round(scheme.t_sgm, digits=7))"*
+                "\tCritical:$(round(t_sgm_crit, digits=7))")
+    end
+
+    scheme.zeta(pfield)
+
+    for p in pfield.particles
+        # Use approximated vorticity as target vorticity (stored under P.Jexa[7:9])
+        for i in 1:3
+            p.M[i+6] = p.Jexa[i]
+        end
+        # Reset core sizes
+        p.sigma[1] = scheme.sgm0
+    end
+
+    # Calculate new strengths through RBF to preserve original vorticity
+    scheme.rbf(pfield, scheme)
+    return nothing
+end
+
+##### END OF CORE SPREADING SCHEME #############################################

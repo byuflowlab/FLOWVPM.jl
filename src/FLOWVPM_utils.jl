@@ -130,7 +130,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     end
 
     # Finalize verbose
-    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    if verbose
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+    end
 
     return nothing
 end
@@ -160,7 +162,8 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     fname = file_name*(add_num ? num==-1 ? ".$(self.nt)" : ".$num" : "")
     h5fname = fname*".h5"
-    np = get_np(self)
+    #np = get_np(self)
+    np = self.np
 
     time = overwrite_time != nothing ? overwrite_time :
             typeof(self.t) in [Float64, Int64] ? self.t :
@@ -183,6 +186,13 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["circulation"] = [P.circulation[1] for P in iterate(self)]
     h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
+
+    #=h5["X"] = [P.X[i] for i in 1:3, P in self.particles]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in self.particles]
+    h5["sigma"] = [P.sigma[1] for P in self.particles]
+    h5["circulation"] = [P.circulation[1] for P in self.particles]
+    h5["vol"] = [P.vol[1] for P in self.particles]
+    h5["i"] = [P.index[1] for P in self.particles]=#
 
     # Connectivity information
     h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
@@ -564,3 +574,514 @@ function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
     vprintln(line1, v_lvl)
     vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
 end
+
+################################################################################
+################################################################################
+################################################################################
+
+# Eric Green's additions:
+
+"""
+    This provides a new interface for using time integration schemes from DifferentialEquations.jl. Additional methods were defined for operations
+    on particles and particles fields. Addition and scalar multiplication were both needed; the implementation should be fully broadcastable.
+    Arbitrary operations can be run on particle fields because they just broadcast those operations to their interior particles, but only addition
+    and scalar multiplication/division are defined for particles. If other operations are needed, add more methods for particles.
+
+    The function structure is kept close to the original run_vpm!; however, the actual solving is offloaded to DifferentialEquations.jl
+"""
+
+using DifferentialEquations
+diffeq = DifferentialEquations
+using DiffEqSensitivity
+des = DiffEqSensitivity
+
+function run_vpm_alternate_time_marching!(pfield::ParticleField, dt::Real, nsteps::Int;
+    # RUNTIME OPTIONS
+    mode="default",
+    runtime_function::Function=runtime_default,
+    static_particles_function::Function=static_particles_default,
+    nsteps_relax::Int64=-1,
+    AD=true,
+    extra_numerical_parameters=nothing,
+    continuous_CB_condition_functions=nothing,
+    continuous_CB_affect_functions=nothing,
+    discrete_CB_condition_functions=nothing,
+    discrete_CB_affect_functions=nothing,
+    new_particle_times=nothing,
+    # OUTPUT OPTIONS
+    save_path::Union{Nothing, String}=nothing,
+    create_savepath::Bool=true,
+    run_name::String="pfield",
+    save_code::String="",
+    nsteps_save::Int=1, prompt::Bool=true,
+    verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
+    save_time=true,
+    return_sol=false)
+
+    ### I'm leaving these checks in place for now, even if their relevant functionality is disabled. This may change later.
+    ### Update: This check currently triggers the error output, so it is disabled until I get the viscous scheme/kernel compatibility list updated.
+    # ERROR CASES
+    ## Check that viscous scheme and kernel are compatible
+    #=compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
+
+    if !(pfield.kernel in compatible_kernels)
+        error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
+        " $(typeof(pfield.viscous).name); compatible kernels are"*
+        " $(compatible_kernels)")
+    end=#
+
+    if save_path!==nothing
+        # Create save path
+        if create_savepath; create_path(save_path, prompt); end;
+
+        # Save code
+        if save_code!=""
+            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
+        end
+        
+        # Save settings
+        save_settings(pfield, run_name; path=save_path)
+    end
+
+    # Initialize verbose
+    (line1, line2, run_id, file_verbose,
+    vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
+                                    dt, nsteps_relax, nsteps_save,
+                                    runtime_function,
+                                    static_particles_function, v_lvl)
+
+    ## This section has a lot of changes. There are three options:
+    # mode="default": runs the original VPM
+    # mode="fullstep": runs the VPM through DE.jl solvers
+    # mode="adjoint": runs adjoint computations and has some additional outputs
+    
+    # RUN
+    if mode == "default"
+        for i in 0:nsteps
+
+            if i%verbose_nsteps==0
+                vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+            end
+
+            # Relaxation step
+            relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
+
+            org_np = get_np(pfield)
+
+            # Time step
+            if i!=0
+                # Add static particles
+                static_particles_function(pfield, pfield.t, dt)
+
+                # Step in time solving governing equations
+                nextstep(pfield, dt; relax=relax)
+
+                # Remove static particles (assumes particles remained sorted)
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
+
+            # Calls user-defined runtime function
+            breakflag = runtime_function(pfield, pfield.t, dt;
+                            vprintln= (str)-> i%verbose_nsteps==0 ?
+                                    vprintln(str, v_lvl+2) : nothing)
+
+            # Save particle field
+            if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+                overwrite_time = save_time ? nothing : pfield.nt
+                save(pfield, run_name; path=save_path, add_num=true,
+                                    overwrite_time=overwrite_time)
+            end
+
+            # User-indicated end of simulation
+            if breakflag
+                break
+            end
+
+        end
+
+        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
+        if verbose
+            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        end
+    end
+    if mode == "fullstep" || mode == "adjoint"
+        tspan = (0.0,dt*nsteps)
+        #p = [1.0]
+        if extra_numerical_parameters !== nothing
+            num_param = [pfield.viscous.nu, extra_numerical_parameters...]
+        else
+            num_param = [pfield.viscous.nu]
+        end
+        if runtime_function !== nothing
+            if discrete_CB_affect_functions !== nothing
+                discrete_CB_condition_functions = [discrete_CB_condition_functions..., TrueCondition]
+                discrete_CB_affect_functions = [discrete_CB_affect_functions..., runtime_function]
+            else
+                discrete_CB_condition_functions = [TrueCondition]
+                discrete_CB_affect_functions = [runtime_function]
+            end
+        end
+        
+        #=p = SolverSettings{Float64}(;numerical_parameters = num_param,
+                            string_parameters = [save_path, run_name])=#
+                            #discrete_CB_condition_functions = discrete_CB_condition_functions,
+                            #discrete_CB_affect_functions = discrete_CB_affect_functions,
+                            #continuous_CB_condition_functions = continuous_CB_condition_functions,
+                            #continuous_CB_affect_functions = continuous_CB_affect_functions)
+        p = SolverSettings{Float64}(;numerical_parameters = num_param,
+                            string_parameters = [save_path, run_name],
+                            kernel=pfield.kernel,UJ=pfield.UJ,
+                            formulation=pfield.formulation,
+                            viscous=pfield.viscous,
+                            Uinf=pfield.Uinf,
+                            sgsmodel=pfield.sgsmodel,
+                            sgsscaling=pfield.sgsscaling,
+                            integration=pfield.integration,
+                            transposed=pfield.transposed,
+                            nt=pfield.nt,
+                            np=pfield.np,
+                            maxparticles=pfield.maxparticles
+                            )
+
+        #cb1 = DiscreteCallback(DiscreteCBConditions,DiscreteCBAffects!)
+        #cb2 = ContinuousCallback(ContinuousCBConditions,ContinuousCBAffects!)
+        if discrete_CB_condition_functions !== nothing
+            cb1s = Vector{DiscreteCallback}(undef,length(discrete_CB_affect_functions))
+            for i=1:length(discrete_CB_affect_functions)
+                cb1s[i] = DiscreteCallback(discrete_CB_condition_functions[i],discrete_CB_affect_functions[i],save_positions = (true,true))
+            end
+        else
+            cb1s = nothing
+        end
+        if continuous_CB_condition_functions !== nothing
+            
+            cb2 = ContinuousCallback(continuous_CB_condition_functions,continuous_CB_affect_functions)
+            #cb2 = VectorContinuousCallback(continuous_CB_condition_functions,continuous_CB_affect_functions,length(continuous_CB_affect_functions))
+            if cb1s !== nothing
+                cbs = CallbackSet(cb1s...,cb2)
+            else
+                cbs = CallbackSet(cb2)
+            end
+        else
+            cbs = CallbackSet(cb1s...)
+        end
+
+        org_np = get_np(pfield)
+
+        # Add static particles
+        static_particles_function(pfield, pfield.t, dt)
+        
+        if mode == "fullstep"
+            #u0 = zeros(length(pfield))
+            #u0 .= pfield
+            prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
+            #prob = diffeq.ODEProblem(DiffEQ_derivative_function!,u0,tspan,p)
+            sol = diffeq.solve(prob,ORK256(williamson_condition=false),callback=cbs;dt=dt,save_on=false,alias_u0=true, tstops=[0.005;0.010]) # Note: save_on=false disables saving at all intermediate steps in RAM, but still causes output to be written to disk.
+        elseif mode == "adjoint"
+            if pfield.UJ == UJ_fmm && AD == true
+                @warn("Warning: C++-based FMM does not support AD! Setting autodiff to false.")
+                AD = false
+            end
+            if return_sol == false
+                @warn("Warning: sensitivity may fail if full solution is not returned by solver!")
+            end
+
+            #psize = size(Particle)
+            #save_idxs = [1:pfield.np*psize...]
+            u0 = zeros(length(pfield))
+            u0 .= pfield
+            prob = diffeq.ODEProblem(DiffEQ_derivative_function!,u0,tspan,p)
+            tracked_cbs = des.track_callbacks(CallbackSet(cbs),tspan[1],u0,p,BacksolveAdjoint())
+            #tracked_cbs = des.track_callbacks(CallbackSet(cbs),u0,p,BacksolveAdjoint())
+            sol = diffeq.solve(prob,ORK256(williamson_condition=false),callback=tracked_cbs;dt=dt,alias_u0=true,save_on=true)#,saveat=[0.0:dt:dt*nsteps...])
+            #sol = diffeq.solve(prob,CKLLSRK75_4M_5R(),callback=tracked_cbs;dt=dt,alias_u0=true,save_on=true)#,saveat=[0.0:dt:dt*nsteps...])
+
+            #prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
+            #tracked_cbs = des.track_callbacks(CallbackSet(cbs),tspan[1],pfield,p,BacksolveAdjoint())
+            #sol = diffeq.solve(prob,ORK256(williamson_condition=false),callback=tracked_cbs;dt=dt,alias_u0=true,save_on=true)#,saveat=[0.0:dt:dt*nsteps...])
+            #sol = diffeq.solve(prob,Tsit5(),callback=cbs;dt=dt,alias_u0=false,save_on=true)#,saveat=[0.0:dt:dt*nsteps...])
+            #sol = diffeq.solve(prob,Tsit5();dt=dt,alias_u0=true,save_on=true)#,saveat=[0.0:dt:dt*nsteps...])
+            #sol = diffeq.solve(prob,Tsit5();dt=dt,dense=true,tstops=0.0:dt:dt*nsteps)
+            #sol = diffeq.solve(prob,Tsit5(),tstops=0.0:dt:dt*nsteps)
+            #ts = 0.0:dt:dt*nsteps
+            ts = sol.t
+            du0,dp = adjoint_sensitivities(sol,ORK256(williamson_condition=false),callback=tracked_cbs,ring_centroid_location_adjcalc,nothing,nothing;dt=dt,sensealg=BacksolveAdjoint(;autodiff=true,autojacvec=ReverseDiffVJP(false)))#,checkpoints=ts)
+            #du0,dp = adjoint_sensitivities(sol,CKLLSRK75_4M_5R(),callback=tracked_cbs,ring_centroid_location_adjcalc,nothing,nothing;dt=dt,sensealg=BacksolveAdjoint(;autodiff=true,autojacvec=ReverseDiffVJP(true)))#,checkpoints=ts)
+            #du0,dp = adjoint_sensitivities(sol,Tsit5(),ring_centroid_location_adjcalc,nothing,nothing;dt=dt,sensealg=BacksolveAdjoint(;autodiff=true,autojacvec=ReverseDiffVJP(true)))#,checkpoints=ts)
+            #du0,dp = adjoint_sensitivities(sol,ORK256(williamson_condition=false),ring_centroid_location_adjcalc,nothing,nothing;dt=dt,sensealg=QuadratureAdjoint(;autodiff=true,autojacvec=false),checkpoints=ts)
+            #du0,dp = adjoint_sensitivities(sol,Tsit5(),ring_centroid_location_adjcalc,nothing,nothing;dt=dt,sensealg=InterpolatingAdjoint(;checkpointing=true,autodiff=true,autojacvec=true),checkpoints=ts)
+
+            # I also need to try a discrete adjoint.
+            #dp,du0 = DiscreteAdjoint.discrete_adjoint(sol,ring_centroid_location_adjcalc2,ts;autojacvec=DiscreteAdjoint.ForwardDiffVJP())
+        end
+            # Remove static particles (assumes particles remained sorted)
+        for pi in get_np(pfield):-1:(org_np+1)
+            remove_particle(pfield, pi)
+        end
+
+        # Calls user-defined runtime functions # this should be reformulated to run through callbacks (probably VectorContinuousCallback objects)
+        #=breakflag = runtime_function(pfield, pfield.t, dt;
+                        vprintln= (str)-> i%verbose_nsteps==0 ?
+                                vprintln(str, v_lvl+2) : nothing)=#
+
+        #save(pfield, run_name; path=save_path)
+
+        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
+        if verbose
+            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        end
+
+        if mode=="fullstep"
+            if return_sol
+                return sol
+            else
+                return nothing
+            end
+        end
+        if mode=="adjoint"
+            return sol,du0,dp,sol[end]
+        end
+
+    end
+
+    return nothing
+end
+
+using LinearAlgebra
+linalg = LinearAlgebra
+
+function RMSV_adjcalc(u,p,t) # root-mean-square velocities
+    S = 0.0
+    pfield = u
+    n = length(pfield.particles)
+    for particle in pfield.particles
+        dS = linalg.norm(particle.U)
+        if abs(dS) > eps()
+            S += dS^2
+        else
+            n = n-1
+        end
+    end
+    S = sqrt(S)/n
+end
+
+function ring_centroid_location_adjcalc(u,p,t)
+
+    #println(t) # for diagnostic purposes; makes sure that solving is proceeding in a reasonable amount of time.
+    S = 0.0
+    pfield = u
+    #=for particle in pfield.particles
+        S += particle.X[3]
+    end
+    S /= n=#
+    dS = 0.0
+    for i=1:get_np(p)*size(Particle)
+        (i % size(Particle) == 3) ?  (dS += pfield[i]) : nothing
+    end
+    dS /= get_np(pfield)
+    #println(dS)
+    return dS
+
+end
+
+ring_centroid_location_adjcalc(u,p,t,dt,i) = ring_centroid_location_adjcalc(u,p,t)
+
+# Currently errors; it seems the return type needs to be a particle field.
+function ring_centroid_location_adjcalc2(out,u,p,t,i)
+
+    #=out = similar(u)
+
+    for i=1:u.np
+        out.particles[3] = u.particles[3]
+    end
+    return out=#
+
+    S = 0.0
+    pfield = u
+    n = length(pfield.particles)
+    for particle in pfield.particles
+        S += particle.X[3]
+    end
+    S /= n
+    out .= S
+    return out
+
+end
+
+function save_sens(self,u0,file_name::String; path::String="",
+    add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
+    overwrite_time=nothing)
+
+    if createpath; create_path(path, true); end;
+
+    fname = file_name*("_sens")
+    h5fname = fname*".h5"
+    np = Int(length(self)/size(Particle))
+
+    time = overwrite_time != nothing ? overwrite_time : 0.0
+
+    # Creates/overwrites HDF5 file
+    h5 = HDF5.h5open(joinpath(path, h5fname), "w")
+
+    # Writes parameters
+    h5["np"] = np
+    h5["t"] = time
+
+    # Writes fields
+    Xvals = zeros(np*3)
+    dudXvals = zeros(np*3)
+    dudGammavals = zeros(np*3)
+    dudsigmavals = zeros(np)
+    dudcirculationvals = zeros(np)
+    dudvolvals = zeros(np)
+    psize = size(Particle)
+    for i=1:np
+        Xvals[3*(i-1)+1:3*(i-1)+3] .= u0.particles[i].X
+        dudXvals[3*(i-1)+1:3*(i-1)+3] = self[Int(psize*(i-1)+1):Int(psize*(i-1)+3)]
+        dudGammavals[3*(i-1)+1:3*(i-1)+3] = self[Int(psize*(i-1)+4):Int(psize*(i-1)+6)]
+        dudsigmavals[i] = self[Int(psize*(i-1)+7)]
+        dudcirculationvals[i] = self[Int(psize*(i-1)+8)]
+        dudvolvals[i] = self[Int(psize*(i-1)+psize)]
+    end
+
+    h5["X"] = Xvals
+    h5["dudX"] = dudXvals
+    h5["dudGamma"] = dudGammavals
+    h5["dudsigma"] = dudsigmavals
+    h5["dudcirculation"] = dudcirculationvals
+    h5["dudvol"] = dudvolvals
+    h5["i"] = [1:np...]
+
+
+    # Connectivity information
+    h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
+
+    close(h5)
+
+    # Generates XDMF file specifying fields for paraview
+    xmf = open(joinpath(path, fname*".xmf"), "w")
+
+    # Open xmf block
+    print(xmf, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
+    print(xmf, "<Xdmf xmlns:xi=\"http://www.w3.org/2001/XInclude\" Version=\"3.0\">\n")
+    print(xmf, "\t<Domain>\n")
+    print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
+    print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
+
+            print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
+
+    # Nodes: particle positions
+    print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":X</DataItem>\n")
+    print(xmf, "\t\t\t\t</Geometry>\n")
+
+    # Topology: every particle as a point cell
+    print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Mixed\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                    " Dimensions=\"", np*3,
+                    "\" Format=\"HDF\" Precision=\"8\">",
+                    h5fname, ":connectivity</DataItem>\n")
+    print(xmf, "\t\t\t\t</Topology>\n")
+
+    # Attribute: dudX
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudX\" Type=\"Vector\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudX</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: Gamma
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudGamma\" Type=\"Vector\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudGamma</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: sigma
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudsigma\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudsigma</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: circulation
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudcirculation\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudcirculation</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: vol
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudvol\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudvol</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+
+    # Attribute: index
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"i\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":i</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    print(xmf, "\t\t\t</Grid>\n")
+    print(xmf, "\t\t</Grid>\n")
+    print(xmf, "\t</Domain>\n")
+    print(xmf, "</Xdmf>\n")
+
+    close(xmf)
+
+    return fname*".xmf;"
+end
+
+### supported ODE solvers:
+# Tsit5()
+# BS3()
+# Vern7()
+# VCABM()
+# ORK256() - Slightly higher memory usage than default but significantly faster
+# As far as I can tell, all the low-memory-usage ones should work fine - this is another 30-40 solvers
+
+
+### solvers requiring ForwardDiff compatibility:
+# QNDF()
+# FBDF()
+# Rodas4()
+# KenCarp4()
+# TRBDF2()
+# Trapezoid()
+# AutoTsit5(Rosenbrock23())
+# AutoVern7(Rodas5()
+# Rosenbrock23()
+
+### solvers that can yield zero/near zero circulations during solving:
+# DP5()
+# DP8()
+
+### solvers with other incompatibilities:
+# RadauIIA5(): passes in complex float value
