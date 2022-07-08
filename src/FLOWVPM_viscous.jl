@@ -139,6 +139,8 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Core spreading
         for p in iterator(pfield)
+            # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
+            # Should I be solving dsigmadt = nu/sigma instead?
             p.M[1, 3] = aux1*p.M[1, 3] + dt*2*scheme.nu
             p.sigma[1] = sqrt(p.sigma[1]^2 + aux2*p.M[1, 3])
         end
