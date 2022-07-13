@@ -1,4 +1,4 @@
-<img src="docs/vid/flowvpm2.jpg" alt="Pic here" style="width:400px"/>
+<img src="docs/img/flowvpm-horizontal-O-01.jpg" alt="Pic here" style="width:600px"/>
 
 Three-dimensional viscous vortex particle code in Julia 1.4.2.
 
@@ -13,6 +13,9 @@ Three-dimensional viscous vortex particle code in Julia 1.4.2.
 ## Resources
   * Theory and numerical method explained: [Paper](https://github.com/byuflowlab/SimpleVPM.jl/blob/master/docs/Theory.pdf), [Video](https://www.youtube.com/watch?v=24sxy_hTJ9s), [Implementation](https://github.com/byuflowlab/SimpleVPM.jl)
   * Recommendations for rotor simulations and numerical stability: [Paper](http://flowlab.groups.et.byu.net/preprints/Alvarez2020.pdf)
+
+## Sponsors
+<img src="docs/img/sponsors00.jpg" alt="Pic here" style="width:900px"/>
 
 ## Authorship & Copyright
 * Author            : Eduardo J Alvarez
