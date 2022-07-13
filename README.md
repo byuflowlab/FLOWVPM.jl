@@ -1,6 +1,4 @@
-<img src="docs/vid/val_leapfrog04_6.gif" alt="Vid here" style="width: 900px;"/>
-
-# FLOWVPM
+<img src="docs/vid/flowvpm2.jpg" alt="Pic here" style="width:400px"/>
 
 Three-dimensional viscous vortex particle code in Julia 1.4.2.
 
