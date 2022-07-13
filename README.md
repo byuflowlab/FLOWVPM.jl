@@ -1,4 +1,4 @@
-<img src="docs/img/flowvpm-horizontal-O-01.jpg" alt="Pic here" style="width:600px"/>
+<img src="docs/img/flowvpm-horizontal-O-01.jpg" alt="Pic here" style="width:900px"/>
 
 Three-dimensional viscous vortex particle code in Julia 1.4.2.
 
