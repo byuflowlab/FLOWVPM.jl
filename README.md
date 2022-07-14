@@ -2,6 +2,7 @@
 
 Meshless large eddy simulation through the reformulated vortex particle method
 
+---
 
 FLOWVPM implements the reformulated vortex particle method (rVPM) developed in E. J. Alvarez' doctoral dissertation *Reformulated Vortex Particle Method and Meshless Large Eddy Simulation of Multirotor Aircraft*, 2022 [[PDF]](https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=10598&context=etd).
 The rVPM is a CFD solving the LES-filtered incompressible Navier-Stokes equations in their vorticity form.
@@ -39,22 +40,22 @@ Paraview is recommended for visualization of simulations.
 ## Examples
 
   **Turbulent Jet:** [`examples/roundjet/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/roundjet), [[VIDEO1]](https://www.youtube.com/watch?v=V9hthE7m1d4) [[VIDEO2]](https://www.youtube.com/watch?v=SobMmRR9JlU)
-  [<img src="docs/img/vid-roundjet.jpg" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
+  [<img src="docs/img/vid-roundjet.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
 
   **Vortex Ring Leapfrog:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/img/vid-leapfrog.jpg" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
+  [<img src="docs/img/vid-leapfrog.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
 
   **Isolated Vortex Ring:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/img/vid-vortexring.jpg" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
+  [<img src="docs/img/vid-vortexring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
 
   **Rotor in Hover:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady), [[VIDEO]](https://www.youtube.com/watch?v=u9SgYbYhPpU)
-  [<img src="docs/img/vid-rotor.jpg" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
+  [<img src="docs/img/vid-rotor.jpg" alt="Pic here" style="width:750px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
 
   **Ring with Toroidal Vorticity:** [[LINK]](https://www.linkedin.com/posts/alvarezedo_cfd-paraview-fluiddynamics-activity-6857078379137650688-F0yO) [[VIDEO]](https://www.youtube.com/watch?v=D3VHhDR8-bI)
-  [<img src="http://edoalvar2.groups.et.byu.net/public/test_vortonring007_3-processed.gif" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
+  [<img src="docs/img/vid-vortonring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
 
   **eVTOL Aircraft:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady), [[VIDEO]](https://www.youtube.com/watch?v=SFW2X8Lbsdw)
-  [<img src="docs/img/vahana2.jpg" alt="Pic here" style="width: 900px;"/>](https://www.youtube.com/watch?v=SFW2X8Lbsdw)
+  [<img src="docs/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=SFW2X8Lbsdw)
 
 ## Authorship & Copyright
   * Author            : Eduardo J Alvarez
