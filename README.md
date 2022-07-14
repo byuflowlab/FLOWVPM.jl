@@ -30,12 +30,12 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
   This is an open-source project.
   Improvements and further development by the community are accepted and encouraged.
 
-## Sponsors
-  <img src="docs/img/sponsors00.jpg" alt="Pic here" style="width:900px"/>
-
 ## Theory and Validation
   * E. J. Alvarez, 2022, *Reformulated Vortex Particle Method and Meshless Large Eddy Simulation of Multirotor Aircraft* [[PDF]](https://scholarsarchive.byu.edu/etd/9589/)
   * E. J. Alvarez & A. Ning, 2022, *Reviving the Vortex Particle Method: A Stable Formulation for Meshless Large Eddy Simulation* [[PDF]](https://arxiv.org/abs/2206.03658)
+
+## Sponsors
+  <img src="docs/img/sponsors00.jpg" alt="Pic here" style="width:900px"/>
 
 ## Examples
 
