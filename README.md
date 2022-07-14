@@ -1,6 +1,6 @@
 <img src="docs/img/flowvpm-horizontal-O-01.jpg" alt="Pic here" style="width:900px"/>
 
-Meshless large eddy simulation through the reformulated vortex particle method
+##### MESHLESS LARGE EDDY SIMULATION THROUGH THE REFORMULATED VORTEX PARTICLE METHOD
 
 ---
 
