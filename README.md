@@ -52,7 +52,7 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
   [<img src="docs/img/vid-rotor.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
 
   **Ring with Toroidal Vorticity:** [[LINK](https://www.linkedin.com/posts/alvarezedo_cfd-paraview-fluiddynamics-activity-6857078379137650688-F0yO)] [[VIDEO](https://www.youtube.com/watch?v=D3VHhDR8-bI)]
-  [<img src="docs/img/vid-vortonring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
+  [<img src="docs/img/vid-vortonring2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
 
   **eVTOL Aircraft:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady), [[VIDEO](https://www.youtube.com/watch?v=SFW2X8Lbsdw)]
   [<img src="docs/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=SFW2X8Lbsdw)
