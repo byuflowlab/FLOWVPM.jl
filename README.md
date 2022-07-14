@@ -1,4 +1,4 @@
-<img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:900px"/>
+<img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:700px"/>
 
 ##### MESHLESS LARGE EDDY SIMULATION THROUGH THE REFORMULATED VORTEX PARTICLE METHOD
 
