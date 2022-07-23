@@ -8,6 +8,14 @@ FLOWVPM implements the reformulated vortex particle method (rVPM) developed in E
 The rVPM is a CFD method solving the LES-filtered incompressible Navier-Stokes equations in their vorticity form.
 It uses a Lagrangian (meshless) scheme, which not only avoid the hurdles of mesh generation, but it also conserves vortical structures over long distances with minimal numerical dissipation while being orders of magnitude faster than conventional mesh-based CFD.
 
+The rVPM uses particles to discretize the Navier-Stokes equations, with the particles representing radial basis functions that construct a continuous vorticity/velocity field.
+The basis functions become the LES filter, providing a variable filter width and spatial adaption as the particles are convected and stretched by the velocity field.
+The local evolution of the filter width provides an extra degree of freedom to re-inforce conservations laws, which makes the reformulated VPM numerically stable.
+
+This meshless CFD has several advantages over conventional mesh-based CFD.
+In the absence of a mesh, the rVPM (1) does not suffer from the conventional CFL condition, (2) does not suffer from the numerical dissipation introduced by a mesh, and (3) derivatives are calculated analytically rather than approximated through a stencil.
+Furthermore, rVPM is highly efficient since it uses computational elements only where there is vorticity rather than meshing the entire space, making it 100x faster than conventional mesh-based LES.
+
 FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programming language for high-performance computing.
 The FMM acceleration has been tested in Linux-based machines (including supercomputing HPC clusters).
 Limited support is provided for MacOs and Windows machines, and we would graciously accept pull requests automating the compilation of the FMM for these architectures (see [FLOWExaFMM](https://github.com/byuflowlab/FLOWExaFMM)).
@@ -62,6 +70,4 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
   * Created           : 2019
   * Email             : Edo.AlvarezR@gmail.com
   * Website           : [edoalvarez.com](https://www.edoalvarez.com/)
-  * Copyright         : Copyrighted to Eduardo J. Alvarez and the FLOW Lab. All
-      rights reserved. No licensing, use, or modification of this code is allowed
-      without written consent.
+  * License           : MIT
