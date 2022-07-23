@@ -6,7 +6,6 @@
   * Author    : Eduardo J Alvarez
   * Email     : Edo.AlvarezR@gmail.com
   * Created   : Aug 2020
-  * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
 
 """

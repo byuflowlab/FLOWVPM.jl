@@ -6,8 +6,6 @@
   * Author    : Eduardo J. Alvarez
   * Email     : Edo.AlvarezR@gmail.com
   * Created   : 2019
-  * Copyright : Eduardo J Alvarez. All rights reserved. No licensing, use, or
-        modification of this code is allowed without written consent.
 
 # TODO
 * [ ] Review time integration routines and SFS models to conform to new GE derivation.
