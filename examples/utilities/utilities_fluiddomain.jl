@@ -252,7 +252,7 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
 
     # Memory pre-allocation
     O_prev, Oaxis_prev = zeros(3), Float64[i==j for i in 1:3, j in 1:3]
-    T, M               = zeros(3), Float64[i==j for i in 1:3, j in 1:3]
+    T, M, Maux         = zeros(3), Float64[i==j for i in 1:3, j in 1:3], zeros(3, 3)
     O_new, Oaxis_new   = zeros(3), Float64[i==j for i in 1:3, j in 1:3]
 
     for (numi, num) in enumerate(nums)
@@ -284,10 +284,10 @@ function evaluate_fluiddomain_vtk(pfield::vpm.ParticleField,
             # NOTE: I haven't verified this transformation so it may be buggy
 
             # M .= collect(Oaxis_prev')*Oaxis_new
-            M .= transpose(Oaxis_prev)
+            Maux .= transpose(Oaxis_prev)
             for i in 1:3
                 for j in 1:3
-                    M[i, j] = M[i,1]*Oaxis_new[1,j] + M[i,2]*Oaxis_new[2,j] + M[i,3]*Oaxis_new[3,j]
+                    M[i, j] = Maux[i,1]*Oaxis_new[1,j] + Maux[i,2]*Oaxis_new[2,j] + Maux[i,3]*Oaxis_new[3,j]
                 end
             end
 
