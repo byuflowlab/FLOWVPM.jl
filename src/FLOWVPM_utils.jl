@@ -99,19 +99,31 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         # Time step
         if i!=0
-            # Add static particles
-            static_particles_function(pfield, pfield.t, dt)
+            # @time begin
+            #     println("run_vpm: static_particles")
+                # Add static particles
+                static_particles_function(pfield, pfield.t, dt)
+            # end
 
-            # add ground; use t+dt since step doesn't increment until nextstep() is run
-            ground_effect_function(pfield, pfield.t + dt, dt)
+            # @time begin
+            #     println("run_vpm: ground_effect")
+                # add ground; use t+dt since step doesn't increment until nextstep() is run
+                ground_effect_function(pfield, pfield.t + dt, dt)
+            # end
 
-            # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax)
+            # @time begin
+            #     println("run_vpm: nextstep")
+                # Step in time solving governing equations
+                nextstep(pfield, dt; relax=relax)
+            # end
 
-            # Remove static particles (assumes particles remained sorted)
-            for pi in get_np(pfield):-1:(org_np+1)
-                remove_particle(pfield, pi)
-            end
+            # @time begin
+            #     println("run_vpm: remove static particles")
+                # Remove static particles (assumes particles remained sorted)
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            # end
         end
 
         # Calls user-defined runtime function

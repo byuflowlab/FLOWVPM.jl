@@ -119,7 +119,6 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
         scl::R = pfield.sgsscaling(p, pfield)
 
         Uextra .= pfield.Uextra(p.X)
-
         # Update position
         p.X[1] += dt*(p.U[1] + Uinf[1] + Uextra[1])
         p.X[2] += dt*(p.U[2] + Uinf[2] + Uextra[2])
@@ -310,13 +309,13 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
 
     # Reset storage memory to zero
     for p in iterator(pfield); p.M .= zero(R); end;
-
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
         # Reset U and J from previous step
         _reset_particles(pfield)
 
         # Calculate interactions between particles: U and J
+
         pfield.UJ(pfield)
 
         # Calculate subgrid-scale contributions
@@ -324,11 +323,13 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
         pfield.sgsmodel(pfield)
 
         # Update the particle field: convection and stretching
+        i = 1
         for p in iterator(pfield)
 
             scl::R = pfield.sgsscaling(p, pfield)
 
             Uextra .= pfield.Uextra(p.X)
+
             # Low-storage RK step
             ## Velocity
             p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1] + Uextra[1])
@@ -359,7 +360,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             + scl*get_SGS2(p)*p.Gamma[2]
             + scl*get_SGS3(p)*p.Gamma[3])*(p.sigma[1]^3/zeta0)
             MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
-
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ + M3 )
             p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] + scl*get_SGS1(p)*(p.sigma[1]^3/zeta0))
@@ -377,6 +377,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V},
             # Update cross-sectional area
             p.sigma[1] += b*p.M[2, 3]
 
+            i+=1
         end
         # Update the particle field: viscous diffusion
         viscousdiffusion(pfield, dt; aux1=a, aux2=b)
