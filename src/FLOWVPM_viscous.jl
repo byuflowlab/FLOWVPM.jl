@@ -42,7 +42,7 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
-Inviscid() = Inviscid{RealFMM}()
+Inviscid(;R=RealFMM) = Inviscid{R}()
 
 """
     `isinviscid(scheme::ViscousScheme)`
@@ -107,8 +107,8 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreading(nu, sgm0, args...; optargs...
-                    ) = CoreSpreading{RealFMM}(RealFMM(nu), RealFMM(sgm0), args...; optargs...)
+CoreSpreading(nu, sgm0, args...; R=RealFMM,optargs...
+                    ) = CoreSpreading{R}(R(nu), R(sgm0), args...; optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`
@@ -211,8 +211,8 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
                                 )
 end
 
-ParticleStrengthExchange(nu, args...; optargs...
-                    ) = ParticleStrengthExchange{RealFMM}(RealFMM(nu), args...; optargs...)
+ParticleStrengthExchange(nu, args...; R=RealFMM,optargs...
+                    ) = ParticleStrengthExchange{R}(R(nu), args...; optargs...)
 
 function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
 
@@ -540,8 +540,8 @@ mutable struct CoreSpreadingModified{R} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreadingModified(nu, sgm0, args...; optargs...
-                    ) = CoreSpreadingModified{RealFMM}(RealFMM(nu), RealFMM(sgm0), args...; optargs...)
+CoreSpreadingModified(nu, sgm0, args...; R=RealFMM,optargs...
+                    ) = CoreSpreadingModified{R}(R(nu), R(sgm0), args...; optargs...)
 
 """
    `iscorespreadingmodified(scheme::ViscousScheme)`
@@ -564,7 +564,7 @@ function CoreSpreadingAffect!(integrator)
     t = integrator.t # get time at next proposed step
     scheme = pfield.viscous # get viscous scheme
     scheme.t_sgm_r = t # update last reset time
-    scheme.t_sgm_crit += t # shifted by t whenever the core sizes are reset
+    scheme.t_sgm_crit += R(sgm0^2*(beta^2-1)/(2*nu)) # shifted whenever the core sizes are reset
 
     if scheme.verbose
         println("\t"^scheme.v_lvl*

@@ -33,15 +33,17 @@ const fmm = FLOWExaFMM
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
+### The ExaFMM part needs to be revised. For now it should be disabled; once Ryan finishes his VPM then it will likely interface with that instead.
 # Determine the floating point precision of ExaFMM
 const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float32 : Float64
+const RealFMM = exafmm_single_precision ? Float64 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "particlefield",
                     "UJ", "sgsmodels", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "settings", "run",
+                    "fileIO"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

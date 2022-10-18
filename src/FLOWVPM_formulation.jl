@@ -36,4 +36,4 @@ struct ReformulatedVPM{R} <: Formulation{R}
 
     ReformulatedVPM{R}(f=R(0), g=R(1/5); h=(1-3*g)/(1+3*f)) where {R} = new(f, g, h)
 end
-##### END OF CLASSIC VPM #######################################################
+##### END OF REFORMULATED VPM #######################################################

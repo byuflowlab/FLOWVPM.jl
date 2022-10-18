@@ -10,133 +10,6 @@
 =###############################################################################
 
 
-
-"""
-  `run_vpm!(pfield, dt, nsteps; runtime_function=nothing, save_path=nothing,
-run_name="pfield", nsteps_save=1, verbose=true, prompt=true)`
-
-Solves `nsteps` of the particle field with a time step of `dt`.
-
-**Optional Arguments**
-* `runtime_function::Function`   : Give it a function of the form
-                            `myfun(pfield, t, dt)`. On each time step it
-                            will call this function. Use this for adding
-                            particles, deleting particles, etc.
-* `static_particles_function::Function`   : Give it a function of the form
-                            `myfun(pfield, t, dt)` to add static particles
-                            representing solid boundaries to the solver. This
-                            function is called at every time step right before
-                            solving the governing equations, and any new
-                            particles added by this function are immediately
-                            removed.
-* `nsteps_relax::Int`   : Relaxes the particle field every this many time steps.
-* `save_path::String`   : Give it a string for saving VTKs of the particle
-                            field. Creates the given path.
-* `run_name::String`    : Name of output files.
-* `nsteps_save::Int64`  : Saves vtks every this many time steps.
-* `prompt::Bool`        : If `save_path` already exist, it will prompt the
-                            user before overwritting the folder if true; it will
-                            directly overwrite it if false.
-* `verbose::Bool`       : Prints progress of the run to the terminal.
-* `verbose_nsteps::Bool`: Number of time steps between verbose.
-"""
-function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
-                      # RUNTIME OPTIONS
-                      runtime_function::Function=runtime_default,
-                      static_particles_function::Function=static_particles_default,
-                      nsteps_relax::Int64=-1,
-                      # OUTPUT OPTIONS
-                      save_path::Union{Nothing, String}=nothing,
-                      create_savepath::Bool=true,
-                      run_name::String="pfield",
-                      save_code::String="",
-                      nsteps_save::Int=1, prompt::Bool=true,
-                      verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-                      save_time=true)
-
-    # ERROR CASES
-    ## Check that viscous scheme and kernel are compatible
-    compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
-
-    if !(pfield.kernel in compatible_kernels)
-        error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
-                " $(typeof(pfield.viscous).name); compatible kernels are"*
-                " $(compatible_kernels)")
-    end
-
-    if save_path!=nothing
-        # Create save path
-        if create_savepath; create_path(save_path, prompt); end;
-
-        # Save code
-        if save_code!=""
-            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
-        end
-
-        # Save settings
-        save_settings(pfield, run_name; path=save_path)
-    end
-
-    # Initialize verbose
-    (line1, line2, run_id, file_verbose,
-        vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
-                                                    dt, nsteps_relax, nsteps_save,
-                                                    runtime_function,
-                                                    static_particles_function, v_lvl)
-
-    # RUN
-    for i in 0:nsteps
-
-        if i%verbose_nsteps==0
-            vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
-        end
-
-        # Relaxation step
-        relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
-
-        org_np = get_np(pfield)
-
-        # Time step
-        if i!=0
-            # Add static particles
-            static_particles_function(pfield, pfield.t, dt)
-
-            # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax)
-
-            # Remove static particles (assumes particles remained sorted)
-            for pi in get_np(pfield):-1:(org_np+1)
-                remove_particle(pfield, pi)
-            end
-        end
-
-        # Calls user-defined runtime function
-        breakflag = runtime_function(pfield, pfield.t, dt;
-                                     vprintln= (str)-> i%verbose_nsteps==0 ?
-                                            vprintln(str, v_lvl+2) : nothing)
-
-        # Save particle field
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                        overwrite_time=overwrite_time)
-        end
-
-        # User-indicated end of simulation
-        if breakflag
-            break
-        end
-
-    end
-
-    # Finalize verbose
-    if verbose
-        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
-    end
-
-    return nothing
-end
-
 """
   `save(pfield, file_name; path="")`
 
@@ -162,7 +35,8 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     fname = file_name*(add_num ? num==-1 ? ".$(self.nt)" : ".$num" : "")
     h5fname = fname*".h5"
-    np = get_np(self)
+    #np = get_np(self)
+    np = self.np
 
     time = overwrite_time != nothing ? overwrite_time :
             typeof(self.t) in [Float64, Int64] ? self.t :
@@ -185,6 +59,13 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["circulation"] = [P.circulation[1] for P in iterate(self)]
     h5["vol"] = [P.vol[1] for P in iterate(self)]
     h5["i"] = [P.index[1] for P in iterate(self)]
+
+    #=h5["X"] = [P.X[i] for i in 1:3, P in self.particles]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in self.particles]
+    h5["sigma"] = [P.sigma[1] for P in self.particles]
+    h5["circulation"] = [P.circulation[1] for P in self.particles]
+    h5["vol"] = [P.vol[1] for P in self.particles]
+    h5["i"] = [P.index[1] for P in self.particles]=#
 
     # Connectivity information
     h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
@@ -573,291 +454,260 @@ end
 
 # Eric Green's additions:
 
-"""
-    This provides a new interface for using time integration schemes from DifferentialEquations.jl. Additional methods were defined for operations
-    on particles and particles fields. Addition and scalar multiplication were both needed; the implementation should be fully broadcastable.
-    Arbitrary operations can be run on particle fields because they just broadcast those operations to their interior particles, but only addition
-    and scalar multiplication/division are defined for particles. If other operations are needed, add more methods for particles.
+using LinearAlgebra
+linalg = LinearAlgebra
 
-    The function structure is kept close to the original run_vpm!; however, the actual solving is offloaded to DifferentialEquations.jl
-"""
+function dZ(u,p,t)
 
-using DifferentialEquations
-diffeq = DifferentialEquations
-using DiffEqSensitivity
-des = DiffEqSensitivity
-
-function run_vpm_alternate_time_marching!(pfield::ParticleField, dt::Real, nsteps::Int;
-    # RUNTIME OPTIONS
-    mode="default",
-    runtime_function::Function=runtime_default,
-    static_particles_function::Function=static_particles_default,
-    nsteps_relax::Int64=-1,
-    # OUTPUT OPTIONS
-    save_path::Union{Nothing, String}=nothing,
-    create_savepath::Bool=true,
-    run_name::String="pfield",
-    save_code::String="",
-    nsteps_save::Int=1, prompt::Bool=true,
-    verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-    save_time=true)
-
-
-    ### I'm leaving these checks in place for now, even if their relevant functionality is disabled. This may change later.
-    ### Update: This check currently triggers the error output, so it is disabled until I get the viscous scheme/kernel compatibility list updated.
-    # ERROR CASES
-    ## Check that viscous scheme and kernel are compatible
-    #=compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
-
-    if !(pfield.kernel in compatible_kernels)
-        error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
-        " $(typeof(pfield.viscous).name); compatible kernels are"*
-        " $(compatible_kernels)")
-    end=#
-
-    if save_path!==nothing
-        # Create save path
-        if create_savepath; create_path(save_path, prompt); end;
-
-        # Save code
-        if save_code!=""
-            cp(save_code, joinpath(save_path, splitdir(save_code)[2]); force=true)
-        end
-        
-        # Save settings
-        save_settings(pfield, run_name; path=save_path)
+    #println(t)
+    out = 0.0
+    #dpfield = zeros(eltype(u),length(u))
+    #dpfield = zeros(length(u))
+    #dpfield = similar(u)
+    #UJ_direct_3!(u,u,dpfield,gaussianerf,p)
+    np = get_np(p)
+    tmax = 0.6666666
+    if t < (tmax-1e-4)
+        return 0.0
     end
-
-    # Initialize verbose
-    (line1, line2, run_id, file_verbose,
-    vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
-                                    dt, nsteps_relax, nsteps_save,
-                                    runtime_function,
-                                    static_particles_function, v_lvl)
-
-    ## This section has a lot of changes. There are five options:
-    # 1. The original time-marching code (default)
-    # 2. A DifferentialEquations-based version that runs 1 time step at a time and saves after each step
-    #       - This is probably the easiest to implement, so it gets its own section even though it is just a special case of 3.
-    # 3. A DifferentialEquations-based version that runs N time steps at a time and saves at regular intervals
-    # 4. A DifferentialEquations-based version that runs everything and saves the intermediate states in a vector of ParticleFields
-    #       -There may be memory issues with this one.
-    # 5. A DifferentialEquations-based version that runs everything without saving intermediate results, only outputting the final particle state.
-    #       -The practical use of this might be limited, but it's a good benchmarking tool for comparing with
-    #           the original time-marching implementations.
-    #       -This is also a special case of 3., but now N is the total number of time steps and the system state is only saved once
-
-    # So far, 1., 2., and 5. are implemented, under the names "default", "onestep", and "fullstep", respectively.
-    
-    # RUN
-    if mode == "default"
-        for i in 0:nsteps
-
-            if i%verbose_nsteps==0
-                vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
-            end
-
-            # Relaxation step
-            relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
-
-            org_np = get_np(pfield)
-
-            # Time step
-            if i!=0
-                # Add static particles
-                static_particles_function(pfield, pfield.t, dt)
-
-                # Step in time solving governing equations
-                nextstep(pfield, dt; relax=relax)
-
-                # Remove static particles (assumes particles remained sorted)
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
-
-            # Calls user-defined runtime function
-            breakflag = runtime_function(pfield, pfield.t, dt;
-                            vprintln= (str)-> i%verbose_nsteps==0 ?
-                                    vprintln(str, v_lvl+2) : nothing)
-
-            # Save particle field
-            if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-                overwrite_time = save_time ? nothing : pfield.nt
-                save(pfield, run_name; path=save_path, add_num=true,
-                                    overwrite_time=overwrite_time)
-            end
-
-            # User-indicated end of simulation
-            if breakflag
-                break
-            end
-
-        end
-
-        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
-        if verbose
-            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
-        end
+    for i=1:Int(np)
+        out += u[(i-1)*size(Particle) + 3]
+        #out += dpfield[(i-1)*size(Particle) + 12]
     end
-    if mode == "onestep"
-        tspan = (0.0,dt)
-        p = 1.0
-        for i in 0:nsteps
+    out /= np
+    #println(out)
+    return out
 
-            if i%verbose_nsteps==0
-                vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
-            end
-
-            # Relaxation step
-            relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
-
-            org_np = get_np(pfield)
-
-            # Time step
-            if i!=0
-                # Add static particles
-                static_particles_function(pfield, pfield.t, dt)
-
-                ## this section is the only one that sees changes for this option
-                # Step in time solving governing equations
-                #nextstep(pfield, dt; relax=relax)
-                
-                prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
-                # currently just overwrites pfield
-                sol = diffeq.solve(prob,ORK256();dt=dt)
-                pfield .= sol.u[end]
-                pfield.nt += 1
-                pfield.t += dt
-                # Remove static particles (assumes particles remained sorted)
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
-
-            # Calls user-defined runtime functions
-            breakflag = runtime_function(pfield, pfield.t, dt;
-                            vprintln= (str)-> i%verbose_nsteps==0 ?
-                                    vprintln(str, v_lvl+2) : nothing)
-
-            # Save particle field
-            if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-                overwrite_time = save_time ? nothing : pfield.nt
-                save(pfield, run_name; path=save_path, add_num=true,
-                                    overwrite_time=overwrite_time)
-            end
-
-            # User-indicated end of simulation
-            if breakflag
-                break
-            end
-
-        end
-
-        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
-        if verbose
-            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
-        end
-    end
-
-    if mode == "fullstep"
-        tspan = (0.0,dt*nsteps)
-        nsteps_relax = 10
-        relax_t = (dt*nsteps)/nsteps_relax
-        relax_t0 = relax_t
-        p = [relax_t,relax_t0] # assorted parameters that the solver should have access to that are not stored in the pfield type.
-        cb1 = ContinuousCallback(CoreSpreadingCondition,CoreSpreadingAffect!)
-        cb2 = ContinuousCallback(RelaxationCondition,RelaxationAffect!)
-        cbs = CallbackSet(cb1,cb2)
-
-        # Relaxation step #disabled, might move to actual derivative calculations
-        #relax = pfield.relax && (nsteps_relax>=1 && i>0 && i%nsteps_relax==0)
-
-        org_np = get_np(pfield)
-
-        # Add static particles
-        static_particles_function(pfield, pfield.t, dt)
-        
-        prob = diffeq.ODEProblem(DiffEQ_derivative_function!,pfield,tspan,p)
-        # currently just overwrites pfield
-        sol = diffeq.solve(prob,ORK256(),callback=cbs,;dt=dt)
-        pfield .= sol.u[end]
-        pfield.nt += nsteps
-        pfield.t += dt*nsteps
-        # Remove static particles (assumes particles remained sorted)
-        for pi in get_np(pfield):-1:(org_np+1)
-            remove_particle(pfield, pi)
-        end
-
-        # Calls user-defined runtime functions # this should be reformulated to run through callbacks (probably VectorContinuousCallback objects)
-        breakflag = runtime_function(pfield, pfield.t, dt;
-                        vprintln= (str)-> i%verbose_nsteps==0 ?
-                                vprintln(str, v_lvl+2) : nothing)
-
-        # Save particle field ## just one save operation at the end ### the save operation could probably be run as a callback function
-        #=if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                overwrite_time=overwrite_time)
-        end=#
-        save(pfield, run_name; path=save_path)
-
-        # User-indicated end of simulation ## never break in this case... but it wouldn't be too hard to make this run with a callback
-        #if breakflag
-        #    break
-        #end
-
-        # Finalize verbose ## no longer runs when verbose == false, since it outputs nothing in that case anyway
-        if verbose
-            finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
-        end
-
-    end
-
-    return nothing
 end
 
-# Relaxation callback functions. These check if the relaxation condition is met (measured by time since last relaxation).
-# If so, it runs the relaxation.
-function RelaxationCondition(u,t,integrator)
-    if !u.relax
-        1
+function dZ_discrete(out,u,p,t,i)
+
+    temp = zeros(typeof(t),length(out))
+    if i == 30
+        np = get_np(p)
+        for j=1:Int(np)
+            temp[(j-1)*size(Particle) + 3] = 1.0
+        end
+        out .= temp
+        out ./= np
     else
-        integrator.p[1] - t
+        out .= 0.0
     end
+
 end
 
-function RelaxationAffect!(integrator)
-    pfield = integrator.u
-    for p in pfield.particles
-        pfield.relaxation(pfield.rlxf, p)
+function RMSV_adjcalc(u,p,t) # root-mean-square velocities
+    S = 0.0
+    pfield = u
+    n = length(pfield.particles)
+    for particle in pfield.particles
+        dS = linalg.norm(particle.U)
+        if abs(dS) > eps()
+            S += dS^2
+        else
+            n = n-1
+        end
     end
-    integrator.p[1] += integrator.p[2]
+    S = sqrt(S)/n
 end
 
-### supported ODE solvers:
-# Tsit5()
-# BS3()
-# Vern7()
-# VCABM()
-# ORK256() - Slightly higher memory usage than default but significantly faster
-# As far as I can tell, all the low-memory-usage ones should work fine - this is another 30-40 solvers
+function ring_centroid_location_adjcalc(u,p,t)
+
+    #println(t) # for diagnostic purposes; makes sure that solving is proceeding in a reasonable amount of time.
+    S = 0.0
+    pfield = u
+    #=for particle in pfield.particles
+        S += particle.X[3]
+    end
+    S /= n=#
+    dS = 0.0
+    for i=1:get_np(p)*size(Particle)
+        (i % size(Particle) == 3) ?  (dS += pfield[i]) : nothing
+    end
+    dS /= get_np(pfield)
+    #println(dS)
+    return dS
+
+end
+
+ring_centroid_location_adjcalc(u,p,t,dt,i) = ring_centroid_location_adjcalc(u,p,t)
+
+# Currently errors; it seems the return type needs to be a particle field.
+function ring_centroid_location_adjcalc2(out,u,p,t,i)
+
+    #=out = similar(u)
+
+    for i=1:u.np
+        out.particles[3] = u.particles[3]
+    end
+    return out=#
+
+    S = 0.0
+    pfield = u
+    n = length(pfield.particles)
+    for particle in pfield.particles
+        S += particle.X[3]
+    end
+    S /= n
+    out .= S
+    return out
+
+end
+
+function save_sens(self,u0,file_name::String; path::String="",
+    add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
+    overwrite_time=nothing)
+
+    if createpath; create_path(path, true); end;
+
+    fname = file_name*("_sens")
+    h5fname = fname*".h5"
+    np = Int(length(self)/size(Particle))
+
+    time = overwrite_time != nothing ? overwrite_time : 0.0
+
+    # Creates/overwrites HDF5 file
+    h5 = HDF5.h5open(joinpath(path, h5fname), "w")
+
+    # Writes parameters
+    h5["np"] = np
+    h5["t"] = time
+
+    # Writes fields
+    Xvals = zeros(np*3)
+    dudXvals = zeros(np*3)
+    dudGammavals = zeros(np*3)
+    dudsigmavals = zeros(np)
+    dudcirculationvals = zeros(np)
+    dudvolvals = zeros(np)
+    psize = size(Particle)
+    for i=1:np
+        Xvals[3*(i-1)+1:3*(i-1)+3] .= u0.particles[i].X
+        dudXvals[3*(i-1)+1:3*(i-1)+3] = self[Int(psize*(i-1)+1):Int(psize*(i-1)+3)]
+        dudGammavals[3*(i-1)+1:3*(i-1)+3] = self[Int(psize*(i-1)+4):Int(psize*(i-1)+6)]
+        dudsigmavals[i] = self[Int(psize*(i-1)+7)]
+        dudcirculationvals[i] = self[Int(psize*(i-1)+8)]
+        dudvolvals[i] = self[Int(psize*(i-1)+psize)]
+    end
+
+    h5["X"] = Xvals
+    h5["dudX"] = dudXvals
+    h5["dudGamma"] = dudGammavals
+    h5["dudsigma"] = dudsigmavals
+    h5["dudcirculation"] = dudcirculationvals
+    h5["dudvol"] = dudvolvals
+    h5["i"] = [1:np...]
 
 
-### solvers requiring ForwardDiff compatibility:
-# QNDF()
-# FBDF()
-# Rodas4()
-# KenCarp4()
-# TRBDF2()
-# Trapezoid()
-# AutoTsit5(Rosenbrock23())
-# AutoVern7(Rodas5()
-# Rosenbrock23()
+    # Connectivity information
+    h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
 
-### solvers that can yield zero/near zero circulations during solving:
-# DP5()
-# DP8()
+    close(h5)
 
-### solvers with other incompatibilities:
-# RadauIIA5(): passes in complex float value
+    # Generates XDMF file specifying fields for paraview
+    xmf = open(joinpath(path, fname*".xmf"), "w")
+
+    # Open xmf block
+    print(xmf, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
+    print(xmf, "<Xdmf xmlns:xi=\"http://www.w3.org/2001/XInclude\" Version=\"3.0\">\n")
+    print(xmf, "\t<Domain>\n")
+    print(xmf, "\t\t<Grid GridType=\"Collection\" CollectionType=\"Temporal\">\n")
+    print(xmf, "\t\t\t<Grid Name=\"particles\">\n")
+
+            print(xmf, "\t\t\t\t<Time Value=\"", time, "\" />\n")
+
+    # Nodes: particle positions
+    print(xmf, "\t\t\t\t<Geometry Origin=\"\" Type=\"XYZ\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":X</DataItem>\n")
+    print(xmf, "\t\t\t\t</Geometry>\n")
+
+    # Topology: every particle as a point cell
+    print(xmf, "\t\t\t\t<Topology Dimensions=\"", np, "\" Type=\"Mixed\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                    " Dimensions=\"", np*3,
+                    "\" Format=\"HDF\" Precision=\"8\">",
+                    h5fname, ":connectivity</DataItem>\n")
+    print(xmf, "\t\t\t\t</Topology>\n")
+
+    # Attribute: dudX
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudX\" Type=\"Vector\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudX</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: Gamma
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudGamma\" Type=\"Vector\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 3,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudGamma</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: sigma
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudsigma\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudsigma</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: circulation
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudcirculation\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudcirculation</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    # Attribute: vol
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"dudvol\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":dudvol</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+
+    # Attribute: index
+    print(xmf, "\t\t\t\t<Attribute Center=\"Node\" ElementCell=\"\"",
+                " ElementDegree=\"0\" ElementFamily=\"\" ItemType=\"\"",
+                " Name=\"i\" Type=\"Scalar\">\n")
+        print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                    " Dimensions=\"", np, " ", 1,
+                    "\" Format=\"HDF\" Precision=\"4\">",
+                    h5fname, ":i</DataItem>\n")
+    print(xmf, "\t\t\t\t</Attribute>\n")
+
+    print(xmf, "\t\t\t</Grid>\n")
+    print(xmf, "\t\t</Grid>\n")
+    print(xmf, "\t</Domain>\n")
+    print(xmf, "</Xdmf>\n")
+
+    close(xmf)
+
+    return fname*".xmf;"
+end
+
+# TODO:
+# Clean up file
+#    Move run_vpm!() functions to another file # done
+#    Clean up/remove dev code
+#    Add verbosity checks
+#    Clean up redundant functions
+#    Move objective function definitions and similar functions that depend on the actual simulation out of the VPM code
+#        Some of them might end up generalized and left here.
