@@ -27,33 +27,36 @@ import Printf
 import DataStructures: OrderedDict
 
 # ------------ FLOW CODES ------------------------------------------------------
-import FLOWExaFMM
-const fmm = FLOWExaFMM
+#import FLOWExaFMM
+#const fmm = FLOWExaFMM
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
+### The ExaFMM part needs to be revised. For now it should be disabled; once Ryan finishes his VPM then it will likely interface with that instead.
 # Determine the floating point precision of ExaFMM
-const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float64 : Float64
+#const exafmm_single_precision = fmm.getPrecision()
+#const RealFMM = exafmm_single_precision ? Float64 : Float64
+const RealFMM = Float64
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "fmm", "viscous", "formulation",
+for header_name in ["kernel", "viscous", "formulation",
                     "particle", "particlefield",
                     "UJ", "sgsmodels", "timeintegration",
-                    "monitors", "utils", "settings", "reformatODE"]
+                    "monitors", "utils", "settings", "run",
+                    "fileIO"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
 
 # ------------ AVAILABLE SOLVER OPTIONS ----------------------------------------
 # Available VPM formulations
-const formulation_classic = ClassicVPM{RealFMM}()
-const formulation_tube_classic = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
-const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
+const formulation_classic = ClassicVPM{Float64}()
+const formulation_tube_classic = ReformulatedVPM{Float64}(0, 0)
+const formulation_tube_continuity = ReformulatedVPM{Float64}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{Float64}(1/4, 1/4)
 const formulation_tube = formulation_tube_continuity
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_sphere_momentum = ReformulatedVPM{Float64}(0, 1/5)
 const formulation_sphere = formulation_sphere_momentum
 const formulation_reclassic = formulation_tube_classic
 const formulation_default = formulation_sphere_momentum

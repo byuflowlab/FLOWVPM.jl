@@ -75,7 +75,7 @@ Eric Green's additions:
 22 April 2022: This now errors. The C++ FMM code is incompatible with AD anyway (due to strict type definitions in C++)
 so this shouldn't be used anyway. In the future, the VPM will run Eduardo's pure Julia FMM.
 """
-Particle(body::fmm.BodyRef;R=RealFMM) = Particle{R}(fmm.get_Xref(body),
+#=Particle(body::fmm.BodyRef;R=RealFMM) = Particle{R}(fmm.get_Xref(body),
                                                 fmm.get_qref(body),
                                                 fmm.get_sigmaref(body),
                                                 fmm.get_volref(body),
@@ -88,7 +88,7 @@ Particle(body::fmm.BodyRef;R=RealFMM) = Particle{R}(fmm.get_Xref(body),
                                                 fmm.get_dJdx1ref(body),
                                                 fmm.get_dJdx2ref(body),
                                                 fmm.get_dJdx3ref(body),
-                                                fmm.get_indexref(body))
+                                                fmm.get_indexref(body))=#
 
 #Particle(body::fmm.BodyRef;R=RealFMM) = error("C++ fmm is deprecated due to incompatibility with AD!")
 
@@ -334,3 +334,6 @@ end
 nothing
 
 ##### END OF ABSTRACT PARTICLE FIELD############################################
+
+# TODO:
+# Check how much of the function definitions are needed. Most of it is likely redundant at this point because the particle field is just converted to a vector.

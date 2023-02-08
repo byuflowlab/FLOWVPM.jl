@@ -353,86 +353,63 @@ function UJ_direct_2(sources, targets, g_dgdr::Function)
  return nothing
 end
 
-function UJ_direct_3!(sources, targets, d_targets, g_dgdr::Function, settings)
+function UJ_direct_3!(d_targets, sources, targets, g_dgdr::Function, settings,np)
 
-  #npi = get_maxparticles(settings)
-  #npj = npi
-  active_np_i = get_np(settings)
-  #=if typeof(settings) <: SolverSettings
-    active_np_i = Int(settings[5])
-  else
-    active_np_i = Int(settings.value[5])
-  end=#
-  active_np_j = active_np_i
-  #npi = Int(length(targets)/length(Particle)) # should return the number of particles
-  #npj = Int(length(sources)/length(Particle)) # should return the number of particles
-  #active_np_i = active_particles(targets)
-  #active_np_j = active_particles(sources)
-  #d_targets .= zero(eltype(d_targets))
-  const4 = 1/(4*pi)
+  #active_np_i = Int(get_np(settings))
+  #active_np_j = active_np_i
+  const4 = 1/(4*pi) # defining this here avoids a segfault. For some reason ReverseDiff does not like global variables in other files, so if const4 is pulled from FLOWVPM.jl the sensitivity analysis breaks.
+  i0 = 0
+  j0 = 0
+  dX1 = zero(targets[1])
+  dX2 = zero(targets[1])
+  dX3 = zero(targets[1])
+  rs = zero(targets[1])
+  r = zero(targets[1])
+  g_sgm = zero(targets[1])
+  dg_sgmdr = zero(targets[1])
+  aux = zero(targets[1])
+  #np = get_int_np(sources[end])
+  #np = Int(get_np(settings))
 
-  for i=1:active_np_i
-    for j=1:active_np_j
-      # i -> targets
+  for i=1:np
+    for j=1:np
+        # i -> targets
         # j -> sources
 
         # indices for the correct starting location for each particle
         i0 = (i-1)*length(Particle)
         j0 = (j-1)*length(Particle)
 
-        #=if (typeof(sources[1]) <: Particle)
-          Pi = targets[i]
-          Pj = sources[j]
-        else
-          Pi = @view targets[(i-1)*size(Particle)+1:(i-1)*size(Particle)+size(Particle)]
-          Pj = @view sources[(j-1)*size(Particle)+1:(j-1)*size(Particle)+size(Particle)]
-        end=#
+        #if sum(isnan.(targets[i0+1:i0+7])) > 0 || sum(isnan.(sources[i0+1:i0+7])) > 0
+        #  error("")
+        #end
+        #if targets[i0+7] <= 0 || sources[j0+7] <= 0
+          #println("$i, $j")
+          #error("$(targets[i0+7]), $(sources[j0+7])")
+        #end
 
         dX1 = targets[i0+1] - sources[j0+1]
         dX2 = targets[i0+2] - sources[j0+2]
         dX3 = targets[i0+3] - sources[j0+3]
-        #r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3) # why does this line cause NaNs???
         rs = dX1*dX1 + dX2*dX2 + dX3*dX3 # taking the square root causes issues because the derivative of square root at 0 is undefined.
-        if rs!=zero(rs)
-          #=if !(typeof(targets) <: ParticleField)
-            #println(typeof(rs))
-            #println(rs)
-            if rs.value == zero(rs.value)
-              println(rs)
-              error("")
-            end
-          end=#
+        #if rs!=zero(rs)
+        #if approxzero(rs)
+        if i !== j
           r = sqrt(rs)
-          
           # Regularizing function and deriv
-          #g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
-          g_sgm, dg_sgmdr = g_dgdr(r/sources[j0+7]) # not the cause of the segfault, but for some reason it is really slow. This line alone doubles the runtime.
-          #g_sgm, dg_sgmdr = (1.0,1.0)
-          # K × Γp
-          # These next few lines cause a segfault when running reverse AD. My guess is that const4 is a global constant value and so it doesn't work well with derivatives.
-
-          
+          g_sgm, dg_sgmdr = g_dgdr(r/sources[j0+7]) # some performance stuff to figure out later - this line slows things down a lot.
+          # K × Γp          
           crss1 = -const4 / r^3 * ( dX2*sources[j0+6] - dX3*sources[j0+5] )
           crss2 = -const4 / r^3 * ( dX3*sources[j0+4] - dX1*sources[j0+6] )
           crss3 = -const4 / r^3 * ( dX1*sources[j0+5] - dX2*sources[j0+4] )
           
           # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-          #Pi.U[1] += g_sgm * crss1
-          #Pi.U[2] += g_sgm * crss2
-          #Pi.U[3] += g_sgm * crss3
-          #=if !(typeof(d_targets) <: ParticleField)
-            println(typeof(d_targets))
-            println(length(d_targets))
-            println(d_targets[i0+9].value)
-          end=#
-          #d_targets[i0+10:i0+21] .= zero(eltype(d_targets))
           d_targets[i0+10] += g_sgm * crss1
           d_targets[i0+11] += g_sgm * crss2
           d_targets[i0+12] += g_sgm * crss3
 
           # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
           # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-          #aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2
           aux = dg_sgmdr/(sources[j0+7]*r) - 3*g_sgm /r^2
           # j=1
           d_targets[i0+13] += aux * crss1 * dX1
@@ -473,6 +450,20 @@ function UJ_direct_2(sources, targets, kernel::Kernel)
   return UJ_direct_2(sources, targets, kernel.g_dgdr)
 end
 
-function UJ_direct_3!(sources, targets, d_targets, kernel::Kernel, settings)
-  return UJ_direct_3!(sources, targets, d_targets, kernel.g_dgdr, settings)
+function UJ_direct_3!(d_targets, sources, targets, kernel::Kernel, settings,np)
+  return UJ_direct_3!(d_targets, sources, targets, kernel.g_dgdr, settings,np)
 end
+
+function approxzero(x;ε=1e-10)
+
+  if (x > zero(x) && x - ε < zero(x)) || (x < zero(x) && x + ε > zero(x))
+    return true
+  else
+    return false
+  end
+
+end
+
+#TODO:
+# clean up UJ_direct_3! # done
+#    remove dev code output # done

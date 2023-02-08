@@ -35,12 +35,12 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme} <: Abstr
     Uinf::Function                              # Uniform freestream function Uinf(t)
     sgsmodel::Function                          # Subgrid-scale contributions model
     sgsscaling::Function                        # Scaling factor of SGS contributions
-    integration::Function                       # Time integration scheme
+    integration                                 # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Function                        # Relaxation scheme
     relax::Bool                                 # Enables relaxation scheme
     rlxf::R                                     # Relaxation factor (fraction of dt)
-    fmm::FMM                                    # Fast-multipole settings ### Will do nothing until the julia-based FMM is added
+    #fmm::FMM                                    # Fast-multipole settings ### Will do nothing until the julia-based FMM is added
 
     #settings::SolverSettings
 
@@ -61,7 +61,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme} <: Abstr
                                 transposed=true,
                                 relaxation=relaxation_default,
                                 relax=true, rlxf=R(0.3),
-                                fmm=FMM(),
+                                #fmm=FMM(),
                                 M=zeros(R, 4)
                          ) where {R, F, V} = new(
                                 maxparticles,
@@ -77,7 +77,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme} <: Abstr
                                 transposed,
                                 relaxation,
                                 relax, rlxf,
-                                fmm,
+                                #fmm,
                                 M
                           )
 end
@@ -142,7 +142,7 @@ Add a particle to the field.
 function add_particle(self::ParticleField{R,F,V}, X, Gamma, sigma;
                                            vol=0, circulation::Real=1, index=-1) where {R,F,V}
     # ERROR CASES
-    if get_np(self)==self.maxparticles
+    if self.np==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
                                                             " has been reached")
     #elseif circulation<0 # 20 April 2022: Zero-circulation particles need to be routinely initialized for ODE solving, so this error shouldn't happen.
@@ -166,7 +166,7 @@ function add_particle(self::ParticleField{R,F,V}, X, Gamma, sigma;
     P.sigma .= sigma
     P.vol .= vol
     P.circulation .= abs(circulation)
-    P.index .= index==-1 ? get_np(self) : index
+    P.index .= index==-1 ? self.np : index
 
     # Add particle to the field
     self.np += 1
@@ -495,7 +495,6 @@ end
     return pfield_out
 end=#
 
-
 """
     'find_pfield(bc)'
 Unpacks broadcasted input. This function should probably not be called directly.
@@ -647,7 +646,7 @@ function copy_settings!(dest::ParticleField,source::ParticleField)
     dest.relaxation = source.relaxation
     dest.relax = source.relax
     dest.rlxf = source.rlxf
-    dest.fmm = source.fmm
+    #dest.fmm = source.fmm
     #dest.np = source.np # added to try to keep pfield sizes recorded correctly; unsure if it will work.
     return nothing
 
@@ -696,11 +695,11 @@ get_index(self::Array{T,1}, i::Int) where T = self[10*(i-1)+10]
 get_U(self::Array{T,1}, i::Int) where T = self[60*(i-1)+1:60*(i-1)+3]
 get_J(self::Array{T,1}, i::Int) where T = self[60*(i-1)+4:60*(i-1)+11] # column-first order for the elements of J
 
-get_np(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.np : ((typeof(self) <: SubArray || typeof(self) <: Array) ? Int(length(self)/length(Particle)) : self.value.np)
-get_transposed(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.transposed : self.value.transposed
-get_viscous(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.viscous : self.value.viscous
-get_Uinf(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.Uinf : self.value.Uinf
-get_maxparticles(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.maxparticles : self.value.maxparticles
+#get_np(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.np : ((typeof(self) <: SubArray || typeof(self) <: Array) ? Int(length(self)/length(Particle)) : self.value.np)
+#get_transposed(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.transposed : self.value.transposed
+#get_viscous(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.viscous : self.value.viscous
+#get_Uinf(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.Uinf : self.value.Uinf
+#get_maxparticles(self) = ((typeof(self) <: ParticleField) || (typeof(self) <: SolverSettings)) ? self.maxparticles : self.value.maxparticles
 
 function get_particles(self)
     error("don't use this")
@@ -772,3 +771,7 @@ end=#
 #    2. The aforementioned issue with how ParticleFields were initialized with the wrong size value
 #    3. An issue where copy() was only copying np entries rather than np*size(Particle) entries for copy(ParticleField)
 # Now to find out why stuff is full of NaNs...
+
+# TODO:
+# Remove extra comments and dev code
+# Check how much of the function definitions are needed. Most of it is likely redundant at this point because the particle field is just converted to a vector.

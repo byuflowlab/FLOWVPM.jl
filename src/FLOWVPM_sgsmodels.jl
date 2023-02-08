@@ -9,6 +9,8 @@
   * Copyright : Eduardo J Alvarez. All rights reserved.
 =###############################################################################
 
+# Eric Green: As of 2 Jun 2022 this file has not been modified from the original. The functions here are not compatible with DifferentialEquations.jl yet.
+
 function sgs_stretching1_direct(pfield::ParticleField)
   return sgs_stretching1_direct(iterator(pfield), iterator(pfield),
                                         pfield.kernel.zeta, pfield.transposed)

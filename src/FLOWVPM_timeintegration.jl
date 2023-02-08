@@ -412,7 +412,6 @@ function relaxation_pedrizzetti(rlxf::Real, p::Particle)
     return nothing
 end
 
-
 """
     `relaxation_correctedPedrizzetti(rlxf::Real, p::Particle)`
 
@@ -454,77 +453,168 @@ This provides a function of the form f(dx,x,p) for interfacing with Differential
     and for multiplying a number by a ParticleField (i.e. n*ParticleField). It should be (mostly) in-place.
 """
 
+#=function setup_diffeq(settings)
+
+    P2M! = settings.P2M!
+
+    f = let settings=settings, P2M!=P2M!, potential_cache=potential_cache
+        (du,u,p,t) -> begin
+            # run ODE
+            reshaped_u = reshape(u,m,n) # to array
+            reshaped_du = reshape(du,m,n) # to array
+            
+
+            FMM
+            du = f(FMM output)[permuted_index]
+            du[end] = 0.0
+
+        end
+    end
+
+    return f
+
+end=#
+
+get_int_np(np) = typeof(np) <: Real ? Int(np) : Int(np.value)
+get_np_2(np) = typeof(np) <: Number ? np : np.value
+get_np_3(pfield) = typeof(pfield) <: Array ? pfield[end] : pfield.value[end]
+get_np_4(np) = typeof(np) <: Real ? np : np.value
+null_function(args...) = nothing
+null_function(arg) = nothing
+
+function setup_diffeq(settings;nps=null_function,init_t=null_function,init_f=null_function,ε=1e-6,∆t=1e-6)
+
+    # Gets the verbosity level for console output.
+    verbose = get_verbose(settings)
+    # Checks if the output is transposed.
+    transposed = get_transposed(settings)
+    # Gets the viscous formulation
+    viscous = get_viscous(settings)
+    # Gets coefficient of viscosity
+    nu = viscous.nu
+    # Gets the particle interaction function. The function signature should be f(d_sources,sources,targets,kernel,settings).
+    UJ_function = get_UJ(settings)
+    # Get kernel
+    kernel = get_kernel(settings)
+
+    Uinf = get_Uinf(settings)
+
+    #np = get_np(settings)
+    
+    ODE_f = let verbose=verbose, transposed=transposed, viscous=viscous, nu=nu, UJ_function=UJ_function, kernel=kernel,
+                Uinf=Uinf, nps=nps,init_t=init_t, ε=ε, init_f=init_f,∆t=∆t
+        (_dpfield,_pfield,_p,_t) -> begin
+            _dpfield .= zero(eltype(_dpfield))
+            #np = init_t(_t) == true ? nps(_t-∆t) : nps(_t)
+            #println("np: $np\tinit_t(_t): $(init_t(_t))\tnps(_t-∆t): $(nps(_t-∆t))\tnps(_t): $(nps(_t))")
+            #if np < 1
+            #    return nothing
+            #end
+            np = nps(_t-∆t)
+            UJ_function(_dpfield,_pfield,_pfield,kernel,settings,np)
+            Uinf_t = Uinf(_t)
+            
+            for i=1:np
+                i0 = (i-1)*size(Particle)
+                _dpfield[i0+1] = _dpfield[i0+10] + Uinf_t[1]
+                _dpfield[i0+2] = _dpfield[i0+11] + Uinf_t[2]
+                _dpfield[i0+3] = _dpfield[i0+12] + Uinf_t[3]
+                ## Vortex stretching contributions
+                if transposed
+                    # Transposed scheme (Γ⋅∇')U
+                    _dpfield[i0+4] = _dpfield[i0+13]*_pfield[i0+4] + _dpfield[i0+14]*_pfield[i0+5] + _dpfield[i0+15]*_pfield[i0+6]
+                    _dpfield[i0+5] = _dpfield[i0+16]*_pfield[i0+4] + _dpfield[i0+17]*_pfield[i0+5] + _dpfield[i0+18]*_pfield[i0+6]
+                    _dpfield[i0+6] = _dpfield[i0+19]*_pfield[i0+4] + _dpfield[i0+20]*_pfield[i0+5] + _dpfield[i0+21]*_pfield[i0+6]
+                else
+                    # Classic scheme (Γ⋅∇)U
+                    _dpfield[i0+4] = _dpfield[i0+13]*_pfield[i0+4] + _dpfield[i0+16]*_pfield[i0+5] + _dpfield[i0+19]*_pfield[i0+6]
+                    _dpfield[i0+5] = _dpfield[i0+14]*_pfield[i0+4] + _dpfield[i0+17]*_pfield[i0+5] + _dpfield[i0+20]*_pfield[i0+6]
+                    _dpfield[i0+6] = _dpfield[i0+15]*_pfield[i0+4] + _dpfield[i0+18]*_pfield[i0+5] + _dpfield[i0+21]*_pfield[i0+6]
+                end
+                if iscorespreadingmodified(viscous)
+                    _dpfield[i0+7] = zero(eltype(_dpfield))
+                    #=if _pfield[i0+7] > zero(_pfield[i0+7])
+                        _dpfield[i0+7] = nu/_pfield[i0+7]
+                    else
+                        #error("sigma is $(pfield[i0+7]) for particle $(i) at time $(t)!")
+                    end=#
+                elseif isinviscid(viscous)
+                    _dpfield[i0+7] = zero(eltype(_dpfield))
+                else
+                    error("viscous scheme not identified")
+                end
+                _dpfield[i0+8:i0+21] .= zero(eltype(_dpfield))
+            end
+
+            #println("∆t: $∆t\tt: $_t\tnps(_t-∆t): $(nps(_t-∆t))\tnps(_t): $(nps(_t))")
+            if nps(_t-∆t) !== nps(_t)
+                println("initializing new particles!")
+                new_particle_states = init_f(_pfield,_p,_t,nps)
+                for i=(np+1):nps(_t)
+                    i0 = (i-1)*size(Particle)
+                    _dpfield[i0+1:i0+7] = 1/∆t*new_particle_states[i0+1:i0+7]
+                end
+            end
+
+            println("_dpfield[1]: $(_dpfield[1])\t _pfield[1]: $(_pfield[1])")
+
+        end
+    end
+
+    return ODE_f
+
+end
+
 # function DiffEQ_derivative_function!(dpfield::ParticleField{R,F,V}, pfield::ParticleField{R,F,V}, param,t) where {R,F,V}
 function DiffEQ_derivative_function!(dpfield,pfield,settings,t)
+    ## The format for computations was taken from Euler step implementation.
+    #println(get_np(settings))
+    #np = Int(get_np(settings))
+    np = pfield[end]
+    println(np)
+    #np = 180
+    dpfield .= zero(eltype(dpfield))
 
-    ## format for computations taken from Euler step implementation.
-    # So I might need to split the simulation settings off from ParticleField entirely and put them in the setting struct. This might mean that the setting struct needs to be passed into the UJ function to get the right values for npi and npj
-    # This will look like adding the relevant elements to SolverSettings and then adding some access functions. I'll also need to add a function to read a ParticleField and add the relevant settings to the settings struct.
-
-    #np = get_np(pfield)
-    #transposed = get_transposed(pfield)
-    #viscous = get_viscous(pfield)
-    #=if t > 0.66666
-        if typeof(settings) <: SolverSettings
-            settings.np = 30
-        else
-            settings.value.np = 30
-        end
-    elseif t > 0.33333
-        if typeof(settings) <: SolverSettings
-            settings.np = 20
-        else
-            settings.value.np = 20
-        end
-    else
-        if typeof(settings) <: SolverSettings
-            settings.np = 10
-        else
-            settings.value.np = 10
-        end
-    end=#
-    np = get_np(settings)
-    #=if typeof(settings) <: SolverSettings
-        np = Int(settings[5])
-    else
-        np = Int(settings.value[5])
-    end=#
-
+    # No need to run any more computations if there are no active particles. This might also prevent weird behavior in the UJ function if no particles are active.
     if np < 1
-        dpfield .= zero(eltype(dpfield))
-        println("No active particles!")
+        #println("No active particles!")
         return nothing
     end
 
-    #println(np)
+    # Gets the verbosity level for console output.
+    verbose = get_verbose(settings)
+    # Checks if the output is transposed.
     transposed = get_transposed(settings)
+    # Gets the viscous formulation
     viscous = get_viscous(settings)
+    #nu = get_nu(viscous)
+    nu = viscous.nu
+    # Gets the particle interaction function. The function signature should be f(d_sources,sources,targets,kernel,settings).
+    UJ_function! = get_UJ(settings)
 
-    dpfield .= zero(eltype(dpfield))
-
-    UJ_direct_3!(pfield,pfield,dpfield,gaussianerf,settings)
+    kernel = get_kernel(settings)
+    # Call the UJ function. Edits dpfield in-place.
+    UJ_function!(dpfield,pfield,pfield,kernel,settings) # 20% of allocations occur here (and practically all of the ones for this ODE function)... but only in the reverse pass
+    #UJ_direct_3!(dpfield,pfield,pfield,gaussianerf,settings)
     # Calculate subgrid-scale contributions - currently disabled; will need to be updated for compatibility with current calculation approaches
     #_reset_particles_sgs(pfield)
     # pfield.sgsmodel(pfield)
 
     # Calculate freestream
-    Uinf = get_Uinf(settings)(t)
-    #Uinf = (typeof(pfield) <: ParticleField) ? pfield.Uinf(pfield.t) : pfield.value.Uinf(t)
-    #Uinf = 1e-12*ones(3)
+    Uinf = get_Uinf(settings)(t) # evaluates Uinf here to only call it once per iteration.
     # Currently disabled sgs calculations.
     #zeta0::R = pfield.kernel.zeta(0)
     #zeta0 = pfield.kernel.zeta(0)
-    #ν = param[1]
     ##
-
+    # The range from here to the end accounts for only 0.25% of the (total) allocations on the reverse pass. However, it accounts for most of the allocations in this function on the forward pass.
     # Update the particle field: convection and stretching
-    for i=1:np
+    for i=1:Int(np)
         i0 = (i-1)*size(Particle) # stores 1 less than the index associated with the beginning of particle i.
         # Currently disabled sgs stuff
         #scl = pfield.sgsscaling(p, pfield)
 
-        # Update position
-        #dp.X .= p.U .+ Uinf
+        # Update position:
+        # dx .= U .+ Uinf
         dpfield[i0+1] = dpfield[i0+10] + Uinf[1]
         dpfield[i0+2] = dpfield[i0+11] + Uinf[2]
         dpfield[i0+3] = dpfield[i0+12] + Uinf[3]
@@ -543,41 +633,55 @@ function DiffEQ_derivative_function!(dpfield,pfield,settings,t)
             dpfield[i0+6] = dpfield[i0+15]*pfield[i0+4] + dpfield[i0+18]*pfield[i0+5] + dpfield[i0+21]*pfield[i0+6]
         end
     
-        # Currently disabled LES calculations, but they should be pretty straightforward to enable.
+        # Currently disabled LES calculations:
         #dp[4] += scl*get_SGS1(p)*(p.sigma[1]^3/zeta0)
         #dp[5] += scl*get_SGS2(p)*(p.sigma[1]^3/zeta0)
         #dp[6] += scl*get_SGS3(p)*(p.sigma[1]^3/zeta0)
 
-    # Since the differential part of the core spreading is only three lines, I moved it to the main derivative calculation function.
-    # Core size resets now occur through callbacks.
+        # Since the differential part of the core spreading is only three lines, I moved it to the main derivative calculation function.
+        # Core size resets now occur through callbacks. ## core size reset currently disabled; I'll probably want to look into those details at some point.
         if iscorespreadingmodified(viscous)
-            #dpfield[i0+7] = viscous.nu/pfield[i0+7]
-            if pfield[i0+7] > 0
-                dpfield[i0+7] = settings[1]/pfield[i0+7]
+            # This should be nonzero, but if it isn't it will fill everything with NaN values. The error might be turned into a warning if solvers cause states full of zeros to be passed in.
+            if pfield[i0+7] > zero(pfield[i0+7])
+                # This line could use some theoretical checks
+                dpfield[i0+7] = nu/pfield[i0+7]
             else
-                #println(t)
-                #error("sigma is $(pfield[i0+7]) for particle $(i)!")
+                #error("sigma is $(pfield[i0+7]) for particle $(i) at time $(t)!")
             end
+        elseif isinviscid(viscous)
+            nothing
         else
             error("viscous scheme not identified")
         end
 
-        dpfield[i0+8] = zero((eltype(dpfield)))
-        dpfield[i0+9] = zero((eltype(dpfield)))
-        dpfield[i0+10:i0+21] .= zero(eltype(dpfield))
-    
+        dpfield[i0+7:i0+21] .= zero(eltype(dpfield))
+
+        #if sum(isnan.(dpfield[i0+1:i0+7])) > 0
+        #    error("NaN value at particle $(i) at time $(t)!\t Particle data: $(pfield[i0+1:i0+7])\tDerivative data: $(dpfield[i0+1:i0+size(Particle)])")
+        #end
     end
-
-    #println(settings)
-
-    #=if !(typeof(pfield) <: ParticleField)
-        println(pfield[1])
-        println(pfield.value[1])
-        println(pfield.value.particles[1])
+    if 0 < verbose < 15
+        if typeof(t) <: Number
+            println(t)
+        else
+            println(t.value)
+        end
+    elseif verbose  >= 15
         println(t)
-        println("\n")
-    end=#
-    #println(t)
-    #println("\n")
-
+    end
+    if verbose >= 10
+        println(np)
+    end
 end
+# TODO (mostly for this file):
+# Code clean up:
+#    clean up commented out stuff - delete or put in verbosity blocks # done
+# Interface update:
+#    Verbosity: pass in, check it, etc. It should be a hidden variable associated with the settings struct.
+#    UJ function: pass in through settings struct, again as a hidden variable.
+#    Uinf function: make sure its passed in through the settings struct correctly. This might already be done.
+# SGS/LES:
+#    currently commented out because the sgs models need to be rewritten
+# Make sure the reformulated VPM is being used rather than the non-reformulated one. I think this is the case but I need to double check.
+# Compatibility with Ryan's surface interactions: add a function to add to the velocity at a particle. This will probably be a lot
+#    like the Uinf function but might need some other parameters like particle number or location
