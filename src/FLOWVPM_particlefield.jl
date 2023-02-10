@@ -12,11 +12,11 @@
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale} # This struct is made AD compatible by not requiring R<:Real
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
-    bodies::fmm.Bodies                          # ExaFMM array of bodies
+    #bodies::fmm.Bodies                          # ExaFMM array of bodies ## FMM is disabled
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
 
@@ -35,14 +35,15 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
-    fmm::FMM                                    # Fast-multipole settings
+    #fmm::FMM                                    # Fast-multipole settings ## FMM is disabled.
 
     # Internal memory for computation
     M::Array{R, 1}
 
     ParticleField{R, F, V, S}(
                                 maxparticles,
-                                particles, bodies, formulation, viscous;
+                                particles,# bodies,
+                                formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
@@ -50,12 +51,14 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 SFS=SFS_default,
                                 integration=rungekutta3,
                                 transposed=true,
-                                relaxation=relaxation_default,
-                                fmm=FMM(),
+                                #relaxation=relaxation_default,
+                                relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)),
+                                #fmm=FMM(),
                                 M=zeros(R, 4)
                          ) where {R, F, V, S} = new(
                                 maxparticles,
-                                particles, bodies, formulation, viscous,
+                                particles,# bodies,
+                                formulation, viscous,
                                 np, nt, t,
                                 kernel,
                                 UJ,
@@ -64,7 +67,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 integration,
                                 transposed,
                                 relaxation,
-                                fmm,
+                                #fmm,
                                 M
                           )
 end
@@ -72,14 +75,16 @@ end
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
-                                    SFS::S=SFS_default,
+                                    SFS::S=SFS_default,t0=zero(Float64),
                                     optargs...
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale}
-    # Memory allocation by C++
-    bodies = fmm.genBodies(maxparticles)
+    # Memory allocation by C++ ## disabled because the fmm is disabled.
+    #bodies = fmm.genBodies(maxparticles)
 
     # Have Julia point to the same memory than C++
-    particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+    #particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+    T = eltype(t0)
+    particles = zeros(Particle{T},maxparticles)
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -87,7 +92,7 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{RealFMM, F, V, S}(maxparticles, particles, bodies,
+    return ParticleField{T, F, V, S}(maxparticles, particles, #bodies,
                                             formulation, viscous;
                                             np=0, SFS=SFS, optargs...)
 end

@@ -41,6 +41,7 @@ Parameters for FMM solver.
                 smoothing radius; at φ = 0.25, P2P is done on cells closer than
                 four times the smoothing radius.
 """
+#=
 mutable struct FMM
   # Optional user inputs
   p::Int32                        # Multipole expansion order
@@ -50,3 +51,4 @@ mutable struct FMM
 
   FMM(; p=4, ncrit=50, theta=0.4, phi=1/3) = new(p, ncrit, theta, phi)
 end
+=#

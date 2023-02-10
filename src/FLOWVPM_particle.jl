@@ -34,8 +34,8 @@ struct Particle{T}
   Gamma::Array{T, 1}            # Vectorial circulation (3-elem array)
   sigma::Array{T, 1}            # Smoothing radius (1-elem array)
   vol::Array{T, 1}              # Volume (1-elem array)
+  static::Array{Bool, 1}        # If true, this particle is not evolved in time # update: swapped the order of static and circulation to match the initializer order.
   circulation::Array{T, 1}      # Scalar circulation (1-elem array)
-  static::Array{Bool, 1}        # If true, this particle is not evolved in time
 
   # Properties
   U::Array{T, 1}                # Velocity at particle (3-elem array)
@@ -71,7 +71,9 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
 Return a particle that is linked with this C++ Body object. All changes in body
 will be reflected in the particles and vice versa.
 """
-Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
+
+# Commented out because FMM is disabled.
+#=Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 fmm.get_qref(body),
                                                 fmm.get_sigmaref(body),
                                                 fmm.get_volref(body),
@@ -87,7 +89,7 @@ Particle(body::fmm.BodyRef) = Particle{RealFMM}(fmm.get_Xref(body),
                                                 fmm.get_dJdx2ref(body),
                                                 fmm.get_dJdx3ref(body),
                                                 fmm.get_indexref(body))
-
+=#
 
 ##### FUNCTIONS ################################################################
 get_U(P::Particle) = P.U
@@ -108,3 +110,4 @@ add_SFS3(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[3]::T += val
 nothing
 
 ##### END OF ABSTRACT PARTICLE FIELD############################################
+

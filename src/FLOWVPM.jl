@@ -16,6 +16,10 @@
 """
 module FLOWVPM
 
+# The main change here is disabling ExaFMM. It's not AD compatible because it runs in C++;
+# even if the specific FMM call is handled with ImplicitAD, it imposes type restrictions on
+# the underlying particle field representation which breaks AD everywhere.
+
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
 import JLD
@@ -25,15 +29,17 @@ import Printf
 import DataStructures: OrderedDict
 
 # ------------ FLOW CODES ------------------------------------------------------
-import FLOWExaFMM
-const fmm = FLOWExaFMM
+# Disabled for AD compatibility.
+#import FLOWExaFMM
+#const fmm = FLOWExaFMM
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 
+# Disabled for AD compatibility.
 # Determine the floating point precision of ExaFMM
-const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float32 : Float64
+#const exafmm_single_precision = fmm.getPrecision()
+#const RealFMM = exafmm_single_precision ? Float32 : Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
@@ -48,13 +54,15 @@ end
 # ------------ AVAILABLE SOLVER OPTIONS ----------------------------------------
 
 # ------------ Available VPM formulations
-const formulation_classic = ClassicVPM{RealFMM}()
-const formulation_cVPM = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
 
-const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
-const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5 + 1e-8)
+# I changed RealFMM to Float64.
+const formulation_classic = ClassicVPM{Float64}()
+const formulation_cVPM = ReformulatedVPM{Float64}(0, 0)
+const formulation_rVPM = ReformulatedVPM{Float64}(0, 1/5)
+
+const formulation_tube_continuity = ReformulatedVPM{Float64}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{Float64}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{Float64}(0, 1/5 + 1e-8)
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -84,9 +92,10 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
 
 # ------------ Available relaxation schemes
-const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, RealFMM(0.0))
-const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, RealFMM(0.3))
-const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, RealFMM(0.3))
+# I chnaged RealFMM to Float64
+const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, Float64(0.0))
+const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, Float64(0.3))
+const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, Float64(0.3))
 
 # Relaxation aliases
 const pedrizzetti = relaxation_pedrizzetti
@@ -103,7 +112,8 @@ const pseudo3level_positive(args...; optargs...) = pseudo3level(args...; force_p
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
-const SFS_none = NoSFS{RealFMM}()
+# I changed RealFMM to Float64
+const SFS_none = NoSFS{Float64}()
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=[clipping_backscatter])
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.999, clippings=[clipping_backscatter])
 const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.667, clippings=[clipping_backscatter])

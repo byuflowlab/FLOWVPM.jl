@@ -158,7 +158,8 @@ struct DynamicSFS{R} <: SubFilterScale{R}
     end
 end
 
-DynamicSFS(args...; optargs...) = DynamicSFS{RealFMM}(args...; optargs...)
+# I chnaged RealFMM to Float64.
+DynamicSFS(args...; optargs...) = DynamicSFS{Float64}(args...; optargs...)
 
 function (SFS::DynamicSFS)(pfield; a=1, b=1)
 

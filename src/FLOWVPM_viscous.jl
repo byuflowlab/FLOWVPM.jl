@@ -41,7 +41,8 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
-Inviscid() = Inviscid{RealFMM}()
+# I changed RealFMM to Float64
+Inviscid() = Inviscid{Float64}()
 
 """
     `isinviscid(scheme::ViscousScheme)`
