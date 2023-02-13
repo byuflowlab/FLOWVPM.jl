@@ -65,6 +65,15 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
                                                       zeros(T, 3, 3), zeros(T, 3, 3),
                                                       zeros(Int32, 1))
 
+# The default zeros() function allocates the same memory space for all particles. This function ensures that unique memory is allocated for each particle.
+function Base.zeros(::Type{<:Particle{T}},np::I) where {T,I<:Integer}
+  out = Array{Particle{T}, 1}(undef,np)
+  for i=1:np
+    out[i] = zero(Particle{T})
+  end
+  return out
+end
+
 """
     `Particle(body::fmm.BodyRef)`
 
@@ -105,6 +114,15 @@ get_SFS3(P::Particle{T}) where {T} = getproperty(P, _SFS)[3]::T
 add_SFS1(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[1]::T += val
 add_SFS2(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[2]::T += val
 add_SFS3(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[3]::T += val
+
+getX(P::Particle{T},i) where {T} = eltype(P.X) <: AbstractFloat ? P.X[i] : P.X[i].value
+getGamma(P::Particle{T},i) where {T} = eltype(P.Gamma) <: AbstractFloat ? P.Gamma[i] : P.Gamma[i].value
+getSigma(P::Particle{T}) where {T} = eltype(P.sigma) <: AbstractFloat ? P.sigma[1] : P.sigma[1].value
+getCirculation(P::Particle{T}) where {T} = eltype(P.circulation) <: AbstractFloat ? P.circulation[1] : P.circulation[1].value
+getVol(P::Particle{T}) where {T} = eltype(P.vol) <: AbstractFloat ? P.vol[1] : P.vol[1].value
+getStatic(P::Particle{T}) where {T} = P.static[1]
+getIndex(P::Particle{T}) where {T} = P.index[1]
+getC(P::Particle{T},i) where {T} = eltype(P.C) <: AbstractFloat ? P.C[i] : P.C[i].value
 
 ##### INTERNAL FUNCTIONS #######################################################
 nothing

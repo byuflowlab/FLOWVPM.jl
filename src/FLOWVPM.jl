@@ -27,6 +27,9 @@ import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
+using ImplicitAD
+using ForwardDiff
+using ReverseDiff
 
 # ------------ FLOW CODES ------------------------------------------------------
 # Disabled for AD compatibility.

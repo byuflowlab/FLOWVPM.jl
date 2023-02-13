@@ -49,10 +49,11 @@ function UJ_direct(sources, targets, g_dgdr::Function)
        dX1 = Pi.X[1] - Pj.X[1]
        dX2 = Pi.X[2] - Pj.X[2]
        dX3 = Pi.X[3] - Pj.X[3]
-       r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+       r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
 
-       if r!=0
+       if r2!=0
 
+        r = sqrt(r2)
          # Regularizing function and deriv
          g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
 

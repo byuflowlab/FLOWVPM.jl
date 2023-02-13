@@ -38,7 +38,7 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
-function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
+function run_vpm!(pfield::PF, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
@@ -49,7 +49,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       save_code::String="",
                       nsteps_save::Int=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-                      save_time=true)
+                      save_time=true) where {PF <: ParticleField}
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
@@ -121,6 +121,11 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
                                         overwrite_time=overwrite_time)
+            # If issues come up related to trying to autodifferentiate the save function, this should fix it.
+            #=wsave(_pfield,_p) = save(_pfield, run_name; path=save_path, add_num=true, overwrite_time=overwrite_time)
+            null_J(x,p) = 0.0
+            ImplicitAD.provide_rule(wsave,pfield,();mode="jacobian",jacobian=null_J)=#
+
         end
 
         # User-indicated end of simulation
@@ -182,7 +187,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
+    #=h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
     h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true)]
@@ -192,6 +197,19 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     if isLES(self)
         h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
+    end=#
+
+    # Changed to use generic get property functions. These functions do some type checking to ensure that the right data type is returned when AD is used.
+    h5["X"] = [getX(P,i) for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [getGamma(P,i) for i in 1:3, P in iterate(self; include_static=true)]
+    h5["sigma"] = [getSigma(P) for P in iterate(self; include_static=true)]
+    h5["circulation"] = [getCirculation(P) for P in iterate(self; include_static=true)]
+    h5["vol"] = [getVol(P) for P in iterate(self; include_static=true)]
+    h5["static"] = Int[getStatic(P) for P in iterate(self; include_static=true)]
+    h5["i"] = [getIndex(P) for P in iterate(self; include_static=true)]
+
+    if isLES(self)
+        h5["C"] = [getC(P,i) for i in 1:3, P in iterate(self; include_static=true)]
     end
 
     # # Connectivity information

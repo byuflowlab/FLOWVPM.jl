@@ -343,3 +343,5 @@ function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
 end
 _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
 ##### END OF PARTICLE FIELD#####################################################
+
+#Base.length(pfield::ParticleField) = pfield.np
