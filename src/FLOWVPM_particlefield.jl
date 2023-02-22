@@ -300,6 +300,18 @@ function nextstep(self::ParticleField, dt::Real; optargs...)
     self.nt += 1
 end
 
+function nextstep(self::Vector{T}, dt, resid; optargs...) where T
+
+    # Step in time
+    #if get_np(self)!=0
+    #    self.integration(self, dt; optargs...)
+    #end
+    
+    # Updates time
+    #self.t += dt
+    #self.nt += 1
+end
+
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}

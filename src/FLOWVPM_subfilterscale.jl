@@ -50,6 +50,14 @@ function (SFS::NoSFS)(pfield; optargs...)
     pfield.UJ(pfield)
 end
 
+function (SFS::NoSFS)(dpfield, pfield, np, UJ; optargs...)
+    # Reset U and J to zero
+    #_reset_particles(pfield)
+
+    # Calculate interactions between particles: U and J
+    UJ(dpfield,pfield,np)
+end
+
 """
 Returns true if SFS scheme implements an SFS model
 """

@@ -47,9 +47,9 @@ const module_path = splitdir(@__FILE__)[1]      # Path to this module
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "fmm", "viscous", "formulation",
                     "particle", "relaxation", "subfilterscale",
-                    "particlefield",
+                    "particlefield","particlefield_vector",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "run"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

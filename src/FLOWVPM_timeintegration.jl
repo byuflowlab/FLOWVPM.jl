@@ -360,3 +360,101 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
     return nothing
 end
+
+function create_time_evolution_residual(pfield::ParticleField)
+
+    SFS = pfield.SFS
+    Uinf = pfield.Uinf
+    zeta0 = pfield.kernel.zeta(0)
+    transposed = pfield.transposed
+    UJ = pfield.UJ
+    g_dgdr = pfield.kernel.g_dgdr
+    f = let SFS=SFS,Uinf=Uinf,zeta0=zeta0,transposed=transposed,g_dgdr=g_dgdr
+        (np) -> begin
+            return time_evolution_residual(SFS,Uinf,zeta0,np,transposed,UJ,g_dgdr)
+        end
+    end
+    return f
+
+end
+
+function time_evolution_residual(SFS,Uinf,zeta0,np,transposed,UJ,g_dgdr)
+
+    # This sets up an anonymous function with various non-numerical parameters already passed in.
+    f = let SFS=SFS,Uinf=Uinf,zeta0=zeta0,np=np,transposed=transposed,UJ=UJ,g_dgdr=g_dgdr
+        (_dpfield,_pfield,_parameters,_t) -> begin
+            _dpfield .= zero(eltype(_dpfield))
+            #_dpfield .+= SFS(_pfield,UJ)
+            UJ(_dpfield,_pfield,g_dgdr,np)
+            plen = Int((length(_pfield))/np)
+            Uinf_t = Uinf(_t)
+            for i=1:np
+
+                i0 = (i-1)*plen
+                # These should probably use @view to reduce allocations
+                _p = _pfield[i0+1:i0+plen]
+                _dp = _dpfield[i0+1:i0+plen]
+                C = get_C(_p)
+                #C::R = p.C[1]
+        
+                # Update position
+                get_X(_dp)[1] += get_U(_p)[1] .+ Uinf_t[1]
+                get_X(_dp)[2] += get_U(_p)[2] .+ Uinf_t[2]
+                get_X(_dp)[3] += get_U(_p)[3] .+ Uinf_t[3]
+                
+                # Update vectorial circulation
+                ## Vortex stretching contributions
+                if transposed
+                    # Transposed scheme (Γ⋅∇')U
+                    #get_Gamma(_dp)[1] = get_J(_p)[1,1]*get_Gamma(_dp)[1] + get_J(_p)[2,1]*get_Gamma(_dp)[2] + get_J(_p)[3,1]*get_Gamma(_dp)[3]
+                    #get_Gamma(_dp)[2] = get_J(_p)[1,2]*get_Gamma(_dp)[1] + get_J(_p)[2,2]*get_Gamma(_dp)[2] + get_J(_p)[3,2]*get_Gamma(_dp)[3]
+                    #get_Gamma(_dp)[3] = get_J(_p)[1,3]*get_Gamma(_dp)[1] + get_J(_p)[2,3]*get_Gamma(_dp)[2] + get_J(_p)[3,3]*get_Gamma(_dp)[3]
+                    get_Gamma(_dp)[1] = get_J(_p)[1]*get_Gamma(_dp)[1] + get_J(_p)[4]*get_Gamma(_dp)[2] + get_J(_p)[7]*get_Gamma(_dp)[3]
+                    get_Gamma(_dp)[2] = get_J(_p)[2]*get_Gamma(_dp)[1] + get_J(_p)[5]*get_Gamma(_dp)[2] + get_J(_p)[8]*get_Gamma(_dp)[3]
+                    get_Gamma(_dp)[3] = get_J(_p)[3]*get_Gamma(_dp)[1] + get_J(_p)[6]*get_Gamma(_dp)[2] + get_J(_p)[9]*get_Gamma(_dp)[3]
+                else
+                    # Classic scheme (Γ⋅∇)U
+                    get_Gamma(_dp)[1] = get_J(_p)[1,1]*get_Gamma(_dp)[1] + get_J(_p)[1,2]*get_Gamma(_dp)[2] + get_J(_p)[1,3]*get_Gamma(_dp)[3]
+                    get_Gamma(_dp)[2] = get_J(_p)[2,1]*get_Gamma(_dp)[1] + get_J(_p)[2,2]*get_Gamma(_dp)[2] + get_J(_p)[2,3]*get_Gamma(_dp)[3]
+                    get_Gamma(_dp)[3] = get_J(_p)[3,1]*get_Gamma(_dp)[1] + get_J(_p)[3,2]*get_Gamma(_dp)[2] + get_J(_p)[3,3]*get_Gamma(_dp)[3]
+                end
+        
+                ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
+                #get_Gamma(_dp)[1] -= C*get_SFS1(_p) * get_sigma(_p)[1]^3/zeta0
+                #get_Gamma(_dp)[2] -= C*get_SFS2(_p) * get_sigma(_p)[1]^3/zeta0
+                #get_Gamma(_dp)[3] -= C*get_SFS3(_p) * get_sigma(_p)[1]^3/zeta0
+        
+                # Relaxation: Align vectorial circulation to local vorticity
+                # relaxation moved outside this section, since it's not actually part of the system of ODEs.
+        
+            end
+        
+            # Update the particle field: viscous diffusion
+            # Disabled for now; viscous diffusion needs to be adjusted to return just the differential term.
+            #viscousdiffusion(pfield, dt)
+            #viscousdiffusion(dpfield,pfield,p,dt)
+        
+            return nothing
+
+        end
+    end
+    return f
+
+end
+
+#EulerStep(in) = EulerStep(in...)
+
+function EulerStep(f,u0,p,tspan,dt)
+
+    t = range(tspan[1],tspan[2],step=dt)
+    len = length(t)
+    T = typeof(u0)
+    u = Vector{T}(undef,len)
+    u[1] = u0
+    du = similar(u0)
+    for i=1+1:len
+        f(du,u[i-1],p,t[i])
+        u[i] = u[i-1] + dt*du
+    end
+    return (t,u[2])
+end
