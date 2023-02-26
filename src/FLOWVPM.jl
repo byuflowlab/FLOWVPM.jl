@@ -30,6 +30,9 @@ const fmm = FLOWExaFMM
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
+const examples_path  = joinpath(module_path, "..", "examples") # Path to examples
+const utilities_path = joinpath(examples_path, "utilities") # Path to utilities
+const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utilities
 
 # Determine the floating point precision of ExaFMM
 const exafmm_single_precision = fmm.getPrecision()
