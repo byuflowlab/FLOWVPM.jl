@@ -1,4 +1,4 @@
-<p align="right">
+<p align="center">
   <img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
   <br>
   <b>MESHLESS LARGE EDDY SIMULATION THROUGH THE REFORMULATED VORTEX PARTICLE METHOD</b>
