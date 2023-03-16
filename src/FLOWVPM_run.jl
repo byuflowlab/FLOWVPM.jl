@@ -36,7 +36,7 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
-function run_vpm!(pfield::PF, dt::Real, nsteps::Int;
+function run_vpm(pfield::PF, dt::Real, nsteps::Int;
                     # RUNTIME OPTIONS
                     runtime_function::Function=runtime_default,
                     static_particles_function::Function=static_particles_default,
@@ -47,7 +47,7 @@ function run_vpm!(pfield::PF, dt::Real, nsteps::Int;
                     save_code::String="",
                     nsteps_save::Int=1, prompt::Bool=true,
                     verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-                    save_time=true) where {PF <: ParticleField}
+                    save_time=true, mode=nothing) where {PF <: ParticleField}
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
@@ -83,14 +83,26 @@ function run_vpm!(pfield::PF, dt::Real, nsteps::Int;
     # Feb 15: Split this into its own function because I'll need to pass it into ImplicitAD.
     # TODO: Make sure to have a settings to decide whether to use the unmodified solver process or the new one.
     #    This should make it easier to make sure that I didn't accidentally break anything.
-    #solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
-    solve_vpm_implicitAD!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
 
+
+    if mode == "ImplicitAD"
+        pfield_out = solve_vpm_implicitAD(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        return pfield_out
+    else
+        solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+        return pfield
+    end
     # Finalize verbose
-    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
-    return nothing
+    #return nothing
 end
+
+# Correct derivatives:  -3.2977190685070594
+#                       -0.04600176882970255
+# incorrect:            -0.19543192505279333
+#                        0.0
 
 function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
 
@@ -101,9 +113,9 @@ function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,ru
         end
 
         # Relaxation step
-        relax = pfield.relaxation != relaxation_none &&
+        #=relax = pfield.relaxation != relaxation_none &&
                 pfield.relaxation.nsteps_relax >= 1 &&
-                i>0 && (i%pfield.relaxation.nsteps_relax == 0)
+                i>0 && (i%pfield.relaxation.nsteps_relax == 0)=#
 
         org_np = get_np(pfield)
 
@@ -113,14 +125,11 @@ function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,ru
             remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax)
+            nextstep(pfield, dt)#; relax=relax)
             # relaxation moved up a level, although this is really just a placeholder. It might end up disabled anyway.
             #if relax
             #    pfield.relaxation(p)
             #end
-            #solveW(_pfield) = nextstep(_pfield, dt; relax=relax)
-            #residual = 
-            #ImplicitAD.implicit_unsteady(solveW, residual, pfield, ())
 
             # Remove static particles (assumes particles remained sorted)
             if remove==nothing || remove
@@ -140,10 +149,6 @@ function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,ru
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
                                    overwrite_time=overwrite_time)
-            # If issues come up related to trying to autodifferentiate the save function, this should fix it.
-            #=wsave(_pfield,_p) = save(_pfield, run_name; path=save_path, add_num=true, overwrite_time=overwrite_time)
-            null_J(x,p) = 0.0
-            ImplicitAD.provide_rule(wsave,pfield,();mode="jacobian",jacobian=null_J)=#
 
         end
 
@@ -156,73 +161,139 @@ function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,ru
     
 end
 
-#using ImplicitAD
+# The partials are getting dropped somewhere and I'm not sure where.
+using ImplicitAD
 
-function solve_vpm_implicitAD!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+function solve_vpm_implicitAD(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
 
-    t = range(0.0,dt*nsteps,length=nsteps)
-    pfield_vec = get_state_vector(pfield)
-    #dpfield = similar(pfield_vec)
-    resid = create_time_evolution_residual(pfield)
-    np = pfield.np
+    pfield_vec, settings = pfield2vec(pfield)
+    sim_settings = [nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name]
+    function VPM_step_2!(y,yprev,t,tprev,x,p)
+        #println(ImplicitAD.fd_partials(yprev))
+        if t == tprev
+            y .= x
+        else
+            _pfield_vec,_settings = VPM_forward_solve(yprev,settings,t,sim_settings)
+            #println(ImplicitAD.fd_partials(_pfield_vec))
+            y .= _pfield_vec
+        end
+    end
+    VPM_solver(_state,p) = VPM_solve(_state,settings,sim_settings,nsteps)
+    #println(ImplicitAD.fd_partials(pfield_vec)) # nonzero partials here
+    out_u,out_t = ImplicitAD.explicit_unsteady(VPM_solver,VPM_step_2!,pfield_vec,())
+    pfield_vec = out_u
+    #println(ImplicitAD.fd_partials(pfield_vec))
+    return vec2pfield(pfield_vec,settings)
 
+end
+
+function VPM_solve(pfield_vec_in,settings,sim_settings,nsteps)
+    R = eltype(pfield_vec_in)
+    t = Vector{R}(undef,nsteps+1)
+    u = Vector{Vector{R}}(undef,nsteps+1)
+    #println(ImplicitAD.fd_partials(pfield_vec_in))
+    t[1] = R(0.0)#settings[6]
+    pfield_vec = similar(pfield_vec_in)
+    pfield_vec,settings = VPM_forward_solve(pfield_vec_in,settings,t[1],sim_settings)
+    u[1] = pfield_vec
     for i=1:nsteps
+        t[i+1] = t[i] + sim_settings[2]
+        pfield_vec,settings = VPM_forward_solve(pfield_vec,settings,t[i+1],sim_settings)
+        u[i+1] = pfield_vec
+    end
+    return hcat(u...),t
+end
 
-        if i%verbose_nsteps==0
-            vprintln("Time step $i out of $nsteps\tParticles: $(np)", v_lvl+1)
+# Step forward in time.
+function VPM_forward_solve(pfield_vec,settings,t,sim_settings)
+
+    pfield = vec2pfield(pfield_vec,settings)
+    #=if length(pfield.t_hist) == 0
+        push!(pfield.t_hist,pfield.t)
+        push!(pfield.np_hist, pfield.np)
+    end=#
+    #pfield.t += sim_settings[2]
+    VPM_step!(pfield,t,sim_settings...)
+    #=if pfield.t >= pfield.t_hist[end]
+        push!(pfield.t_hist,pfield.t)
+        push!(pfield.np_hist, pfield.np)
+    end=#
+    pfield_vec_out,settings_out = pfield2vec(pfield)
+    return pfield_vec_out,settings_out
+
+end
+
+function VPM_step!(pfield,t,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+
+    i = Int(round(t / dt))
+    #=i = -1
+    for j=1:length(pfield.t_hist)
+        if abs(t - dt - pfield.t_hist[j]) < 1e-6
+            i = j-1
+            break
         end
+    end
+    println(t)
+    println(pfield.t_hist)
+    if i == -1
+        error("Unable to determine when time stepping occured. Please report this error.")
+    end=#
+    if i%verbose_nsteps==0
+        vprintln("Time step $(Int(i)) out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+    end
 
-        #org_np = get_np(pfield_vec)
+    # Relaxation step # disabled because relaxation was causing weird type errors.
+    #=relax = pfield.relaxation != relaxation_none &&
+            pfield.relaxation.nsteps_relax >= 1 &&
+            i>0 && (i%pfield.relaxation.nsteps_relax == 0)=#
 
+    org_np = get_np(pfield)
+
+    if i !== 0
         # Time step
-        if i!=1
-            # Add static particles
-            # Currently disabled but might need to be re-enabled.
-            #remove = static_particles_function(pfield, pfield.t, dt)
+        # Add static particles
+        remove = static_particles_function(pfield, pfield.t, dt)
 
-            # Step in time solving governing equations
-            #pfield_vec = ImplicitAD.implicit(nextstep,resid(np),pfield_vec,(dt,resid(np)))
-            tspan = (t[i-1],t[i])
-            wEulerStep(_pfield,_p) = EulerStep(resid(np),_pfield,_p,tspan,dt)
-            _t,pfield_vec = ImplicitAD.implicit(wEulerStep,resid(np),pfield_vec,())
-            #nextstep(pfield, dt)
-            #EulerStep(f,u0,p,tspan;dt=1.0)
-            
-            # relaxation moved up a level, although this is really just a placeholder. It might end up disabled anyway.
-            #relax = pfield.relaxation != relaxation_none && pfield.relaxation.nsteps_relax >= 1 && i>1 && (i%pfield.relaxation.nsteps_relax == 0)
-            #if relax
-            #    pfield.relaxation(p)
-            #end
-            #solveW(_pfield) = nextstep(_pfield, dt; relax=relax)
-            #residual = 
-            #ImplicitAD.implicit_unsteady(solveW, residual, pfield, ())
+        # Step in time solving governing equations
+        #nextstep(pfield, dt; relax=relax)
+        nextstep(pfield, dt)
+        # relaxation moved up a level, although this is really just a placeholder. It might end up disabled anyway.
+        #if relax
+        #    pfield.relaxation(p)
+        #end
 
-            # Remove static particles (assumes particles remained sorted)
-            #=if remove==nothing || remove
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end=#
+        # Remove static particles (assumes particles remained sorted)
+        if remove==nothing || remove
+            for pi in get_np(pfield):-1:(org_np+1)
+                remove_particle(pfield, pi)
+            end
         end
+    else
+        if length(pfield.t_hist) == 0
+            pfield.nt += 1
+        end
+    end
+    
 
-        # Calls user-defined runtime function
-         # Will need a wrapper function that converts the pfield call to a vector call
-        #=breakflag = runtime_function(pfield, pfield.t, dt;
-                                    vprintln= (str)-> i%verbose_nsteps==0 ?
-                                    vprintln(str, v_lvl+2) : nothing)=#
+     # Calls user-defined runtime function
+    breakflag = runtime_function(pfield, pfield.t, dt;
+                                vprintln= (str)-> i%verbose_nsteps==0 ?
+                                vprintln(str, v_lvl+2) : nothing)
 
-        # Save particle field
+    # Save particle field
+    if eltype(pfield) <: AbstractFloat
         if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
-                                   overwrite_time=overwrite_time)
+                                overwrite_time=overwrite_time)
+
         end
+    end
 
     # User-indicated end of simulation
-        #if breakflag
-        #    break
-        #end
-
+    if breakflag
+        #break
     end
+    #return pfield
 
 end

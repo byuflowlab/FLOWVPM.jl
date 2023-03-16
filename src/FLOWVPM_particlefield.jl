@@ -23,7 +23,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
     # Internal properties
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
-    t::R                                        # Current time
+    t::Float64                                  # Current time
 
     # Solver setting
     kernel::Kernel                              # Vortex particle kernel
@@ -34,17 +34,19 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
     SFS::S                                    # Subfilter-scale contributions scheme
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
-    relaxation::Relaxation{R}                   # Relaxation scheme
+    #relaxation::Relaxation{R}                   # Relaxation scheme # disabled for now because it's given me weird type errors.
     #fmm::FMM                                    # Fast-multipole settings ## FMM is disabled.
 
     # Internal memory for computation
     M::Array{R, 1}
+    t_hist::Array{Float64,1}
+    np_hist::Array{Int,1}
 
     ParticleField{R, F, V, S}(
                                 maxparticles,
                                 particles,# bodies,
                                 formulation, viscous;
-                                np=0, nt=0, t=R(0.0),
+                                np=0, nt=0, t=0.0,
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
                                 Uinf=Uinf_default,
@@ -52,9 +54,9 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
                                 integration=rungekutta3,
                                 transposed=true,
                                 #relaxation=relaxation_default,
-                                relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)),
+                                #relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)),
                                 #fmm=FMM(),
-                                M=zeros(R, 4)
+                                M=zeros(R, 4),t_hist=Array{Float64}(undef,0), np_hist=Array{Float64}(undef,0)
                          ) where {R, F, V, S} = new(
                                 maxparticles,
                                 particles,# bodies,
@@ -66,16 +68,18 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
                                 SFS,
                                 integration,
                                 transposed,
-                                relaxation,
+                                #relaxation,
                                 #fmm,
-                                M
+                                M,
+                                t_hist,
+                                np_hist
                           )
 end
 
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
-                                    SFS::S=SFS_default,t0=zero(Float64),
+                                    SFS::S=SFS_default,R = Float64,
                                     optargs...
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale}
     # Memory allocation by C++ ## disabled because the fmm is disabled.
@@ -83,8 +87,7 @@ function ParticleField(maxparticles::Int;
 
     # Have Julia point to the same memory than C++
     #particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
-    T = eltype(t0)
-    particles = zeros(Particle{T},maxparticles)
+    particles = zeros(Particle{R},maxparticles)
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -92,7 +95,7 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{T, F, V, S}(maxparticles, particles, #bodies,
+    return ParticleField{R, F, V, S}(maxparticles, particles, #bodies,
                                             formulation, viscous;
                                             np=0, SFS=SFS, optargs...)
 end
@@ -123,22 +126,33 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     end
 
     # Fetch next empty particle in the field
-    P = get_particle(self, get_np(self)+1; emptyparticle=true)
+    #P = get_particle(self, get_np(self)+1; emptyparticle=true)
+    next_p = get_np(self)+1
+    self.particles[next_p].X .= X
+    self.particles[next_p].Gamma .= Gamma
+    self.particles[next_p].sigma .= sigma
+    self.particles[next_p].vol .= vol
+    self.particles[next_p].circulation .= abs.(circulation)
+    self.particles[next_p].C .= C
+    self.particles[next_p].static .= static
+    self.particles[next_p].index .= index==-1 ? get_np(self) : index
 
     # Populate the empty particle
-    P.X .= X
+    #=P.X .= X
     P.Gamma .= Gamma
     P.sigma .= sigma
     P.vol .= vol
     P.circulation .= abs.(circulation)
     P.C .= C
     P.static .= static
-    P.index .= index==-1 ? get_np(self) : index
+    P.index .= index==-1 ? get_np(self) : index=#
 
     # Add particle to the field
     self.np += 1
-
-    return nothing
+    #println(P.X[1].partials)
+    #println(self.particles[next_p].X[1].partials)
+    return self
+    #return nothing
 end
 
 """
@@ -288,7 +302,7 @@ end
 
 Steps the particle field in time by a step `dt`.
 """
-function nextstep(self::ParticleField, dt::Real; optargs...)
+function nextstep(self::ParticleField, dt; optargs...)
 
     # Step in time
     if get_np(self)!=0
@@ -299,19 +313,6 @@ function nextstep(self::ParticleField, dt::Real; optargs...)
     self.t += dt
     self.nt += 1
 end
-
-function nextstep(self::Vector{T}, dt, resid; optargs...) where T
-
-    # Step in time
-    #if get_np(self)!=0
-    #    self.integration(self, dt; optargs...)
-    #end
-    
-    # Updates time
-    #self.t += dt
-    #self.nt += 1
-end
-
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
@@ -357,3 +358,28 @@ _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
 ##### END OF PARTICLE FIELD#####################################################
 
 #Base.length(pfield::ParticleField) = pfield.np
+
+function Base.similar(pfield::ParticleField{R,F,V,S}) where {R,F,V,S}
+    error("")
+    return similar(pfield,R)
+end
+
+function Base.similar(pfield::ParticleField{R,F,V,S},R2) where {R,F,V,S}
+    error("")
+    out = ParticleField(pfield.maxparticles;R=R2)
+    out.maxparticles = pfield.maxparticles
+    out.formulation = pfield.formulation
+    out.viscous = pfield.viscous
+    out.np = pfield.np
+    out.nt = pfield.nt
+    out.t = pfield.t
+    out.kernel = pfield.kernel
+    out.UJ = pfield.UJ
+    out.Uinf = pfield.Uinf
+    out.SFS = pfield.SFS
+    out.transposed = pfield.transposed
+    #out.relaxation = similar(pfield.relaxation,R2)
+    out.t_hist = pfield.t_hist
+    out.np_hist = pfield.np_hist
+    return out
+end

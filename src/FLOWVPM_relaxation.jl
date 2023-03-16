@@ -81,3 +81,11 @@ function relax_correctedpedrizzetti(rlxf::Real, p::Particle)
     return nothing
 end
 ##### END OF RELAXATION SCHEME #################################################
+
+function Base.similar(r::Relaxation{R}) where {R}
+    return similar(r,R)
+end
+
+function Base.similar(r::Relaxation{R},R2) where R
+    return Relaxation{R2}(r.relax, r.nsteps_relax, eltype(r.rlxf) <: AbstractFloat ? r.rlxf : r.rlxf.value)
+end
