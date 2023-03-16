@@ -99,11 +99,6 @@ function run_vpm(pfield::PF, dt::Real, nsteps::Int;
     #return nothing
 end
 
-# Correct derivatives:  -3.2977190685070594
-#                       -0.04600176882970255
-# incorrect:            -0.19543192505279333
-#                        0.0
-
 function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
 
     for i in 0:nsteps
@@ -176,32 +171,38 @@ function solve_vpm_implicitAD(pfield,nsteps,dt,verbose_nsteps,static_particles_f
             _pfield_vec,_settings = VPM_forward_solve(yprev,settings,t,sim_settings)
             #println(ImplicitAD.fd_partials(_pfield_vec))
             y .= _pfield_vec
+            #println(ImplicitAD.fd_partials(y))
         end
     end
     VPM_solver(_state,p) = VPM_solve(_state,settings,sim_settings,nsteps)
     #println(ImplicitAD.fd_partials(pfield_vec)) # nonzero partials here
     out_u,out_t = ImplicitAD.explicit_unsteady(VPM_solver,VPM_step_2!,pfield_vec,())
-    pfield_vec = out_u
-    #println(ImplicitAD.fd_partials(pfield_vec))
-    return vec2pfield(pfield_vec,settings)
+    #println(size(out_u))
+    #println(ImplicitAD.fd_partials(out_u))
+    return vec2pfield(out_u[:,end],settings)
 
 end
 
 function VPM_solve(pfield_vec_in,settings,sim_settings,nsteps)
     R = eltype(pfield_vec_in)
-    t = Vector{R}(undef,nsteps+1)
-    u = Vector{Vector{R}}(undef,nsteps+1)
+    len = nsteps+1
+    t = Vector{R}(undef,len)
+    u = zeros(R,len,length(pfield_vec_in))
+    s = Vector{typeof(settings)}(undef,len)
+    tmpu = similar(pfield_vec_in)
+    tmps = similar(settings)
     #println(ImplicitAD.fd_partials(pfield_vec_in))
     t[1] = R(0.0)#settings[6]
-    pfield_vec = similar(pfield_vec_in)
-    pfield_vec,settings = VPM_forward_solve(pfield_vec_in,settings,t[1],sim_settings)
-    u[1] = pfield_vec
-    for i=1:nsteps
+    u[1,:],s[1] = VPM_forward_solve(pfield_vec_in,settings,t[1],sim_settings)
+    for i=1:len-1
         t[i+1] = t[i] + sim_settings[2]
-        pfield_vec,settings = VPM_forward_solve(pfield_vec,settings,t[i+1],sim_settings)
-        u[i+1] = pfield_vec
+        tmpu,tmps = VPM_forward_solve(u[i,:],s[i],t[i+1],sim_settings)
+        u[i+1,:] .= deepcopy(tmpu)
+        s[i+1] = tmps
     end
-    return hcat(u...),t
+    settings .= s[len]
+    #return hcat(u...),t
+    return u',t
 end
 
 # Step forward in time.
