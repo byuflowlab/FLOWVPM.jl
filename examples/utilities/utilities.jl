@@ -1,17 +1,15 @@
 #=##############################################################################
 # DESCRIPTION
-    Utilitiesand examples for processing VPM simulations.
+    Utilities and examples for processing VPM simulations.
 
 # AUTHORSHIP
   * Author    : Eduardo J. Alvarez
   * Email     : Edo.AlvarezR@gmail.com
   * Created   : Oct 2021
-  * Copyright : Eduardo J. Alvarez. All rights reserved.
 =###############################################################################
 
 import Printf: @printf
 
-# https://github.com/byuflowlab/GeometricTools.jl
 import GeometricTools as gt
 
 import FLOWVPM as vpm

@@ -1,6 +1,8 @@
-<img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:700px"/>
-
-##### MESHLESS LARGE EDDY SIMULATION THROUGH THE REFORMULATED VORTEX PARTICLE METHOD
+<p align="center">
+  <img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
+  <br>
+  <i><b>Meshless large eddy simulation through the reformulated vortex particle method</b></i>
+</p>
 
 ---
 
@@ -26,7 +28,7 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
 
 ## Features
   * Fast-multipole acceleration through [ExaFMM](https://github.com/byuflowlab/FLOWExaFMM)
-  * Threaded CPU parallelization through OpenMPI
+  * Threaded CPU parallelization through OpenMP
   * Meshless
   * Second-order spatial accuracy and third-order RK time integration
   * Numerically stable by reshaping particles subject to vortex stretching
