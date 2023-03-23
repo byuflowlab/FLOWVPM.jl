@@ -28,7 +28,7 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
 
 ## Features
   * Fast-multipole acceleration through [ExaFMM](https://github.com/byuflowlab/FLOWExaFMM)
-  * Threaded CPU parallelization through OpenMPI
+  * Threaded CPU parallelization through OpenMP
   * Meshless
   * Second-order spatial accuracy and third-order RK time integration
   * Numerically stable by reshaping particles subject to vortex stretching
