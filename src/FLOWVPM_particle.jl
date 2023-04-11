@@ -28,7 +28,7 @@ Vortex particle data structure
 * `U::Array{T, 1}`                : Velocity at particle (3-elem array)
 * `J::Array{T, 2}`                : Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
 """
-struct Particle{T}
+mutable struct Particle{T}
   # User inputs
   X::Array{T, 1}                # Position (3-elem array)
   Gamma::Array{T, 1}            # Vectorial circulation (3-elem array)

@@ -43,7 +43,6 @@ end
 
 function UJ_direct(sources, targets, g_dgdr::Function)
 
-  
    for Pi in targets
      for Pj in sources
 

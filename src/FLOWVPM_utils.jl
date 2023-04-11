@@ -8,6 +8,17 @@
   * Created   : Aug 2020
 =###############################################################################
 
+function AD_value(in)
+
+    if eltype(in) <: ForwardDiff.Dual
+        return ImplicitAD.fd_value(in)
+    end
+    if eltype(in) <: ReverseDiff.TrackedReal
+        return in.value
+    end
+    return in
+
+end
 
 """
   `save(pfield, file_name; path="")`
@@ -24,7 +35,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     if get_np(self)==0
         dummy_pfield = ParticleField(1; nt=self.nt, t=self.t,
                                             formulation=formulation_classic)
-        add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
+        add_particle(dummy_pfield, (0,0,0), (0,0,0), [0.0])
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
                     overwrite_time=overwrite_time)

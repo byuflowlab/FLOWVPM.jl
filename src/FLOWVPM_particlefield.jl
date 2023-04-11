@@ -79,7 +79,7 @@ end
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
-                                    SFS::S=SFS_default,R = Float64,
+                                    SFS::S=SFS_default,R = Float64, nsteps=0,
                                     optargs...
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale}
     # Memory allocation by C++ ## disabled because the fmm is disabled.
@@ -88,6 +88,12 @@ function ParticleField(maxparticles::Int;
     # Have Julia point to the same memory than C++
     #particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
     particles = zeros(Particle{R},maxparticles)
+    t_hist=Array{Float64}(undef,0)
+    np_hist=Array{Float64}(undef,0)
+    if nsteps > 0
+        t_hist = zeros(Float64,nsteps+1)
+        np_hist = zeros(Float64,nsteps+1)
+    end
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -97,7 +103,8 @@ function ParticleField(maxparticles::Int;
     # Generate and return ParticleField
     return ParticleField{R, F, V, S}(maxparticles, particles, #bodies,
                                             formulation, viscous;
-                                            np=0, SFS=SFS, optargs...)
+                                            np=0, SFS=SFS, t_hist=t_hist,
+                                            np_hist=np_hist,optargs...)
 end
 
 """
@@ -114,9 +121,9 @@ isLES(self::ParticleField) = isSFSenabled(self.SFS)
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField, X, Gamma, sigma;
+function add_particle(self::ParticleField{R,F,V,S}, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, static=false, index=-1)
+                                           C=0, static=false, index=-1) where {R,F,V,S}
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -127,32 +134,24 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
 
     # Fetch next empty particle in the field
     #P = get_particle(self, get_np(self)+1; emptyparticle=true)
-    next_p = get_np(self)+1
-    self.particles[next_p].X .= X
-    self.particles[next_p].Gamma .= Gamma
-    self.particles[next_p].sigma .= sigma
-    self.particles[next_p].vol .= vol
-    self.particles[next_p].circulation .= abs.(circulation)
-    self.particles[next_p].C .= C
-    self.particles[next_p].static .= static
-    self.particles[next_p].index .= index==-1 ? get_np(self) : index
+    P = self.particles[self.np+1]
 
-    # Populate the empty particle
-    #=P.X .= X
-    P.Gamma .= Gamma
-    P.sigma .= sigma
-    P.vol .= vol
-    P.circulation .= abs.(circulation)
-    P.C .= C
+    # Populate the empty particle; clean forward AD partial derivatives from the inputs if the particle field isn't using AD.
+    AD = !(R <: AbstractFloat)
+    
+    P.X .= AD ? X : AD_value.(X)
+    P.Gamma .= AD ? Gamma : AD_value.(Gamma)
+    P.sigma .= AD ? sigma : AD_value.(sigma)
+    P.vol .= AD ? vol : AD_value.(vol)
+    P.circulation .= AD ? abs.(circulation) : AD_value.(abs.(circulation))
+    P.C .= AD ? C : AD_value.(C)
     P.static .= static
-    P.index .= index==-1 ? get_np(self) : index=#
+    P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
     self.np += 1
-    #println(P.X[1].partials)
-    #println(self.particles[next_p].X[1].partials)
-    return self
-    #return nothing
+    #return self
+    return nothing
 end
 
 """
@@ -365,7 +364,7 @@ function Base.similar(pfield::ParticleField{R,F,V,S}) where {R,F,V,S}
 end
 
 function Base.similar(pfield::ParticleField{R,F,V,S},R2) where {R,F,V,S}
-    error("")
+    #error("")
     out = ParticleField(pfield.maxparticles;R=R2)
     out.maxparticles = pfield.maxparticles
     out.formulation = pfield.formulation
