@@ -47,7 +47,7 @@ function run_vpm(pfield::PF, dt::Real, nsteps::Int;
                     save_code::String="",
                     nsteps_save::Int=1, prompt::Bool=true,
                     verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-                    save_time=true, use_implicitAD=true) where {PF <: ParticleField}
+                    save_time=true, use_implicitAD=true, xc=nothing, xd=nothing) where {PF <: ParticleField}
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
@@ -69,7 +69,7 @@ function run_vpm(pfield::PF, dt::Real, nsteps::Int;
         end
 
         # Save settings
-        save_settings(pfield, run_name; path=save_path)
+        #save_settings(pfield, run_name; path=save_path) # TODO: Fix this.
     end
 
     # Initialize verbose
@@ -84,11 +84,11 @@ function run_vpm(pfield::PF, dt::Real, nsteps::Int;
 
 
     if use_implicitAD
-        pfield_out = solve_vpm_implicitAD(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+        pfield_out = solve_vpm_implicitAD(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name,xc,xd)
         finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
         return pfield_out
     else
-        solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+        solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name,xc,xd)
         finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
         return pfield
     end
@@ -97,7 +97,7 @@ function run_vpm(pfield::PF, dt::Real, nsteps::Int;
     #return nothing
 end
 
-function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name)
+function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name,xc,xd)
 
     for i in 0:nsteps
 
@@ -133,7 +133,7 @@ function solve_vpm!(pfield,nsteps,dt,verbose_nsteps,static_particles_function,ru
         end
 
       # Calls user-defined runtime function
-        breakflag = runtime_function(pfield, pfield.t, dt;
+        breakflag = runtime_function(pfield, pfield.t, dt, xc, xd;
                                     vprintln= (str)-> i%verbose_nsteps==0 ?
                                     vprintln(str, v_lvl+2) : nothing)
 
@@ -159,124 +159,50 @@ using ImplicitAD
 function solve_vpm_implicitAD(pfield, nsteps, dt, verbose_nsteps,
                               static_particles_function, runtime_function,
                               v_lvl, vprintln, save_path, nsteps_save,
-                              save_time, run_name)
+                              save_time, run_name, xc, xd)
 
+    t = range(0,dt*nsteps,nsteps+1)
     pfield_vec, settings = pfield2vec(pfield)
-    println(typeof(pfield_vec))
-    println(typeof(pfield))
     # sim_settings is a an array of type any that carries a bunch of information that the VPM needs that doesn't change through time.
     sim_settings = [nsteps, dt, verbose_nsteps,
                     static_particles_function,
                     runtime_function, v_lvl, vprintln,
                     save_path, nsteps_save, save_time,
                     run_name]
-    function VPM_step_2!(y,yprev,t,tprev,x,p)
-        if t == tprev
-            _pfield_vec,_settings = VPM_AD_solve(x,settings,t,sim_settings) # This is necessary because the first yprev is x with all the AD information removed.
-            y .= _pfield_vec
-        else
-            _pfield_vec,_settings = VPM_AD_solve(yprev,settings,t,sim_settings)
-            y .= _pfield_vec
-        end
+    function init(_t0,_xd,_xc0,_p)
+        #T = promote_type(eltype(_xd), eltype(_xc0))
+        #T = promote_type(eltype(_xd),eltype(pfield_vec))
+        T = eltype(_xd)
+        _pfield = vec2pfield(pfield_vec,settings,T)
+        VPM_step!(_pfield,_t0,_xc0,_xd,sim_settings...)
+        _pfield_vec,settings = pfield2vec(_pfield)
+        println("pfield_vec type: $(typeof(_pfield_vec))")
+        return _pfield_vec
     end
-    VPM_solver(_state,p) = VPM_solve(_state,settings,sim_settings,nsteps)
-    out_u,out_t = ImplicitAD.explicit_unsteady(VPM_solver,VPM_step_2!,pfield_vec,())
-    final_timestep_out = out_u[:,end]
-    #println(final_timestep_out[1:3])
-    pfield_out = vec2pfield(final_timestep_out,settings)
-    println(pfield.np_hist)
-    println(pfield_out.np_hist)
-    #println(pfield_out.particles[1].X)
+    function onestep!(y,yprev,_t,tprev,_xd,xci,p)
+        T = promote_type(eltype(_xd), eltype(xci))
+        _pfield = vec2pfield(yprev,settings,T)
+        VPM_step!(_pfield,_t,xci,_xd,sim_settings...)
+        _pfield_vec,settings = pfield2vec(_pfield)
+        y .= _pfield_vec
+    end
+    #xd = [0.0]
+    #=println(typeof(xd))
+    println(typeof(xc))
+    T = promote_type(eltype(xd), eltype(xc))
+    y = zeros(T, length(pfield_vec), length(t))
+    println(y[1])=#
+    p = ()
+    out = ImplicitAD.explicit_unsteady(init,onestep!,t,xd,xc, p; cache=nothing)
+    pfield_out = vec2pfield(out[:,end],settings)
     return pfield_out
 
 end
 
-# Runs the VPM by stepping forward through time. This function is essentially the solver passed to ImplicitAD (although there is actually an extra function wrapper to get the correct function signature)
-function VPM_solve(pfield_vec_in,settings,sim_settings,nsteps)
+function VPM_step!(pfield,t,xc,xd,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name;time_step_tol = 1e-6)
 
-    #println("running forward solve")
-    #R = eltype(pfield_vec_in)
-    R = typeof(pfield_vec_in[1])
-    println(R)
-    len = nsteps+1
-    dt = sim_settings[2]
-    t = Vector{R}(undef,len)
-    u = zeros(R,len,length(pfield_vec_in))
-    settings[12] .= -1.0
-    cache_pfield = vec2pfield(pfield_vec_in,settings)
-    for i=1:len
-        if i == 1
-            t[i] = R(0.0) # see march 16 notes; this is a weird way to get the initial time and it should probably come from sim_settings
-            u[i,:],settings = VPM_forward_solve(pfield_vec_in,settings,t[i],sim_settings,cache_pfield)
-        else
-            t[i] = t[i-1] + dt
-            u[i,:],settings = VPM_forward_solve(u[i-1,:],settings,t[i],sim_settings,cache_pfield)
-        end
-    end
-    return u',t # the transpose of u makes sure that ImplicitAD correctly interprets the contents of u
-end
-
-# Step forward in time. This function is essentially a wrapper for the actual vpm_step! function. This function still needs particle count tracking implemented and tested.
-# There is also a large amount of unnecessary allocation here, since I'm allocating twice the size of the state vector on each time step, which single-handedly triples the memory usage.
-function VPM_AD_solve(pfield_vec,settings,t,sim_settings;time_step_tol = 1e-6)
-
-    #println("running AD solve")
-    pfield = vec2pfield(pfield_vec,settings)
-    i = -1
-    len = length(settings[12])
-    for j=1:len
-        if abs(t - settings[12][j]) < time_step_tol
-            i = j
-        end
-    end
-    if i == -1
-        error("Could not determine correct time step! Time: $t\tTime history: $(settings[12])")
-    end
-    pfield.np = settings[13][i]
-
-    VPM_step!(pfield,t,sim_settings...)
-    pfield_vec_out,settings = pfield2vec(pfield)
-    return pfield_vec_out,settings
-
-end
-
-function VPM_forward_solve(pfield_vec,settings,t,sim_settings,pfield;ε=1e-6)
-
-    pfield = vec2pfield(pfield_vec,settings)
-    #=if length(pfield.t_hist) == 0 || pfield.t >= pfield.t_hist[end]
-        push!(pfield.t_hist,t)
-        push!(pfield.np_hist, pfield.np)
-    end=#
-    len = length(pfield.t_hist)
-    if len >= 1
-        i = -1
-        for j=1:len
-            if abs(pfield.t_hist[j] + 1) < ε
-                i = j
-                break
-            end
-        end
-        pfield.np_hist[i] = pfield.np
-        pfield.t_hist[i] = t
-    end
-    VPM_step!(pfield,t,sim_settings...)
-    
-    pfield_vec_out = pfield2vec(pfield,settings)
-    return pfield_vec_out,settings
-
-end
-
-function VPM_step!(pfield,t,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name;time_step_tol = 1e-6)
-
-    i = -1
-    len = length(pfield.t_hist)
-    for j=1:len
-        if abs(t - pfield.t_hist[j]) < time_step_tol
-            i = j - 1 # initial time step is zero so the -1 makes i line up with that.
-            break
-        end
-    end
-    pfield.np = pfield.np_hist[i+1]
+    i = Int(round(t/dt))
+    pfield.np = pfield.np_f(t)
     if i == -1
         error("Could not determine correct time step! Time: $t\tTime history: $(pfield.t_hist)")
     end
@@ -308,14 +234,10 @@ function VPM_step!(pfield,t,nsteps,dt,verbose_nsteps,static_particles_function,r
                 remove_particle(pfield, pi)
             end
         end
-    else
-        if length(pfield.t_hist) == 0
-            pfield.nt += 1
-        end
     end
 
      # Calls user-defined runtime function
-    breakflag = runtime_function(pfield, t, dt;
+    breakflag = runtime_function(pfield, t, dt, xc, xd;
                                 vprintln= (str)-> i%verbose_nsteps==0 ?
                                 vprintln(str, v_lvl+2) : nothing)
 
@@ -336,3 +258,10 @@ function VPM_step!(pfield,t,nsteps,dt,verbose_nsteps,static_particles_function,r
     #return pfield
     
 end
+
+# Rewrite to account for changes in ImplicitAD and to allow variable particle counts:
+# The function call is updated to match the new format.
+# The particle count at each time is now passed in as a function.
+# I've accounted for the way that parameters are passed in... mostly. It's a bit of a hack.
+# I think that the whole initialization process could be passed in as a function to the VPM. Then the init function call would make more sense.
+#    This approach would also save me the headache of trying to figure out which types should be inherited at different points during the solution process.

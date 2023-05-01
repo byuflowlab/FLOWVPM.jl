@@ -25,6 +25,12 @@ function pfield2vec!(vec,settings,pfield::ParticleField{R,F,V,S}) where {R,F,V,S
         vec[i0+22:i0+24] .= pfield.particles[i].C[1:3]
     end
     unpack_settings!(settings,pfield)
+    println("Displaying vector and pfield types and entries:")
+    println("vec type: $(typeof(vec))")
+    println("pfield type: $(typeof(pfield))")
+    println("vec first three entries: $(vec[1:3])")
+    println("pfield first three entries: $(pfield.particles[1].X)")
+    println(" ")
     return nothing
 
 end
@@ -127,12 +133,34 @@ function vec2pfield(vec, settings)
 
 end
 
+function vec2pfield(vec, settings, T::Type)
+    plen = 24
+    #R = eltype(vec) # does not necessarily return the correct AD type. specifically, the number of partial derivative entries is not read
+    #R = typeof(vec[1])
+    pfield = ParticleField(settings[1];R=T) # out of place, so initialize a new particle field.
+    pack_settings!(pfield,settings)
+    if pfield.np > 0
+        for i=1:settings[4]
+            i0 = (i-1)*plen
+            pfield.particles[i].X[1:3] .= vec[i0+1:i0+3]
+            pfield.particles[i].Gamma[1:3] .= vec[i0+4:i0+6]
+            pfield.particles[i].sigma[1] = vec[i0+7]
+            pfield.particles[i].vol[1] = vec[i0+8]
+            pfield.particles[i].circulation[1] = vec[i0+9]
+            pfield.particles[i].U .= vec[i0+10:i0+12]
+            pfield.particles[i].J[1:9] .= vec[i0+13:i0+21]
+            pfield.particles[i].C .= vec[i0+22:i0+24]
+        end
+    end
+    return pfield
+
+end
+
 Base.eltype(pfield::ParticleField{R,F,V,S}) where {R,F,V,S} = R
 
 unpack_settings(pfield) = [pfield.maxparticles,pfield.formulation,pfield.viscous,
                            pfield.np,pfield.nt,pfield.t,pfield.kernel,pfield.UJ,
-                           pfield.Uinf,pfield.SFS,pfield.transposed,pfield.t_hist,
-                           pfield.np_hist]
+                           pfield.Uinf,pfield.SFS,pfield.transposed,pfield.np_f]
                            # pfield.np_hist, pfield.relaxation] # uncomment if relaxation is re-enabled.
 
 function unpack_settings!(settings,pfield)
@@ -148,8 +176,7 @@ function unpack_settings!(settings,pfield)
     settings[9] = pfield.Uinf
     settings[10] = pfield.SFS
     settings[11] = pfield.transposed
-    settings[12] = pfield.t_hist
-    settings[13] = pfield.np_hist
+    settings[12] = pfield.np_f
     # settings[14] = pfield.relaxation # uncomment if relaxation is re-enabled.
     return nothing
 
@@ -169,8 +196,7 @@ function pack_settings!(pfield,settings)
     pfield.Uinf = settings[9]
     pfield.SFS = settings[10]
     pfield.transposed = settings[11]
-    pfield.t_hist = settings[12]
-    pfield.np_hist = settings[13]
+    pfield.np_f = settings[12]
     # pfield.relaxation = settings[14] # uncomment if relaxation is re-enabled.
     return nothing
 

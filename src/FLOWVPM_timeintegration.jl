@@ -263,9 +263,11 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
     #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    #Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    Uinf = pfield.Uinf(pfield.t)
 
-    MM::Array{<:Real, 1} = pfield.M
+    #MM::Array{<:Real, 1} = pfield.M
+    MM = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
 

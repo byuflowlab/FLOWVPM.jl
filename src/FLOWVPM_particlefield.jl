@@ -39,8 +39,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
 
     # Internal memory for computation
     M::Array{R, 1}
-    t_hist::Array{Float64,1}
-    np_hist::Array{Int,1}
+    np_f::Function
 
     ParticleField{R, F, V, S}(
                                 maxparticles,
@@ -56,7 +55,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
                                 #relaxation=relaxation_default,
                                 #relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)),
                                 #fmm=FMM(),
-                                M=zeros(R, 4),t_hist=Array{Float64}(undef,0), np_hist=Array{Float64}(undef,0)
+                                M=zeros(R, 4),np_f = zero_function
                          ) where {R, F, V, S} = new(
                                 maxparticles,
                                 particles,# bodies,
@@ -71,10 +70,11 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
                                 #relaxation,
                                 #fmm,
                                 M,
-                                t_hist,
-                                np_hist
+                                np_f
                           )
 end
+
+zero_function(x) = 0.0
 
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
@@ -88,12 +88,6 @@ function ParticleField(maxparticles::Int;
     # Have Julia point to the same memory than C++
     #particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
     particles = zeros(Particle{R},maxparticles)
-    t_hist=Array{Float64}(undef,0)
-    np_hist=Array{Float64}(undef,0)
-    if nsteps > 0
-        t_hist = zeros(Float64,nsteps+1)
-        np_hist = zeros(Float64,nsteps+1)
-    end
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -103,8 +97,7 @@ function ParticleField(maxparticles::Int;
     # Generate and return ParticleField
     return ParticleField{R, F, V, S}(maxparticles, particles, #bodies,
                                             formulation, viscous;
-                                            np=0, SFS=SFS, t_hist=t_hist,
-                                            np_hist=np_hist,optargs...)
+                                            np=0, SFS=SFS,optargs...)
 end
 
 """
