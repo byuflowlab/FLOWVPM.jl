@@ -257,17 +257,15 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale},
-                     dt::Real; relax::Bool=false ) where {R, V, R2}
+                     dt::RT; relax::Bool=false ) where {R, V, R2, RT}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
     #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
-    #Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
-    Uinf = pfield.Uinf(pfield.t)
+    Uinf::Vector{RT} = pfield.Uinf(pfield.t)
 
-    #MM::Array{<:Real, 1} = pfield.M
-    MM = pfield.M
+    MM::Vector{R} = pfield.M
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
 
@@ -277,7 +275,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
-
+        
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is now performed inside the SFS scheme
         pfield.SFS(pfield; a=a, b=b)

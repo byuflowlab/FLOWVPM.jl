@@ -297,9 +297,9 @@ Steps the particle field in time by a step `dt`.
 function nextstep(self::ParticleField, dt; optargs...)
 
     # Step in time
-    if get_np(self)!=0
+    #if get_np(self)!=0
         self.integration(self, dt; optargs...)
-    end
+    #end
 
     # Updates time
     self.t += dt

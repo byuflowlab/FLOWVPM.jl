@@ -43,61 +43,78 @@ end
 
 function UJ_direct(sources, targets, g_dgdr::Function)
 
-   for Pi in targets
+  T = eltype(sources[1].X[1])
+  dX1 = zero(T)
+  dX2 = zero(T)
+  dX3 = zero(T)
+  r2 = zero(T)
+  r = zero(T)
+  g_sgm = zero(T)
+  dg_sgmdr = zero(T)
+  crss1 = zero(T)
+  crss2 = zero(T)
+  crss3 = zero(T)
+  aux = zero(T)
+  tmp = 0
+  ε = 1e-24 # parameter to avoid singularity at r=0. Matches exact solution as ε->0.
+  for Pi in targets
      for Pj in sources
+        
+        dX1 = Pi.X[1] - Pj.X[1]
+        dX2 = Pi.X[2] - Pj.X[2]
+        dX3 = Pi.X[3] - Pj.X[3]
+        if tmp == 0
+          tmp = 1
+        elseif tmp == 1
+          tmp = 2
+        end
+        r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
+        #r = sqrt(r2)
+        r = sqrt(r2+ε) #- ε # regularizing function to avoid division by zero and derivative of sqrt at 0.
 
-       dX1 = Pi.X[1] - Pj.X[1]
-       dX2 = Pi.X[2] - Pj.X[2]
-       dX3 = Pi.X[3] - Pj.X[3]
-       r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
+        # Regularizing function and deriv
+        g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
 
-       if r2!=0
+        # K × Γp
+        crss1 = -const4 / r^3 * ( dX2*Pj.Gamma[3] - dX3*Pj.Gamma[2] )
+        crss2 = -const4 / r^3 * ( dX3*Pj.Gamma[1] - dX1*Pj.Gamma[3] )
+        crss3 = -const4 / r^3 * ( dX1*Pj.Gamma[2] - dX2*Pj.Gamma[1] )
 
-        r = sqrt(r2)
-         # Regularizing function and deriv
-         g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
+        # U = ∑g_σ(x-xp) * K(x-xp) × Γp
+        Pi.U[1] += g_sgm * crss1
+        Pi.U[2] += g_sgm * crss2
+        Pi.U[3] += g_sgm * crss3
+        
+        # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
+        # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
+        aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2
+        # j=1
+        Pi.J[1, 1] += aux * crss1 * dX1
+        Pi.J[2, 1] += aux * crss2 * dX1
+        Pi.J[3, 1] += aux * crss3 * dX1
+        # j=2
+        Pi.J[1, 2] += aux * crss1 * dX2
+        Pi.J[2, 2] += aux * crss2 * dX2
+        Pi.J[3, 2] += aux * crss3 * dX2
+        # j=3
+        Pi.J[1, 3] += aux * crss1 * dX3
+        Pi.J[2, 3] += aux * crss2 * dX3
+        Pi.J[3, 3] += aux * crss3 * dX3
 
-         # K × Γp
-         crss1 = -const4 / r^3 * ( dX2*Pj.Gamma[3] - dX3*Pj.Gamma[2] )
-         crss2 = -const4 / r^3 * ( dX3*Pj.Gamma[1] - dX1*Pj.Gamma[3] )
-         crss3 = -const4 / r^3 * ( dX1*Pj.Gamma[2] - dX2*Pj.Gamma[1] )
+        # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
+        # Adds the Kronecker delta term
+        aux = - const4 * g_sgm / r^3
 
-         # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-         Pi.U[1] += g_sgm * crss1
-         Pi.U[2] += g_sgm * crss2
-         Pi.U[3] += g_sgm * crss3
-
-         # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
-         # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-         aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2
-         # j=1
-         Pi.J[1, 1] += aux * crss1 * dX1
-         Pi.J[2, 1] += aux * crss2 * dX1
-         Pi.J[3, 1] += aux * crss3 * dX1
-         # j=2
-         Pi.J[1, 2] += aux * crss1 * dX2
-         Pi.J[2, 2] += aux * crss2 * dX2
-         Pi.J[3, 2] += aux * crss3 * dX2
-         # j=3
-         Pi.J[1, 3] += aux * crss1 * dX3
-         Pi.J[2, 3] += aux * crss2 * dX3
-         Pi.J[3, 3] += aux * crss3 * dX3
-
-         # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
-         # Adds the Kronecker delta term
-         aux = - const4 * g_sgm / r^3
-
-         # j=1
-         Pi.J[2, 1] -= aux * Pj.Gamma[3]
-         Pi.J[3, 1] += aux * Pj.Gamma[2]
-         # j=2
-         Pi.J[1, 2] += aux * Pj.Gamma[3]
-         Pi.J[3, 2] -= aux * Pj.Gamma[1]
-         # j=3
-         Pi.J[1, 3] -= aux * Pj.Gamma[2]
-         Pi.J[2, 3] += aux * Pj.Gamma[1]
-
-       end
+        # j=1
+        Pi.J[2, 1] -= aux * Pj.Gamma[3]
+        Pi.J[3, 1] += aux * Pj.Gamma[2]
+        # j=2
+        Pi.J[1, 2] += aux * Pj.Gamma[3]
+        Pi.J[3, 2] -= aux * Pj.Gamma[1]
+        # j=3
+        Pi.J[1, 3] -= aux * Pj.Gamma[2]
+        Pi.J[2, 3] += aux * Pj.Gamma[1]
+        
      end
    end
 

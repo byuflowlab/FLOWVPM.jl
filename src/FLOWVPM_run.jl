@@ -170,17 +170,23 @@ function solve_vpm_implicitAD(pfield, nsteps, dt, verbose_nsteps,
                     save_path, nsteps_save, save_time,
                     run_name]
     function init(_t0,_xd,_xc0,_p)
-        #T = promote_type(eltype(_xd), eltype(_xc0))
+        T = promote_type(eltype(_xd), eltype(_xc0))
         #T = promote_type(eltype(_xd),eltype(pfield_vec))
-        T = eltype(_xd)
-        _pfield = vec2pfield(pfield_vec,settings,T)
+        #T = eltype(0.0)
+        #T = eltype(pfield_vec)
+        _pfield = vec2pfield(ReverseDiff.value.(pfield_vec),settings,T)
+        if !(eltype(_xc0) <: AbstractFloat)
+            if eltype(_xc0) <: ForwardDiff.Dual
+                _xc0 = ForwardDiff.value(_xc0)
+            end
+        end
         VPM_step!(_pfield,_t0,_xc0,_xd,sim_settings...)
         _pfield_vec,settings = pfield2vec(_pfield)
-        println("pfield_vec type: $(typeof(_pfield_vec))")
         return _pfield_vec
     end
     function onestep!(y,yprev,_t,tprev,_xd,xci,p)
-        T = promote_type(eltype(_xd), eltype(xci))
+        T = eltype(y)
+        #T = promote_type(eltype(_xd), eltype(xci))
         _pfield = vec2pfield(yprev,settings,T)
         VPM_step!(_pfield,_t,xci,_xd,sim_settings...)
         _pfield_vec,settings = pfield2vec(_pfield)
@@ -256,6 +262,30 @@ function VPM_step!(pfield,t,xc,xd,nsteps,dt,verbose_nsteps,static_particles_func
         #break
     end
     #return pfield
+    
+end
+
+function VPM_initial_step!(pfield,t,xc,xd,nsteps,dt,verbose_nsteps,static_particles_function,runtime_function,v_lvl,vprintln,save_path,nsteps_save,save_time,run_name;time_step_tol = 1e-6)
+
+    i = 0
+    if i%verbose_nsteps==0
+        vprintln("Time step $(Int(i)) out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+    end
+
+     # Calls user-defined runtime function
+    #=breakflag = runtime_function(pfield, t, dt, xc, xd;
+                                vprintln= (str)-> i%verbose_nsteps==0 ?
+                                vprintln(str, v_lvl+2) : nothing)=#
+
+    # Save particle field. It only runs on the initial solve and not on successive AD calls.
+    if eltype(pfield) <: AbstractFloat
+        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+            overwrite_time = save_time ? nothing : pfield.nt
+            save(pfield, run_name; path=save_path, add_num=true,
+                                overwrite_time=overwrite_time)
+
+        end
+    end
     
 end
 

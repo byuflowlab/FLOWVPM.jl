@@ -9,9 +9,9 @@ function pfield2vec!(vec,settings,pfield::ParticleField{R,F,V,S}) where {R,F,V,S
     
     plen = 24
     # This is a bandaid solution that basically just reallocates the vector as one with the correct type.
-    if eltype(vec) !== R
-        vec = similar(vec,R)
-    end
+    #if eltype(vec) !== R
+    #    vec = similar(vec,R)
+    #end
 
     for i=1:pfield.np
         i0 = (i-1)*plen
@@ -67,8 +67,14 @@ function pfield2vec(pfield::ParticleField{R,F,V,S},settings) where {R,F,V,S}
     vec = zeros(R,len)
     for i=1:pfield.np
         i0 = (i-1)*plen
-        vec[i0+1:i0+3] .= pfield.particles[i].X[1:3]
-        vec[i0+4:i0+6] .= pfield.particles[i].Gamma[1:3]
+        #vec[i0+1:i0+3] .= pfield.particles[i].X[1:3]
+        vec[i0+1] = pfield.particles[i].X[1]
+        vec[i0+2] = pfield.particles[i].X[2]
+        vec[i0+3] = pfield.particles[i].X[3]
+        #vec[i0+4:i0+6] .= pfield.particles[i].Gamma[1:3]
+        vec[i0+4] = pfield.particles[i].Gamma[1]
+        vec[i0+5] = pfield.particles[i].Gamma[2]
+        vec[i0+6] = pfield.particles[i].Gamma[3]
         vec[i0+7] = pfield.particles[i].sigma[1]
         vec[i0+8] = pfield.particles[i].vol[1]
         vec[i0+9] = pfield.particles[i].circulation[1]
@@ -116,7 +122,7 @@ function vec2pfield(vec, settings)
     R = typeof(vec[1])
     pfield = ParticleField(settings[1];R=R) # out of place, so initialize a new particle field.
     pack_settings!(pfield,settings)
-    if pfield.np > 0
+    #if pfield.np > 0
         for i=1:settings[4]
             i0 = (i-1)*plen
             pfield.particles[i].X[1:3] .= vec[i0+1:i0+3]
@@ -128,7 +134,7 @@ function vec2pfield(vec, settings)
             pfield.particles[i].J[1:9] .= vec[i0+13:i0+21]
             pfield.particles[i].C .= vec[i0+22:i0+24]
         end
-    end
+    #end
     return pfield
 
 end
@@ -139,11 +145,17 @@ function vec2pfield(vec, settings, T::Type)
     #R = typeof(vec[1])
     pfield = ParticleField(settings[1];R=T) # out of place, so initialize a new particle field.
     pack_settings!(pfield,settings)
-    if pfield.np > 0
+    #if pfield.np > 0
         for i=1:settings[4]
             i0 = (i-1)*plen
-            pfield.particles[i].X[1:3] .= vec[i0+1:i0+3]
-            pfield.particles[i].Gamma[1:3] .= vec[i0+4:i0+6]
+            #pfield.particles[i].X[1:3] .= vec[i0+1:i0+3]
+            pfield.particles[i].X[1] = vec[i0+1]
+            pfield.particles[i].X[2] = vec[i0+2]
+            pfield.particles[i].X[3] = vec[i0+3]
+            #pfield.particles[i].Gamma[1:3] .= vec[i0+4:i0+6]
+            pfield.particles[i].Gamma[1] = vec[i0+4]
+            pfield.particles[i].Gamma[2] = vec[i0+5]
+            pfield.particles[i].Gamma[3] = vec[i0+6]
             pfield.particles[i].sigma[1] = vec[i0+7]
             pfield.particles[i].vol[1] = vec[i0+8]
             pfield.particles[i].circulation[1] = vec[i0+9]
@@ -151,7 +163,7 @@ function vec2pfield(vec, settings, T::Type)
             pfield.particles[i].J[1:9] .= vec[i0+13:i0+21]
             pfield.particles[i].C .= vec[i0+22:i0+24]
         end
-    end
+    #end
     return pfield
 
 end

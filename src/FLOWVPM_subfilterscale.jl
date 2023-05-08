@@ -48,14 +48,15 @@ function (SFS::NoSFS)(pfield; optargs...)
 
     # Calculate interactions between particles: U and J
     pfield.UJ(pfield)
+    return nothing
 end
 
-function (SFS::NoSFS)(dpfield, pfield, np, UJ; optargs...)
+function (SFS::NoSFS)(dpfield, pfield, UJ; optargs...)
     # Reset U and J to zero
     #_reset_particles(pfield)
 
     # Calculate interactions between particles: U and J
-    UJ(dpfield,pfield,np)
+    UJ(dpfield,pfield)
 end
 
 """

@@ -95,7 +95,7 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
 
 # ------------ Available relaxation schemes
-# I chnaged RealFMM to Float64
+# I changed RealFMM to Float64
 const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, Float64(0.0))
 const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, Float64(0.3))
 const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, Float64(0.3))
