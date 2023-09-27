@@ -31,7 +31,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                                         max_zsigma=12.0,# Maximum sigmas in z-direction to create annulis for defining BC
                                         rbf=true,       # If true, it runs an RBF interpolation to match the analytic vorticity with more accuracy
                                         rbf_optargs=[(:itmax,200), (:tol,2.5e-2), (:iterror,true), (:verbose,true), (:debug,false)],
-                                        rbf_Wf=0.5,     # Scales target RBF vorticity by this factor
+                                        rbf_Wf=1.0,     # Scales target RBF vorticity by this factor
                                         rbf_fullcylinder=false,  # Use a cylinder of particles for the RBF with half of it in inside the jet
                                         keep_rbfparticles=false, # Keep particles used for RBF as static particles
                                         keep_rbffullcylinder=false, # Keep the half of the cylinder that is inside the jet as free particles
