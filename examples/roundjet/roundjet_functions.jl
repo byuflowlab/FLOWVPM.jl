@@ -48,11 +48,15 @@ of the ellipse, using particles with smoothing radius `sigma`.
 The ring is placed in space at the position `O` and orientation `Oaxis`,
 where `Oaxis[:, 1]` is the major axis, `Oaxis[:, 2]` is the minor axis, and
 `Oaxis[:, 3]` is the line of symmetry.
+
+If `flip_strengths==true`, the strengths of the particles are flipped to
+align radially.
 """
 function addannulus(pfield::vpm.ParticleField, circulation::Real,
                             R::Real, AR::Real,
                             Nphi::Int, sigma::Real, area::Real;
                             O::Vector{<:Real}=zeros(3), Oaxis=I,
+                            flip_strengths=false,
                             static::Bool=false,
                             verbose=true, v_lvl=0
                             )
@@ -113,13 +117,14 @@ function addannulus(pfield::vpm.ParticleField, circulation::Real,
         T = [a*cos(phic), -b*sin(phic), 0]  # Unitary tangent of this cross section
         T ./= norm(T)
         T .*= -1                        # Flip to make +circulation travel +Z
+        Rad = cross([0,0,1], T)         # Radial unit vector
                                         # Local coordinate system of section
-        Naxis = hcat(T, cross([0,0,1], T), [0,0,1])
+        Naxis = hcat(T, Rad, [0,0,1])
 
         X = Xc                          # Position
                                         # Filament length
         length = fun_length(0, 0, a, b, phi1, phi2)
-        Gamma = circulation*length*T    # Vortex strength
+        Gamma = circulation*length*(flip_strengths ? Rad : T)    # Vortex strength
 
         addparticle(pfield, X, Gamma, sigma, area*length, circulation)
 
