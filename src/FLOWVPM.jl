@@ -23,10 +23,13 @@ import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
+import Base: getindex, setindex! # for compatibility with FLOWFMM
 
 # ------------ FLOW CODES ------------------------------------------------------
-import FLOWExaFMM
-const fmm = FLOWExaFMM
+# import FLOWExaFMM
+# const fmm = FLOWExaFMM
+import FLOWFMM
+const fmm = FLOWFMM
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module

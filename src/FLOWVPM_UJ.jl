@@ -113,43 +113,19 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; optargs...)
+function UJ_fmm(pfield::ParticleField; verbose::Bool=false,
+    rbf::Bool=false, sfs::Bool=false, sfs_type::Int=-1,
+    transposed_sfs::Bool=true,
+    reset::Bool=true, reset_sfs::Bool=false,
+    sort::Bool=true)
 
     # Calculate FMM of vector potential
-    call_FLOWExaFMM(pfield; optargs...)
-
-    aux1 = RealFMM(1/(4*pi))
-
-    # Build velocity and velocity Jacobian from the FMM's vector potential
-    for P in iterator(pfield; include_static=true)
-        # Velocity U = ∇ × ψ
-        P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])
-        P.U[2] += aux1*(P.Jexa[3,1] - P.Jexa[1,3])
-        P.U[3] += aux1*(P.Jexa[1,2] - P.Jexa[2,1])
-
-        # Jacobian
-        # dU1 / dxj
-        P.J[1, 1] += aux1*(P.dJdx1exa[2,3] - P.dJdx1exa[3,2])
-        P.J[1, 2] += aux1*(P.dJdx2exa[2,3] - P.dJdx2exa[3,2])
-        P.J[1, 3] += aux1*(P.dJdx3exa[2,3] - P.dJdx3exa[3,2])
-        # dU2 / dxj
-        P.J[2, 1] += aux1*(P.dJdx1exa[3,1] - P.dJdx1exa[1,3])
-        P.J[2, 2] += aux1*(P.dJdx2exa[3,1] - P.dJdx2exa[1,3])
-        P.J[2, 3] += aux1*(P.dJdx3exa[3,1] - P.dJdx3exa[1,3])
-        # dU3 / dxj
-        P.J[3, 1] += aux1*(P.dJdx1exa[1,2] - P.dJdx1exa[2,1])
-        P.J[3, 2] += aux1*(P.dJdx2exa[1,2] - P.dJdx2exa[2,1])
-        P.J[3, 3] += aux1*(P.dJdx3exa[1,2] - P.dJdx3exa[2,1])
-    end
+    fmm2.fmm!((pfield,), options)
 
     return nothing
 end
 
-function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                            rbf::Bool=false, sfs::Bool=false, sfs_type::Int=-1,
-                            transposed_sfs::Bool=true,
-                            reset::Bool=true, reset_sfs::Bool=false,
-                            sort::Bool=true)
+function call_FLOWExaFMM(pfield::ParticleField; )
     try
         fmm.calculate(pfield.bodies,
                         Int32(get_np(pfield)),
