@@ -350,7 +350,7 @@ field constructor.
 """
 function computefluiddomain(maxparticles::Int, args...;
                                     UJ=vpm.UJ_fmm,
-                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4),
                                     pfield_optargs=[],
                                     verbose=true, v_lvl=0,
                                     optargs...)

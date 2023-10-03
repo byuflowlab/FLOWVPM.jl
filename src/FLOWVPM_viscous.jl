@@ -41,7 +41,7 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
-Inviscid() = Inviscid{RealFMM}()
+Inviscid() = Inviscid{FLOAT_TYPE}()
 
 """
     `isinviscid(scheme::ViscousScheme)`
@@ -107,7 +107,7 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
 end
 
 CoreSpreading(nu, sgm0, args...; optargs...
-                    ) = CoreSpreading{RealFMM}(RealFMM(nu), RealFMM(sgm0), args...; optargs...)
+                    ) = CoreSpreading{FLOAT_TYPE}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), args...; optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`
@@ -213,7 +213,7 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
 end
 
 ParticleStrengthExchange(nu, args...; optargs...
-                    ) = ParticleStrengthExchange{RealFMM}(RealFMM(nu), args...; optargs...)
+                    ) = ParticleStrengthExchange{FLOAT_TYPE}(FLOAT_TYPE(nu), args...; optargs...)
 
 function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
 
@@ -479,9 +479,9 @@ end
   `zeta_fmm(pfield)`
 
 Evaluates the basis function that the field exerts on itself through
-the FMM neglecting the far field, saving the results under P.Jexa[1:3].
+the FMM neglecting the far field, saving the results under P.W.
 """
 function zeta_fmm(pfield)
-    call_FLOWExaFMM(pfield; rbf=true)
+    UJ_fmm(pfield; rbf=true)
 end
 ################################################################################

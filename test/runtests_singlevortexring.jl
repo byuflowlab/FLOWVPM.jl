@@ -1,3 +1,8 @@
+# activate test environment
+if splitpath(Base.active_project())[end-1] == "FLOWVPM.jl"
+    import TestEnv
+    TestEnv.activate()
+end
 using Test
 import Printf: @printf
 import FLOWVPM
@@ -53,7 +58,7 @@ for (description, integration, UJ, nc) in (
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5)
+            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4)
         )
 
 

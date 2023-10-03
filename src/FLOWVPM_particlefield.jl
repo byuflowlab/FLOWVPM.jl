@@ -8,6 +8,26 @@
   * Created   : Aug 2020
 =###############################################################################
 
+"""
+    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4)`
+
+Parameters for FMM solver.
+
+# Arguments
+* `p`       : Order of multipole expansion (number of terms).
+* `ncrit`   : Maximum number of particles per leaf.
+* `theta`   : Neighborhood criterion. This criterion defines the distance
+                where the far field starts. The criterion is that if θ*r < R1+R2
+                the interaction between two cells is resolved through P2P, where
+                r is the distance between cell centers, and R1 and R2 are each
+                cell radius. This means that at θ=1, P2P is done only on cells
+                that have overlap; at θ=0.5, P2P is done on cells that their
+                distance is less than double R1+R2; at θ=0.25, P2P is done on
+                cells that their distance is less than four times R1+R2; at
+                θ=0, P2P is done on cells all cells.
+
+"""
+FMM(; p=4, ncrit=50, theta=0.4) = fmm.Options(p, ncrit, theta)
 
 ################################################################################
 # PARTICLE FIELD STRUCT
@@ -16,7 +36,6 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
-    bodies::fmm.Bodies                          # ExaFMM array of bodies
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
 
@@ -31,18 +50,22 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
-    SFS::S                                    # Subfilter-scale contributions scheme
+    SFS::S                                      # Subfilter-scale contributions scheme
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
-    fmm::FMM                                    # Fast-multipole settings
+    fmm::fmm.Options                            # Fast-multipole settings
 
     # Internal memory for computation
     M::Array{R, 1}
 
+    # switches for dispatch in the FMM
+    toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
+    toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
+
     ParticleField{R, F, V, S}(
                                 maxparticles,
-                                particles, bodies, formulation, viscous;
+                                particles, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
                                 kernel=kernel_default,
                                 UJ=UJ_fmm,
@@ -52,10 +75,11 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 transposed=true,
                                 relaxation=relaxation_default,
                                 fmm=FMM(),
-                                M=zeros(R, 4)
+                                M=zeros(R, 4),
+                                toggle_rbf=false, toggle_sfs=false
                          ) where {R, F, V, S} = new(
                                 maxparticles,
-                                particles, bodies, formulation, viscous,
+                                particles, formulation, viscous,
                                 np, nt, t,
                                 kernel,
                                 UJ,
@@ -65,7 +89,8 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 transposed,
                                 relaxation,
                                 fmm,
-                                M
+                                M,
+                                toggle_rbf, toggle_sfs
                           )
 end
 
@@ -75,11 +100,9 @@ function ParticleField(maxparticles::Int;
                                     SFS::S=SFS_default,
                                     optargs...
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale}
-    # Memory allocation by C++
-    bodies = fmm.genBodies(maxparticles)
 
-    # Have Julia point to the same memory than C++
-    particles = [Particle(fmm.getBody(bodies, i-1)) for i in 1:maxparticles]
+    # create particle field
+    particles = [zero(Particle{FLOAT_TYPE}) for _ in 1:maxparticles]
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -87,7 +110,7 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{RealFMM, F, V, S}(maxparticles, particles, bodies,
+    return ParticleField{FLOAT_TYPE, F, V, S}(maxparticles, particles,
                                             formulation, viscous;
                                             np=0, SFS=SFS, optargs...)
 end
@@ -261,12 +284,13 @@ function remove_particle(self::ParticleField, i::Int)
 
     if i != get_np(self)
         # Overwrite target particle with last particle in the field
-        fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
+        # fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
+        self.particles[i] = Plast
 
-        Ptarg = get_particle(self, i)
-        Ptarg.circulation .= Plast.circulation
-        Ptarg.C .= Plast.C
-        Ptarg.static .= Plast.static
+        # Ptarg = get_particle(self, i)
+        # Ptarg.circulation .= Plast.circulation
+        # Ptarg.C .= Plast.C
+        # Ptarg.static .= Plast.static
     end
 
     # Remove last particle in the field
@@ -308,6 +332,8 @@ function _reset_particle(P::Particle{T}, tzero::T) where {T}
     P.U[1] = tzero
     P.U[2] = tzero
     P.U[3] = tzero
+
+    P.W .= tzero
 
     P.J[1, 1] = tzero
     P.J[2, 1] = tzero

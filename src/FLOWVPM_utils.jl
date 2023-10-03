@@ -139,7 +139,7 @@ end
 """
   `save(pfield, file_name; path="")`
 
-Saves the particle field in HDF5 format and a XDMF file especifying its the
+Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
@@ -353,12 +353,12 @@ end
 function save_settings(pfield::ParticleField, file_name::String;
                                         path::String="", suff="_settings")
     settings = _get_settings(pfield)
-    JLD.save(joinpath(path, file_name*suff*".jld"), settings)
+    BSON.bson(joinpath(path, file_name*suff*".bson"), settings)
 end
 
 function read_settings(fname::String; path::String="")
     # Read settings as a dictionary with String keys
-    settings_dict = JLD.load(joinpath(path, fname))
+    settings_dict = BSON.load(joinpath(path, fname))
 
     # Convert into dictionary with Symbol keys and get rid of user functions
     settings_args = Dict( (Symbol(key), typeof(val)==Symbol ? eval(val) : val)

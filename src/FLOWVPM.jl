@@ -18,12 +18,13 @@ module FLOWVPM
 
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
-import JLD
+import BSON
 import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
-import Base: getindex, setindex! # for compatibility with FLOWFMM
+# import Base: getindex, setindex! # for compatibility with FLOWFMM
+using StaticArrays
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
@@ -38,13 +39,12 @@ const utilities_path = joinpath(examples_path, "utilities") # Path to utilities
 const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utilities
 
 # Determine the floating point precision of ExaFMM
-const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float32 : Float64
+const FLOAT_TYPE = Float64
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "fmm", "viscous", "formulation",
+for header_name in ["kernel", "viscous", "formulation",
                     "particle", "relaxation", "subfilterscale",
-                    "particlefield",
+                    "particlefield", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
@@ -54,13 +54,13 @@ end
 # ------------ AVAILABLE SOLVER OPTIONS ----------------------------------------
 
 # ------------ Available VPM formulations
-const formulation_classic = ClassicVPM{RealFMM}()
-const formulation_cVPM = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_classic = ClassicVPM{FLOAT_TYPE}()
+const formulation_cVPM = ReformulatedVPM{FLOAT_TYPE}(0, 0)
+const formulation_rVPM = ReformulatedVPM{FLOAT_TYPE}(0, 1/5)
 
-const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
-const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5 + 1e-8)
+const formulation_tube_continuity = ReformulatedVPM{FLOAT_TYPE}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{FLOAT_TYPE}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{FLOAT_TYPE}(0, 1/5 + 1e-8)
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -90,9 +90,9 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
 
 # ------------ Available relaxation schemes
-const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, RealFMM(0.0))
-const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, RealFMM(0.3))
-const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, RealFMM(0.3))
+const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, FLOAT_TYPE(0.0))
+const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, FLOAT_TYPE(0.3))
+const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, FLOAT_TYPE(0.3))
 
 # Relaxation aliases
 const pedrizzetti = relaxation_pedrizzetti
@@ -109,7 +109,7 @@ const pseudo3level_positive(args...; optargs...) = pseudo3level(args...; force_p
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
-const SFS_none = NoSFS{RealFMM}()
+const SFS_none = NoSFS{FLOAT_TYPE}()
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=[clipping_backscatter])
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.999, clippings=[clipping_backscatter])
 const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.667, clippings=[clipping_backscatter])
@@ -148,7 +148,7 @@ const _kernel_compatibility = Dict( # Viscous scheme => kernels
 
 # Field inside the Particle type where the SFS contribution is stored (make sure
 # this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
-const _SFS = :Jexa
+const _SFS = :S
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions

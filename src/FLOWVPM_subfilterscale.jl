@@ -75,7 +75,7 @@ struct ConstantSFS{R} <: SubFilterScale{R}
     end
 end
 
-function ConstantSFS(model; Cs::R=RealFMM(1.0), optargs...) where {R}
+function ConstantSFS(model; Cs::R=FLOAT_TYPE(1.0), optargs...) where {R}
     return ConstantSFS{R}(model; Cs=Cs, optargs...)
 end
 
@@ -158,7 +158,7 @@ struct DynamicSFS{R} <: SubFilterScale{R}
     end
 end
 
-DynamicSFS(args...; optargs...) = DynamicSFS{RealFMM}(args...; optargs...)
+DynamicSFS(args...; optargs...) = DynamicSFS{FLOAT_TYPE}(args...; optargs...)
 
 function (SFS::DynamicSFS)(pfield; a=1, b=1)
 
