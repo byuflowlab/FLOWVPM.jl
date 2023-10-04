@@ -80,6 +80,23 @@ for (description, integration, UJ, nc) in (
                                             verbose_nsteps=ceil(Int, nsteps/4),
                                             pfieldargs=solver
                                             )
+        t_elapsed = @elapsed pfield = run_vortexring_simulation(  nrings, circulations,
+                                            Rs, ARs, Rcrosss,
+                                            Nphis, ncs, extra_ncs, sigmas,
+                                            Os, Oaxiss;
+                                            # ------- SIMULATION OPTIONS -----------
+                                            nref=nref,
+                                            nsteps=nsteps,
+                                            Rtot=Rtot,
+                                            beta=beta,
+                                            faux=faux,
+                                            # ------- OUTPUT OPTIONS ---------------
+                                            save_path=nothing,
+                                            calc_monitors=false,
+                                            verbose=verbose1, v_lvl=1,
+                                            verbose_nsteps=ceil(Int, nsteps/4),
+                                            pfieldargs=solver
+                                            )
         # --------------- COMPARE TO ANALYTIC SOLUTION -----------------------------
 
         # Calculate resulting ring velocity
@@ -101,7 +118,8 @@ for (description, integration, UJ, nc) in (
             @printf "%sVortex ring self-induced velocity verification\n"    "\n"*"\t"^1
             @printf "%sAnalytical velocity:\t\t%1.3f m/s\n"                 "\t"^2 U_ana
             @printf "%sResulting velocity:\t\t%1.3f m/s\n"                  "\t"^2 U_vpm
-            @printf "%sError:\t\t\t\t%1.8f﹪\n"                              "\t"^2 err*100
+            @printf "%sError:\t\t\t\t%1.8f﹪\n"                             "\t"^2 err*100
+            @printf "%sTime:\t\t\t\t%1.8f s\n"                             "\t"^2 t_elapsed
         end
 
         # Test result

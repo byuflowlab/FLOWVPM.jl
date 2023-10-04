@@ -68,6 +68,25 @@ for (description, integration, UJ, nc) in (
                                             # ------- SIMULATION OPTIONS -----------
                                             Re=Re,
                                             nref=nref,
+                                            nsteps=2,
+                                            Rtot=Rtot,
+                                            beta=beta,
+                                            faux=faux,
+                                            # ------- OUTPUT OPTIONS ---------------
+                                            save_path=nothing,
+                                            calc_monitors=false,
+                                            verbose=verbose1, v_lvl=1,
+                                            # verbose_nsteps=ceil(Int, nsteps/4),
+                                            verbose_nsteps=100,
+                                            pfieldargs=solver
+                                            )
+        t_elapsed = @elapsed pfield = run_vortexring_simulation(  nrings, circulations,
+                                            Rs, ARs, Rcrosss,
+                                            Nphis, ncs, extra_ncs, sigmas,
+                                            Os, Oaxiss;
+                                            # ------- SIMULATION OPTIONS -----------
+                                            Re=Re,
+                                            nref=nref,
                                             nsteps=nsteps,
                                             Rtot=Rtot,
                                             beta=beta,
@@ -128,6 +147,7 @@ for (description, integration, UJ, nc) in (
             @printf "%s%10.10s%10.3f%10.3f%10.3f%10.3f\n"           "\t"^2 "Analytic" Z1_ana Z2_ana R1_ana R2_ana
             @printf "%s%10.10s%10.3f%10.3f%10.3f%10.3f\n"           "\t"^2 "VPM" Z1_vpm Z2_vpm R1_vpm R2_vpm
             @printf "%s%10.10s%9.3f﹪%9.3f﹪%8.3f﹪%8.3f﹪\n"         "\t"^2 "ERROR" Z1_err*100 Z2_err*100 R1_err*100 R2_err*100
+            @printf "%sTime:\t\t\t\t%1.8f s\n"                       "\t"^2 t_elapsed
         end
 
         # Test result
