@@ -5,7 +5,7 @@ if splitpath(Base.active_project())[end-1] == "FLOWVPM.jl"
 end
 import FLOWVPM
 vpm = FLOWVPM
-bson = FLOWVPM.BSON
+bson = vpm.BSON
 
 verbose1 = false
 verbose2 = true
@@ -62,7 +62,7 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
         ncs_log = []
         nparticles_log = []
         t_log = []
-        vpm.BSON.@save "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
+        bson.@save "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
     end
 
     # --------------- RUN SIMULATION -------------------------------------------
@@ -89,7 +89,7 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
     t = @elapsed vpm.UJ_fmm(pfield)
     println("\ttime:\t\t$t s")
 
-    vpm.BSON.@load "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
+    bson.@load "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
     push!(formulation_log, solver_fmm.formulation)
     push!(nrings_log, nrings)
     push!(Nphis_log, Nphis)
@@ -97,10 +97,13 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
     push!(nparticles_log, pfield.np)
     println("\tnparticles:\t$(pfield.np)")
     push!(t_log, t)
-    vpm.BSON.@save "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
+    bson.@save "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
 
 end
 
 benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
+benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=20, nc=2, overwrite_bson=false) # 10 radii long column
+benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=30, nc=3, overwrite_bson=false) # 10 radii long column
+benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=40, nc=4, overwrite_bson=false) # 10 radii long column
 benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=50, nc=5, overwrite_bson=false) # 10 radii long column
 benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=100, nc=10, overwrite_bson=false) # 10 radii long column
