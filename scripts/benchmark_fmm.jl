@@ -89,7 +89,7 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
     t = @elapsed vpm.UJ_fmm(pfield)
     println("\ttime:\t\t$t s")
 
-    vpm.BSON.@load "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log t_log
+    vpm.BSON.@load "benchmark_fmm.bson" formulation_log nrings_log Nphis_log ncs_log nparticles_log t_log
     push!(formulation_log, solver_fmm.formulation)
     push!(nrings_log, nrings)
     push!(Nphis_log, Nphis)

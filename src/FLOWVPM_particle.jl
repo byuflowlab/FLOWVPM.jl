@@ -30,71 +30,53 @@ Vortex particle data structure
 """
 struct Particle{T}
   # User inputs
-  X::Array{T, 1}                # Position (3-elem array)
-  Gamma::Array{T, 1}            # Vectorial circulation (3-elem array)
-  sigma::Array{T, 0}            # Smoothing radius (1-elem array)
-  vol::Array{T, 0}              # Volume (1-elem array)
-  circulation::Array{T, 0}      # Scalar circulation (1-elem array)
-  static::Array{Bool, 0}        # If true, this particle is not evolved in time
+  X::MVector{3,T}                # Position (3-elem array)
+  Gamma::MVector{3,T}            # Vectorial circulation (3-elem array)
+  sigma::MVector{1,T}            # Smoothing radius (1-elem array)
+  vol::MVector{1,T}              # Volume (1-elem array)
+  circulation::MVector{1,T}      # Scalar circulation (1-elem array)
+  static::MVector{1,Bool}        # If true, this particle is not evolved in time
 
   # Properties
-  U::Array{T, 1}                # Velocity at particle (3-elem array)
-  W::Array{T, 1}                # Vorticity at particle (3-elem array)
-  J::Array{T, 2}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
-  PSE::Array{T, 1}              # Particle-strength exchange at particle (3-elem array)
+  U::MVector{3,T}                # Velocity at particle (3-elem array)
+  W::MVector{3,T}                # Vorticity at particle (3-elem array)
+  J::MMatrix{3,3,T}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
-  M::Array{T, 2}                # 3x3 array of auxiliary memory
-  C::Array{T, 1}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
-  S::Array{T, 1}                # Stretching term
+  M::MMatrix{3,3,T}                # 3x3 array of auxiliary memory
+  C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
+  S::MVector{3,T}                # Stretching term
 
   # ExaFMM internal variables
 #   Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
 #   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
-  index::Array{Int32, 0}        # Particle index (1-elem array)
+  index::MVector{1,Int32}        # Particle index (1-elem array)
 end
 
 function init_zero(type::DataType)
-    z = Array{type,0}(undef)
-    z[] = zero(type)
-    return z
+    return MVector{1,type}(0.0)
+end
+
+function init_zeros3(type::DataType)
+    return MVector{3,type}(0.0,0.0,0.0)
+end
+
+function init_zeros33(type::DataType)
+    return MMatrix{3,3,type}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
 end
 
 # Empty initializer
-Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T, 3), zeros(T, 3),
+Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros3(T),
                                                       init_zero(T),  init_zero(T), init_zero(T),
                                                       init_zero(Bool),
-                                                      zeros(T, 3), zeros(T, 3), zeros(T, 3, 3), zeros(T, 3),
-                                                      zeros(T, 3, 3), zeros(T, 3), zeros(T, 3),
+                                                      init_zeros3(T), init_zeros3(T), init_zeros33(T), init_zeros3(T),
+                                                      init_zeros33(T), init_zeros3(T), init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                       init_zero(Int32))
-
-# """
-#     `Particle(body::fmm.BodyRef)`
-
-# Return a particle that is linked with this C++ Body object. All changes in body
-# will be reflected in the particles and vice versa.
-# """
-# Particle(body::fmm.BodyRef) = Particle{FLOAT_TYPE}(fmm.get_Xref(body),
-#                                                 fmm.get_qref(body),
-#                                                 fmm.get_sigmaref(body),
-#                                                 fmm.get_volref(body),
-#                                                 zeros(Bool, 1),
-#                                                 zeros(FLOAT_TYPE, 1),
-#                                                 zeros(FLOAT_TYPE, 3),
-#                                                 zeros(FLOAT_TYPE, 3),
-#                                                 zeros(FLOAT_TYPE, 3, 3),
-#                                                 fmm.get_pseref(body),
-#                                                 zeros(FLOAT_TYPE, 3, 3),
-#                                                 zeros(FLOAT_TYPE, 3),
-#                                                 fmm.get_Jref(body),
-#                                                 fmm.get_dJdx1ref(body),
-#                                                 fmm.get_dJdx2ref(body),
-#                                                 fmm.get_dJdx3ref(body),
-#                                                 fmm.get_indexref(body))
 
 
 ##### FUNCTIONS ################################################################
@@ -113,6 +95,5 @@ add_SFS2(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[2]::T += val
 add_SFS3(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[3]::T += val
 
 ##### INTERNAL FUNCTIONS #######################################################
-nothing
 
 ##### END OF ABSTRACT PARTICLE FIELD############################################
