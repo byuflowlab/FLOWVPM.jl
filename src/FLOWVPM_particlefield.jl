@@ -8,8 +8,11 @@
   * Created   : Aug 2020
 =###############################################################################
 
+################################################################################
+# FMM STRUCT
+################################################################################
 """
-    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4)`
+    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)`
 
 Parameters for FMM solver.
 
@@ -25,9 +28,27 @@ Parameters for FMM solver.
                 distance is less than double R1+R2; at θ=0.25, P2P is done on
                 cells that their distance is less than four times R1+R2; at
                 θ=0, P2P is done on cells all cells.
-
+* `phi`     : Regularizing neighborhood criterion. This criterion avoid
+                approximating interactions with the singular-FMM between
+                regularized particles that are sufficiently close to each other
+                across cell boundaries. Used together with the θ-criterion, P2P
+                is performed between two cells if φ < σ/dx, where σ is the
+                average smoothing radius in between all particles in both cells,
+                and dx is the distance between cell boundaries
+                ( dx = r-(R1+R2) ). This means that at φ = 1, P2P is done on
+                cells with boundaries closer than the average smoothing radius;
+                at φ = 0.5, P2P is done on cells closer than two times the
+                smoothing radius; at φ = 0.25, P2P is done on cells closer than
+                four times the smoothing radius.
 """
-FMM(; p=4, ncrit=50, theta=0.4) = fmm.Options(p, ncrit, theta)
+mutable struct FMM
+  # Optional user inputs
+  p::Int32                        # Multipole expansion order
+  ncrit::Int32                    # Max number of particles per leaf
+  theta::FLOAT_TYPE                  # Neighborhood criterion
+
+  FMM(; p=4, ncrit=50, theta=0.4) = new(p, ncrit, theta)
+end
 
 ################################################################################
 # PARTICLE FIELD STRUCT
@@ -54,7 +75,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     integration::Function                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
-    fmm::fmm.Options                            # Fast-multipole settings
+    fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
     M::Array{R, 1}
