@@ -123,6 +123,6 @@ for (description, integration, UJ, nc) in (
         end
 
         # Test result
-        abs(err) < 0.01
+        @test abs(err) < 0.01
     end
 end

@@ -15,8 +15,10 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
                                 dt::Real; relax::Bool=false) where {R, V}
 
     # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is now performed inside the SFS scheme
-    pfield.SFS(pfield)
+    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+    pfield.SFS(pfield, BeforeUJ())
+    pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    pfield.SFS(pfield, AfterUJ())
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -81,9 +83,11 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
                               dt::Real; relax::Bool=false ) where {R, V, R2}
 
     # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is now performed inside the SFS scheme
-    pfield.SFS(pfield)
-
+    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+    pfield.SFS(pfield, BeforeUJ())
+    pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    pfield.SFS(pfield, AfterUJ())
+    
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
@@ -136,7 +140,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
 
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
-
+    
     return nothing
 end
 
@@ -173,8 +177,10 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale}
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
-        # NOTE: UJ evaluation is now performed inside the SFS scheme
-        pfield.SFS(pfield; a=a, b=b)
+        # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
@@ -277,8 +283,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
-        # NOTE: UJ evaluation is now performed inside the SFS scheme
-        pfield.SFS(pfield; a=a, b=b)
+        # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)

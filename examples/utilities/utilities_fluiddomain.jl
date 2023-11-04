@@ -135,8 +135,7 @@ function computefluiddomain(pfield::vpm.ParticleField,
     end
 
     # Evaluate particle field
-    vpm._reset_particles(pfield)
-    t = @elapsed pfield.UJ(pfield)
+    t = @elapsed pfield.UJ(pfield; reset=true)
 
     if verbose
         println("\t"^(v_lvl)*"Evaluate UJ:\t\t$(round(t, digits=1)) s")

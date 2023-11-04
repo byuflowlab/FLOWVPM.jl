@@ -18,8 +18,24 @@ particle-to-particle interaction, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_direct(pfield::ParticleField)
-  return UJ_direct(pfield, pfield)
+function UJ_direct(pfield::ParticleField; 
+        rbf::Bool=false, sfs::Bool=false,
+        reset=true, reset_sfs=false,
+        optargs...
+    )
+
+    # reset
+    if reset
+        _reset_particles(pfield)
+    end
+    if reset_sfs
+        _reset_particles_sfs(pfield)
+    end
+    
+    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
+    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
+
+    return UJ_direct(pfield, pfield)
 end
 
 """
@@ -34,24 +50,26 @@ every particle without previously emptying those properties.
 function UJ_direct(source::ParticleField, target::ParticleField)
     return UJ_direct( iterator(source; include_static=true),
                     iterator(target; include_static=true),
-                    source.kernel)
+                    source.kernel, source.toggle_sfs, source.transposed)
 end
 
-function UJ_direct(sources, targets, kernel::Kernel)
-    return UJ_direct(sources, targets, kernel.g_dgdr)
+function UJ_direct(sources, targets, kernel::Kernel, toggle_sfs, transposed)
+    return UJ_direct(sources, targets, kernel.g_dgdr, kernel.zeta, toggle_sfs, transposed)
 end
 
-function UJ_direct(sources, targets, g_dgdr::Function)
+function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transposed)
 
+    r = zero(eltype(eltype(sources)))
     for Pi in targets
         for Pj in sources
 
             dX1 = Pi.X[1] - Pj.X[1]
             dX2 = Pi.X[2] - Pj.X[2]
             dX3 = Pi.X[3] - Pj.X[3]
-            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+            r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
 
-            if r!=0
+            if !iszero(r2)
+                r = sqrt(r2) 
 
                 # Regularizing function and deriv
                 g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
@@ -97,6 +115,9 @@ function UJ_direct(sources, targets, g_dgdr::Function)
                 Pi.J[2, 3] += aux * Pj.Gamma[1]
 
             end
+            if toggle_sfs
+                Estr_direct(Pi, Pj, r, zeta, transposed)
+            end
         end
     end
     return nothing
@@ -123,23 +144,24 @@ function UJ_fmm(pfield::ParticleField;
         sort::Bool=true
     )
 
-    # reset
+    # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
-    elseif reset_sfs
+    end
+    if reset_sfs
         _reset_particles_sfs(pfield)
     end
 
     # define P2P function
-    pfield.toggle_rbf = rbf
-    pfield.toggle_sfs = sfs
+    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
+    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # extract FMM options
     fmm_options = pfield.fmm
-    farfield = !(rbf || sfs)
+    farfield = !rbf
 
     # Calculate FMM of vector potential
-    fmm.fmm!((pfield,); expansion_order=fmm_options.p, n_per_branch=fmm_options.ncrit, theta=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort)
+    fmm.fmm!(pfield; expansion_order=fmm_options.p, n_per_branch=fmm_options.ncrit, theta=fmm_options.theta, ndivisions=100, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=false)
 
     return nothing
 end

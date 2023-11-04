@@ -545,8 +545,7 @@ function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
     end
 
     # Evaluate UJ
-    vpm._reset_particles(pfield)
-    pfield.UJ(pfield)
+    pfield.UJ(pfield; reset=true)
 
     # Save vorticity at probes
     for ri in 1:nrings

@@ -15,20 +15,40 @@
 ################################################################################
 abstract type SubFilterScale{R} end
 
+# types for dispatch
+struct BeforeUJ end
+struct AfterUJ end
+
 # Make SFS object callable
 """
     Implementation of calculations associated with subfilter-scale turbulence
 model.
 
-NOTE: Any implementation is expected to evaluate UJ and SFS terms of the
-particles which will be used by the time integration routine so make sure they
-are stored in the memory (see implementation of `ConstantSFS` as an example).
+The model is expected to be called in two stages surrounding the calculation of the
+induced velocity, as:
+
+```julia
+this_sfs_model(pfield::ParticleField, beforeUJ::BeforeUJ)
+
+pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
+
+this_sfs_model(pfield::ParticleField, afterUJ::AfterUJ)
+```
+
+(See implementation of `ConstantSFS` as an example.)
+
+NOTE1: The UJ_fmm requires <:SubFilterScale objects to contain a `sfs.model` field, 
+which is a function that computes the SFS contribution to the stretching term.
 
 NOTE2: Any control strategy is implemented as a function that returns `true`
 whenever the SFS model needs to be clipped. Subsequently, the model coefficient
 of the targeted particle will be turned to zero.
 """
-function (SFS::SubFilterScale)(pfield)
+function (SFS::SubFilterScale)(pfield, ::BeforeUJ)
+    error("SFS evaluation not implemented!")
+end
+
+function (SFS::SubFilterScale)(pfield, ::AfterUJ)
     error("SFS evaluation not implemented!")
 end
 ##### END OF SFS SCHEME ########################################################
@@ -40,20 +60,26 @@ end
 ################################################################################
 # NO SFS SCHEME
 ################################################################################
-struct NoSFS{R} <: SubFilterScale{R} end
+struct NoSFS{R,TM} <: SubFilterScale{R} 
+    model::TM
+end
 
-function (SFS::NoSFS)(pfield; optargs...)
-    # Reset U and J to zero
-    _reset_particles(pfield)
+null_model(args...) = nothing
 
-    # Calculate interactions between particles: U and J
-    pfield.UJ(pfield)
+NoSFS{R}() where R = NoSFS{R,typeof(null_model)}(null_model)
+
+function (SFS::NoSFS)(pfield, ::BeforeUJ; optargs...)
+    return nothing
+end
+
+function (SFS::NoSFS)(pfield, ::AfterUJ; optargs...)
+    return nothing
 end
 
 """
 Returns true if SFS scheme implements an SFS model
 """
-isSFSenabled(SFS::SubFilterScale) = typeof(SFS).name != NoSFS.body.name
+isSFSenabled(SFS::SubFilterScale) = !(typeof(SFS) <: NoSFS)
 ##### END OF NO SFS SCHEME #####################################################
 
 
@@ -79,16 +105,11 @@ function ConstantSFS(model; Cs::R=FLOAT_TYPE(1.0), optargs...) where {R}
     return ConstantSFS{R}(model; Cs=Cs, optargs...)
 end
 
-function (SFS::ConstantSFS)(pfield; a=1, b=1)
-    # Reset U and J to zero
-    _reset_particles(pfield)
+function (SFS::ConstantSFS)(pfield, ::BeforeUJ; a=1, b=1)
+    return nothing
+end
 
-    # Calculate interactions between particles: U and J
-    pfield.UJ(pfield)
-
-    # Calculate subgrid-scale contributions
-    _reset_particles_sfs(pfield)
-    SFS.model(pfield)
+function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
 
     # Recognize Euler step or Runge-Kutta's first substep
     if a==1 || a==0
@@ -138,7 +159,8 @@ the model coefficient.
 struct DynamicSFS{R} <: SubFilterScale{R}
 
     model::Function                 # Model of subfilter scale contributions
-    procedure::Function             # Dynamic procedure
+    procedure_beforeUJ::Function             # Dynamic procedure
+    procedure_afterUJ::Function             # Dynamic procedure
 
     controls::Array{Function, 1}    # Control strategies
     clippings::Array{Function, 1}   # Clipping strategies
@@ -148,11 +170,11 @@ struct DynamicSFS{R} <: SubFilterScale{R}
     minC::R                         # Minimum value for model coefficient
     maxC::R                         # Maximum value for model coefficient
 
-    function DynamicSFS{R}(model, procedure;
+    function DynamicSFS{R}(model, procedure_beforeUJ, procedure_afterUJ;
                             controls=Function[], clippings=Function[],
                             alpha=0.667, rlxf=0.005, minC=0, maxC=1) where {R}
 
-        return new(model, procedure,
+        return new(model, procedure_beforeUJ, procedure_afterUJ,
                         controls, clippings, alpha, rlxf, minC, maxC)
 
     end
@@ -160,14 +182,25 @@ end
 
 DynamicSFS(args...; optargs...) = DynamicSFS{FLOAT_TYPE}(args...; optargs...)
 
-function (SFS::DynamicSFS)(pfield; a=1, b=1)
+function (SFS::DynamicSFS)(pfield, ::BeforeUJ; a=1, b=1)
 
     # Recognize Euler step or Runge-Kutta's first substep
     if a==1 || a==0
 
         # Calculate model coefficient through dynamic procedure
         # NOTE: The procedure also calculates UJ and SFS model
-        SFS.procedure(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
+        SFS.procedure_beforeUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
+        
+    end
+end
+
+function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
+
+    # Recognize Euler step or Runge-Kutta's first substep
+    if a==1 || a==0
+        
+        # finish dynamic procedure
+        SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
 
         # Apply clipping strategies
         for clipping in SFS.clippings
@@ -190,18 +223,6 @@ function (SFS::DynamicSFS)(pfield; a=1, b=1)
                 control(p, pfield)
             end
         end
-
-    else # Calculate UJ and SFS model
-
-        # Reset U and J to zero
-        _reset_particles(pfield)
-
-        # Calculate interactions between particles: U and J
-        pfield.UJ(pfield)
-
-        # Calculate subgrid-scale contributions
-        _reset_particles_sfs(pfield)
-        SFS.model(pfield)
 
     end
 end
@@ -323,10 +344,9 @@ small enough to approximate the singular velocity field as \$\\mathbf{u} \\appro
 𝛼𝜏=0.667 ⇒ 3𝛼𝜏−2=0.001
 𝛼𝜏=0.6667⇒ 3𝛼𝜏−2=0.0001
 """
-function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
+function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
-                                       minC::Real, maxC::Real;
-                                       force_positive::Bool=false) where {R}
+                                       minC::Real, maxC::Real) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
     #                C=<Γ⋅L>/<Γ⋅m> <=> p.C[1], <Γ⋅L> <=> p.C[2], <Γ⋅m> <=> p.C[3]
@@ -347,12 +367,7 @@ function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate UJ with test filter
-    _reset_particles(pfield)
-    pfield.UJ(pfield)
-
-    # Calculate SFS with test filter
-    _reset_particles_sfs(pfield)
-    SFS.model(pfield)
+    pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
 
     # Empty temporal memory
     zeroR::R = zero(R)
@@ -387,13 +402,25 @@ function dynamicprocedure_pseudo3level(pfield, SFS::SubFilterScale{R},
         p.sigma[1] /= alpha
     end
 
-    # Calculate UJ with domain filter
-    _reset_particles(pfield)
-    pfield.UJ(pfield)
+    return nothing
+end
 
-    # Calculate SFS with domain filter
-    _reset_particles_sfs(pfield)
-    SFS.model(pfield)
+function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
+                                       alpha::Real, rlxf::Real,
+                                       minC::Real, maxC::Real;
+                                       force_positive::Bool=false) where {R}
+
+    # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
+    #                C=<Γ⋅L>/<Γ⋅m> <=> p.C[1], <Γ⋅L> <=> p.C[2], <Γ⋅m> <=> p.C[3]
+
+    # ERROR CASES
+    if minC < 0
+        error("Invalid C bounds: Got a negative bound for minC ($(minC))")
+    elseif maxC < 0
+            error("Invalid C bounds: Got a negative bound for maxC ($(maxC))")
+    elseif minC > maxC
+        error("Invalid C bounds: minC > maxC ($(minC) > $(maxC))")
+    end
 
     # Calculate stretching and SFS
     for p in iterator(pfield)
@@ -508,8 +535,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate UJ with test filter
-    _reset_particles(pfield)
-    pfield.UJ(pfield)
+    pfield.UJ(pfield; sfs=false, reset=true, reset_sfs=false)
 
     # Store test-filter ξ under p.C[2]
     for p in iterator(pfield)
@@ -523,12 +549,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate UJ with domain filter
-    _reset_particles(pfield)
-    pfield.UJ(pfield)
-
-    # Calculate SFS with domain filter
-    _reset_particles_sfs(pfield)
-    SFS.model(pfield)
+    pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
 
     # Store domain-filter ξ under p.C[3]
     for p in iterator(pfield)

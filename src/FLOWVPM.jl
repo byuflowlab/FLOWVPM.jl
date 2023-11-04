@@ -104,15 +104,16 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 
 # ------------ Subfilter-scale models
 # SFS procedure aliases
-const pseudo3level = dynamicprocedure_pseudo3level
-const pseudo3level_positive(args...; optargs...) = pseudo3level(args...; force_positive=true, optargs...)
+const pseudo3level_beforeUJ = dynamicprocedure_pseudo3level_beforeUJ
+const pseudo3level_afterUJ = dynamicprocedure_pseudo3level_afterUJ
+const pseudo3level_positive_afterUJ(args...; optargs...) = pseudo3level_afterUJ(args...; force_positive=true, optargs...)
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
 const SFS_none = NoSFS{FLOAT_TYPE}()
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=[clipping_backscatter])
-const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.999, clippings=[clipping_backscatter])
-const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.667, clippings=[clipping_backscatter])
+const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=[clipping_backscatter])
+const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.667, clippings=[clipping_backscatter])
 
 # SFS aliases
 const noSFS = SFS_none

@@ -43,8 +43,8 @@ Parameters for FMM solver.
 """
 mutable struct FMM
   # Optional user inputs
-  p::Int32                        # Multipole expansion order
-  ncrit::Int32                    # Max number of particles per leaf
+  p::Int64                        # Multipole expansion order
+  ncrit::Int64                    # Max number of particles per leaf
   theta::FLOAT_TYPE                  # Neighborhood criterion
 
   FMM(; p=4, ncrit=50, theta=0.4) = new(p, ncrit, theta)
@@ -135,6 +135,8 @@ function ParticleField(maxparticles::Int;
                                             formulation, viscous;
                                             np=0, SFS=SFS, optargs...)
 end
+
+Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any}) where R = R
 
 """
     `isLES(pfield::ParticleField)`
@@ -380,7 +382,7 @@ function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
-    getproperty(P, _SFS)::Array{T, 2} .= tzero
+    getproperty(P, _SFS)::MVector{3,T} .= tzero
     # P.C .= tzero
 end
 _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))

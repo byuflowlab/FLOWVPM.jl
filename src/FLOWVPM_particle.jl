@@ -68,6 +68,9 @@ function init_zeros33(type::DataType)
     return MMatrix{3,3,type}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
 end
 
+Base.eltype(::Particle{T}) where T = T
+Base.eltype(::AbstractArray{Particle{T}}) where T = T
+
 # Empty initializer
 Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros3(T),
                                                       init_zero(T),  init_zero(T), init_zero(T),
