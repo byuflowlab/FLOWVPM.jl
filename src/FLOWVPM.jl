@@ -135,14 +135,20 @@ const static_particles_default(pfield, t, dt) = nothing
 
 
 # ------------ Compatibility between kernels and viscous schemes
-const _kernel_compatibility = Dict( # Viscous scheme => kernels
-        Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
-                                        kernel_singular, kernel_gaussian,
-                                        kernel_gaussianerf, kernel_winckelmans],
-        CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
-        ParticleStrengthExchange.body.name => [gaussianerf, winckelmans,
-                                        kernel_gaussianerf, kernel_winckelmans],
-    )
+function _kernel_compatibility(viscous_scheme::Inviscid)
+    return [singular, gaussian, gaussianerf, winckelmans,
+    kernel_singular, kernel_gaussian,
+    kernel_gaussianerf, kernel_winckelmans]
+end
+
+function _kernel_compatibility(viscous_scheme::CoreSpreading)
+    return [gaussianerf, kernel_gaussianerf]
+end
+
+function _kernel_compatibility(viscous_scheme::ParticleStrengthExchange)
+    return [gaussianerf, winckelmans,
+    kernel_gaussianerf, kernel_winckelmans]
+end
 
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------

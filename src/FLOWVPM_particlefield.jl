@@ -84,21 +84,21 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 
-    ParticleField{R, F, V, S}(
+    ParticleField{R, F, V, S, TUJ, TUinf, Tintegration}(
                                 maxparticles,
                                 particles, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
                                 kernel=kernel_default,
-                                UJ=UJ_fmm,
-                                Uinf=Uinf_default,
+                                UJ::TUJ=UJ_fmm,
+                                Uinf::TUinf=Uinf_default,
                                 SFS=SFS_default,
-                                integration=rungekutta3,
+                                integration::Tintegration=rungekutta3,
                                 transposed=true,
                                 relaxation=relaxation_default,
                                 fmm=FMM(),
                                 M=zeros(R, 4),
                                 toggle_rbf=false, toggle_sfs=false
-                         ) where {R, F, V, S} = new(
+                         ) where {R, F, V, S, TUJ, TUinf, Tintegration} = new(
                                 maxparticles,
                                 particles, formulation, viscous,
                                 np, nt, t,
@@ -119,8 +119,10 @@ function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
                                     SFS::S=SFS_default,
+                                    UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default, 
+                                    integration::Tintegration=rungekutta3,
                                     optargs...
-                            ) where {F, V<:ViscousScheme, S<:SubFilterScale}
+                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, TUJ, TUinf, Tintegration}
 
     # create particle field
     particles = [zero(Particle{FLOAT_TYPE}) for _ in 1:maxparticles]
@@ -131,9 +133,11 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{FLOAT_TYPE, F, V, S}(maxparticles, particles,
+    return ParticleField{FLOAT_TYPE, F, V, S, TUJ, TUinf, Tintegration}(maxparticles, particles,
                                             formulation, viscous;
-                                            np=0, SFS=SFS, optargs...)
+                                            np=0, SFS=SFS, UJ=UJ, Uinf=Uinf, 
+                                            integration=integration,
+                                            optargs...)
 end
 
 Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R

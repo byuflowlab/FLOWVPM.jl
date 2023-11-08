@@ -95,14 +95,14 @@ struct ConstantSFS{R,Tmodel,Tcontrols,Tclippings} <: SubFilterScale{R}
     controls::Tcontrols    # Control strategies
     clippings::Tclippings   # Clipping strategies
 
-    function ConstantSFS{R}(model; Cs=R(1), controls=(),
-                                            clippings=()) where {R}
+    function ConstantSFS{R,Tmodel,Tcontrols,Tclippings}(model; Cs=R(1), controls=(),
+                                            clippings=()) where {R,Tmodel,Tcontrols,Tclippings}
         return new(model, Cs, controls, clippings)
     end
 end
 
-function ConstantSFS(model; Cs::R=FLOAT_TYPE(1.0), optargs...) where {R}
-    return ConstantSFS{R}(model; Cs=Cs, optargs...)
+function ConstantSFS(model::Tmodel; Cs::R=FLOAT_TYPE(1.0), controls::Tcontrols=(), clippings::Tclippings=()) where {R,Tmodel,Tcontrols,Tclippings}
+    return ConstantSFS{R,Tmodel,Tcontrols,Tclippings}(model; Cs=Cs, controls=controls, clippings=clippings)
 end
 
 function (SFS::ConstantSFS)(pfield, ::BeforeUJ; a=1, b=1)
@@ -170,9 +170,9 @@ struct DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings} <: SubFilterScale{R}
     minC::R                         # Minimum value for model coefficient
     maxC::R                         # Maximum value for model coefficient
 
-    function DynamicSFS{R}(model, procedure_beforeUJ, procedure_afterUJ;
+    function DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ;
                             controls=(), clippings=(),
-                            alpha=0.667, rlxf=0.005, minC=0, maxC=1) where {R}
+                            alpha=0.667, rlxf=0.005, minC=0, maxC=1) where {R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}
 
         return new(model, procedure_beforeUJ, procedure_afterUJ,
                         controls, clippings, alpha, rlxf, minC, maxC)
@@ -180,7 +180,11 @@ struct DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings} <: SubFilterScale{R}
     end
 end
 
-DynamicSFS(args...; optargs...) = DynamicSFS{FLOAT_TYPE}(args...; optargs...)
+DynamicSFS(model::Tmodel, procedure_beforeUJ::Tpb, procedure_afterUJ::Tpa; 
+        controls::Tcontrols=(), clippings::Tclippings=(), optargs...
+    ) where {Tmodel,Tpb,Tpa,Tcontrols,Tclippings} = 
+        DynamicSFS{FLOAT_TYPE,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ; 
+            controls=controls, clippings=clippings, optargs...)
 
 function (SFS::DynamicSFS)(pfield, ::BeforeUJ; a=1, b=1)
 

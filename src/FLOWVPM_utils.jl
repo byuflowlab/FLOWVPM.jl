@@ -53,7 +53,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
-    compatible_kernels = _kernel_compatibility[typeof(pfield.viscous).name]
+    compatible_kernels = _kernel_compatibility(pfield.viscous)
 
     if !(pfield.kernel in compatible_kernels)
         error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*

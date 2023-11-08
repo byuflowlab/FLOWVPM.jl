@@ -83,7 +83,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     betas::Array{R, 1}                    # Beta coefficients
     flags::Array{Bool, 1}                 # Convergence flags
 
-    CoreSpreading{R}(
+    CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta;
                         beta=R(1.5),
                         itmax=R(15), tol=R(1e-3),
@@ -93,7 +93,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
                         pAps=zeros(R, 3), alphas=zeros(R, 3), betas=zeros(R, 3),
                         flags=zeros(Bool, 3)
-                    ) where {R} = new(
+                    ) where {R,Tzeta,Trbf} = new(
                         nu, sgm0, zeta,
                         beta,
                         itmax, tol,
