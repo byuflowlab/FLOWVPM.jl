@@ -84,12 +84,12 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     flags::Array{Bool, 1}                 # Convergence flags
 
     CoreSpreading{R,Tzeta,Trbf}(
-                        nu, sgm0, zeta;
+                        nu, sgm0, zeta::Tzeta;
                         beta=R(1.5),
                         itmax=R(15), tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
-                        rbf=rbf_conjugategradient,
+                        rbf::Trbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
                         pAps=zeros(R, 3), alphas=zeros(R, 3), betas=zeros(R, 3),
                         flags=zeros(Bool, 3)
@@ -106,8 +106,8 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreading(nu, sgm0, args...; optargs...
-                    ) = CoreSpreading{FLOAT_TYPE}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), args...; optargs...)
+CoreSpreading(nu, sgm0, zeta::Tzeta; rbf::Trbf=rbf_conjugategradient, optargs...
+                    ) where {Tzeta,Trbf} = CoreSpreading{FLOAT_TYPE,Tzeta,Trbf}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), args...; optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`
@@ -115,7 +115,7 @@ CoreSpreading(nu, sgm0, args...; optargs...
 Returns true if viscous scheme is core spreading.
 """
 iscorespreading(scheme::ViscousScheme
-                            ) = typeof(scheme).name == CoreSpreading.body.name
+                            ) = typeof(scheme) <: CoreSpreading
 
 
 
