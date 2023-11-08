@@ -53,7 +53,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, TUJ, TUinf, Tintegration}
+mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, TUinf, Tintegration}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -66,7 +66,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     t::R                                        # Current time
 
     # Solver setting
-    kernel::Kernel                              # Vortex particle kernel
+    kernel::Tkernel                              # Vortex particle kernel
     UJ::TUJ                                # Particle-to-particle calculation
 
     # Optional inputs
@@ -84,11 +84,11 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 
-    ParticleField{R, F, V, S, TUJ, TUinf, Tintegration}(
+    ParticleField{R, F, V, S, Tkernel, TUJ, TUinf, Tintegration}(
                                 maxparticles,
                                 particles, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
-                                kernel=kernel_default,
+                                kernel::Tkernel=kernel_default,
                                 UJ::TUJ=UJ_fmm,
                                 Uinf::TUinf=Uinf_default,
                                 SFS=SFS_default,
@@ -98,7 +98,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 fmm=FMM(),
                                 M=zeros(R, 4),
                                 toggle_rbf=false, toggle_sfs=false
-                         ) where {R, F, V, S, TUJ, TUinf, Tintegration} = new(
+                         ) where {R, F, V, S, Tkernel, TUJ, TUinf, Tintegration} = new(
                                 maxparticles,
                                 particles, formulation, viscous,
                                 np, nt, t,
@@ -118,11 +118,11 @@ end
 function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
-                                    SFS::S=SFS_default,
+                                    SFS::S=SFS_default, kernel::Tkernel=kernel_default,
                                     UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default, 
                                     integration::Tintegration=rungekutta3,
                                     optargs...
-                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, TUJ, TUinf, Tintegration}
+                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, TUinf, Tintegration}
 
     # create particle field
     particles = [zero(Particle{FLOAT_TYPE}) for _ in 1:maxparticles]
@@ -133,14 +133,15 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{FLOAT_TYPE, F, V, S, TUJ, TUinf, Tintegration}(maxparticles, particles,
+    return ParticleField{FLOAT_TYPE, F, V, S, Tkernel, TUJ, TUinf, Tintegration}(maxparticles, particles,
                                             formulation, viscous;
-                                            np=0, SFS=SFS, UJ=UJ, Uinf=Uinf, 
+                                            np=0, SFS=SFS, kernel=kernel,
+                                            UJ=UJ, Uinf=Uinf, 
                                             integration=integration,
                                             optargs...)
 end
 
-Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R
+Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R
 
 """
     `isLES(pfield::ParticleField)`

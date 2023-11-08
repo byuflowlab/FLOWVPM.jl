@@ -40,11 +40,11 @@ struct Particle{T}
   # Properties
   U::MVector{3,T}                # Velocity at particle (3-elem array)
   W::MVector{3,T}                # Vorticity at particle (3-elem array)
-  J::MMatrix{3,3,T}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
   PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
-  M::MMatrix{3,3,T}                # 3x3 array of auxiliary memory
+  M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
   C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
   S::MVector{3,T}                # Stretching term
 
@@ -65,7 +65,7 @@ function init_zeros3(type::DataType)
 end
 
 function init_zeros33(type::DataType)
-    return MMatrix{3,3,type}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    return MMatrix{3,3,type,9}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
 end
 
 Base.eltype(::Particle{T}) where T = T
