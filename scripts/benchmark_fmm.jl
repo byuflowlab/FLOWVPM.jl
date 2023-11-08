@@ -101,9 +101,12 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
 
 end
 
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=20, nc=2, overwrite_bson=false) # 10 radii long column
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=30, nc=3, overwrite_bson=false) # 10 radii long column
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=40, nc=4, overwrite_bson=false) # 10 radii long column
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=50, nc=5, overwrite_bson=false) # 10 radii long column
-benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=100, nc=10, overwrite_bson=false) # 10 radii long column
+using ProfileView
+
+@profview benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=10, nc=0, overwrite_bson=true) # 10 radii long column
+@profview benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
+# benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=20, nc=2, overwrite_bson=false) # 10 radii long column
+# benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=30, nc=3, overwrite_bson=false) # 10 radii long column
+# benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=40, nc=4, overwrite_bson=false) # 10 radii long column
+# benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=50, nc=5, overwrite_bson=false) # 10 radii long column
+# benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=100, nc=10, overwrite_bson=false) # 10 radii long column

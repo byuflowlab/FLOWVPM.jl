@@ -19,16 +19,12 @@
 * `g::Function`           : Regularizing function g(r).
 * `dgdr::Function`        : Derivative of g(r).
 * `g_dgdr::Function`      : Efficient evaluation of g and dgdr.
-* `EXAFMM_P2P::Int`       : Flag for the ExaFMM P2P function to call.
-* `EXAFMM_L2P::Int`       : Flag for the ExaFMM L2P function to call.
 """
-struct Kernel
-  zeta::Function                        # Basis function zeta(r)
-  g::Function                           # Regularizing function g(r)
-  dgdr::Function                        # Derivative of g(r)
-  g_dgdr::Function                      # Efficient evaluation of g and dgdr
-  EXAFMM_P2P::Int32                     # Flag for the ExaFMM P2P function to call
-  EXAFMM_L2P::Int32                     # Flag for the ExaFMM L2P function to call
+struct Kernel{Tz,Tg,Tdg,Tgdg}
+    zeta::Tz                              # Basis function zeta(r)
+    g::Tg                                 # Regularizing function g(r)
+    dgdr::Tdg                             # Derivative of g(r)
+    g_dgdr::Tgdg                          # Efficient evaluation of g and dgdr
 end
 
 # Constant values

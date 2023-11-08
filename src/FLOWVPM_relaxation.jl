@@ -20,8 +20,8 @@ Defines a relaxation method implemented in the function
 and 1, with 0 == no relaxation, and 1 == full relaxation. The simulation is
 relaxed every `nsteps_relax` steps.
 """
-struct Relaxation{R}
-    relax::Function                 # Relaxation method
+struct Relaxation{R,Trelax}
+    relax::Trelax                 # Relaxation method
     nsteps_relax::Int               # Relax simulation every this many steps
     rlxf::R                         # Relaxation factor between 0 and 1
 end

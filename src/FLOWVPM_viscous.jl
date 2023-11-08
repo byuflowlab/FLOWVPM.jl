@@ -57,11 +57,11 @@ viscousdiffusion(pfield, scheme::Inviscid, dt; optargs...) = nothing
 ################################################################################
 # CORE SPEADING SCHEME TYPE
 ################################################################################
-mutable struct CoreSpreading{R} <: ViscousScheme{R}
+mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     # User inputs
     nu::R                                 # Kinematic viscosity
     sgm0::R                               # Core size after reset
-    zeta::Function                        # Basis function evaluation method
+    zeta::Tzeta                        # Basis function evaluation method
 
     # Optional inputs
     beta::R                               # Maximum core size growth σ/σ_0
@@ -74,7 +74,7 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
 
     # Internal properties
     t_sgm::R                              # Time since last core size reset
-    rbf::Function                         # RBF function
+    rbf::Trbf                         # RBF function
     rr0s::Array{R, 1}                     # Initial field residuals
     rrs::Array{R, 1}                      # Current field residuals
     prev_rrs::Array{R, 1}                 # Previous field residuals

@@ -53,7 +53,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale}
+mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, TUJ, TUinf, Tintegration}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -67,12 +67,12 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
 
     # Solver setting
     kernel::Kernel                              # Vortex particle kernel
-    UJ::Function                                # Particle-to-particle calculation
+    UJ::TUJ                                # Particle-to-particle calculation
 
     # Optional inputs
-    Uinf::Function                              # Uniform freestream function Uinf(t)
+    Uinf::TUinf                              # Uniform freestream function Uinf(t)
     SFS::S                                      # Subfilter-scale contributions scheme
-    integration::Function                       # Time integration scheme
+    integration::Tintegration                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
@@ -136,7 +136,7 @@ function ParticleField(maxparticles::Int;
                                             np=0, SFS=SFS, optargs...)
 end
 
-Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any}) where R = R
+Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R
 
 """
     `isLES(pfield::ParticleField)`

@@ -89,14 +89,14 @@ isSFSenabled(SFS::SubFilterScale) = !(typeof(SFS) <: NoSFS)
 ################################################################################
 # CONSTANT-COEFFICIENT SFS SCHEME
 ################################################################################
-struct ConstantSFS{R} <: SubFilterScale{R}
-    model::Function                 # Model of subfilter scale contributions
+struct ConstantSFS{R,Tmodel,Tcontrols,Tclippings} <: SubFilterScale{R}
+    model::Tmodel                 # Model of subfilter scale contributions
     Cs::R                           # Model coefficient
-    controls::Array{Function, 1}    # Control strategies
-    clippings::Array{Function, 1}   # Clipping strategies
+    controls::Tcontrols    # Control strategies
+    clippings::Tclippings   # Clipping strategies
 
-    function ConstantSFS{R}(model; Cs=R(1), controls=Function[],
-                                            clippings=Function[]) where {R}
+    function ConstantSFS{R}(model; Cs=R(1), controls=(),
+                                            clippings=()) where {R}
         return new(model, Cs, controls, clippings)
     end
 end
@@ -156,14 +156,14 @@ end
     Subfilter-scale scheme with an associated dynamic procedure for calculating
 the model coefficient.
 """
-struct DynamicSFS{R} <: SubFilterScale{R}
+struct DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings} <: SubFilterScale{R}
 
-    model::Function                 # Model of subfilter scale contributions
-    procedure_beforeUJ::Function             # Dynamic procedure
-    procedure_afterUJ::Function             # Dynamic procedure
+    model::Tmodel                 # Model of subfilter scale contributions
+    procedure_beforeUJ::Tpb             # Dynamic procedure
+    procedure_afterUJ::Tpa             # Dynamic procedure
 
-    controls::Array{Function, 1}    # Control strategies
-    clippings::Array{Function, 1}   # Clipping strategies
+    controls::Tcontrols    # Control strategies
+    clippings::Tclippings   # Clipping strategies
 
     alpha::R                        # Scaling factor of test filter width
     rlxf::R                         # Relaxation factor for Lagrangian average
@@ -171,7 +171,7 @@ struct DynamicSFS{R} <: SubFilterScale{R}
     maxC::R                         # Maximum value for model coefficient
 
     function DynamicSFS{R}(model, procedure_beforeUJ, procedure_afterUJ;
-                            controls=Function[], clippings=Function[],
+                            controls=(), clippings=(),
                             alpha=0.667, rlxf=0.005, minC=0, maxC=1) where {R}
 
         return new(model, procedure_beforeUJ, procedure_afterUJ,
