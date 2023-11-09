@@ -102,7 +102,8 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
 end
 
 # using ProfileView
-# @profview benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=10, nc=0, overwrite_bson=true) # 10 radii long column
+# @profview benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
+# @profview benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
 
 benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=10, nc=0, overwrite_bson=true) # 10 radii long column
 benchmark(; formulation=vpm.rVPM, nrings=100, Nphi=10, nc=1, overwrite_bson=true) # 10 radii long column
