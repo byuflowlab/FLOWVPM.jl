@@ -1,3 +1,9 @@
+# activate test environment
+if splitpath(Base.active_project())[end-1] == "FLOWVPM.jl"
+    import TestEnv
+    TestEnv.activate()
+end
+
 using Test
 import Printf: @printf
 import FLOWVPM
@@ -92,8 +98,8 @@ for (description, integration, UJ, nc) in (
                                             beta=beta,
                                             faux=faux,
                                             # ------- OUTPUT OPTIONS ---------------
-                                            save_path=nothing,
-                                            calc_monitors=false,
+                                            save_path="leapfrog/",
+                                            calc_monitors=true,
                                             verbose=verbose1, v_lvl=1,
                                             # verbose_nsteps=ceil(Int, nsteps/4),
                                             verbose_nsteps=100,

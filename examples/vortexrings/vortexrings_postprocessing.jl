@@ -135,7 +135,7 @@ function solve(derivative!, u0, tspan; dt=1e-7, verbose=false, p=())
     
     # initial conditions
     for i_state in eachindex(u0)
-        u[i_state] = u0[i]
+        u[i_state][1] = u0[i_state]
     end
 
     # set up state and derivative containers
@@ -147,12 +147,21 @@ function solve(derivative!, u0, tspan; dt=1e-7, verbose=false, p=())
     for i_point in 2:n_points
         previous_time = t[i_point-1]
         this_dt = t[i_point] - previous_time
-        verbose && (println("\t\tt=$(round(previous_time,digits=4)), u=$(this_u)"))
-        derivative!(this_u_dot, this_u, p, previous_time)
-        for i_state in 1:n_states
-            this_u[i_state] = u[i_state][i_point] = u[i_state][i_point-1] + this_u_dot[i_state] * this_dt
+        # verbose && (println("\t\tt=$(round(previous_time,digits=4)), u=$(this_u)"))
+
+        # update this_u
+        for i_state in eachindex(u0)
+            this_u[i_state] = u[i_state][i_point-1]
         end
-        i_point == n_points && verbose && (println("\t\tt=$(round(t[n_points],digits=4)), u=$(this_u)"))
+
+        # update derivative
+        derivative!(this_u_dot, this_u, p, previous_time)
+
+        # euler step
+        for i_state in 1:n_states
+            u[i_state][i_point] = u[i_state][i_point-1] + this_u_dot[i_state] * this_dt
+        end
+        # i_point == n_points && verbose && (println("\t\tt=$(round(t[n_points],digits=4)), u=$(this_u)"))
     end
 
     verbose && (println("== DONE =="))
@@ -264,15 +273,13 @@ function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
 
     # prob = DifferentialEquations.ODEProblem(borisov2013!, u0, tspan)
     # sol = DifferentialEquations.solve(prob; dtmax=dtmax, verbose=true)
-    t, u = solve(borisov2013!, u0, tspan; dt=dt, verbose=verbose)
+    t, u = solve(borisov2013!, u0, tspan; dt=dtmax/10, verbose=true)
 
+    solRs = [u[5*(ri-1) + 2] for ri in 1:nrings]
+    solZs = [u[5*(ri-1) + 3] for ri in 1:nrings]
+    solas = [u[5*(ri-1) + 4] for ri in 1:nrings]
 
-    ts = sol.t
-    solRs = [[u[5*(ri-1) + 2] for u in sol.u] for ri in 1:nrings]
-    solZs = [[u[5*(ri-1) + 3] for u in sol.u] for ri in 1:nrings]
-    solas = [[u[5*(ri-1) + 4] for u in sol.u] for ri in 1:nrings]
-
-    return sol.t, solRs, solZs, solas, sol
+    return t, solRs, solZs, solas
 end
 
 K(k) = Elliptic.K(k^2)
