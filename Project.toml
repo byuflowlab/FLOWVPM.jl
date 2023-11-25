@@ -12,7 +12,6 @@ HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 
 [compat]
 julia = "1.6"
