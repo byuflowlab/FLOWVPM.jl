@@ -51,7 +51,7 @@ function benchmark(; formulation=vpm.rVPM, nrings=1, Nphi=100, nc=1, overwrite_b
         transposed    = true,
         integration   = integration,
         UJ            = vpm.UJ_fmm,
-        fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4)
+        fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
     )
 
     # --------------- PREPARE ARCHIVES -----------------------------------------

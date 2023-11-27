@@ -50,7 +50,7 @@ solver = (
     transposed    = true,
     integration   = vpm.rungekutta3,
     UJ            = vpm.UJ_fmm,
-    fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4)
+    fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
 )
 
 

@@ -58,7 +58,7 @@ for (description, integration, UJ, nc) in (
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4)
+            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
         )
 
 

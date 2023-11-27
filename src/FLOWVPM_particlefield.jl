@@ -46,8 +46,9 @@ mutable struct FMM
   p::Int64                        # Multipole expansion order
   ncrit::Int64                    # Max number of particles per leaf
   theta::FLOAT_TYPE                  # Neighborhood criterion
+  nonzero_sigma::Bool
 
-  FMM(; p=4, ncrit=50, theta=0.4) = new(p, ncrit, theta)
+  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true) = new(p, ncrit, theta, nonzero_sigma)
 end
 
 ################################################################################

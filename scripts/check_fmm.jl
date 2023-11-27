@@ -115,7 +115,7 @@ pfield = vpm.ParticleField(maxparticles;
     transposed=transposed,
     relaxation=vpm.relaxation_none,
     # relaxation=vpm.relaxation_default,
-    fmm=vpm.FMM(;p=p, ncrit=ncrit, theta=theta),
+    fmm=vpm.FMM(;p=p, ncrit=ncrit, theta=theta, nonzero_sigma=true),
     M=zeros(vpm.FLOAT_TYPE, 4),
     toggle_rbf=false, toggle_sfs=false)
 
