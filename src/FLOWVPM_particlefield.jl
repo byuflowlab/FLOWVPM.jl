@@ -141,7 +141,7 @@ function ParticleField(maxparticles::Int;
                                             optargs...)
 end
 
-Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R
+Base.eltype(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}) where R = R
 
 """
     `isLES(pfield::ParticleField)`
