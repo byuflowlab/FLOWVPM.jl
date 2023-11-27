@@ -53,7 +53,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, TUinf, Tintegration}
+mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -70,7 +70,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     UJ::TUJ                                # Particle-to-particle calculation
 
     # Optional inputs
-    Uinf::TUinf                              # Uniform freestream function Uinf(t)
+    Uinf::Function                              # Uniform freestream function Uinf(t)
     SFS::S                                      # Subfilter-scale contributions scheme
     integration::Tintegration                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
@@ -84,13 +84,13 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 
-    ParticleField{R, F, V, S, Tkernel, TUJ, TUinf, Tintegration}(
+    ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(
                                 maxparticles,
                                 particles, formulation, viscous;
                                 np=0, nt=0, t=R(0.0),
                                 kernel::Tkernel=kernel_default,
                                 UJ::TUJ=UJ_fmm,
-                                Uinf::TUinf=Uinf_default,
+                                Uinf::Function=Uinf_default,
                                 SFS=SFS_default,
                                 integration::Tintegration=rungekutta3,
                                 transposed=true,
@@ -98,7 +98,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 fmm=FMM(),
                                 M=zeros(R, 4),
                                 toggle_rbf=false, toggle_sfs=false
-                         ) where {R, F, V, S, Tkernel, TUJ, TUinf, Tintegration} = new(
+                         ) where {R, F, V, S, Tkernel, TUJ, Tintegration} = new(
                                 maxparticles,
                                 particles, formulation, viscous,
                                 np, nt, t,
@@ -119,10 +119,10 @@ function ParticleField(maxparticles::Int;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
                                     SFS::S=SFS_default, kernel::Tkernel=kernel_default,
-                                    UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default, 
+                                    UJ::TUJ=UJ_fmm, Uinf::Function=Uinf_default, 
                                     integration::Tintegration=rungekutta3,
                                     optargs...
-                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, TUinf, Tintegration}
+                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration}
 
     # create particle field
     particles = [zero(Particle{FLOAT_TYPE}) for _ in 1:maxparticles]
@@ -133,7 +133,7 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{FLOAT_TYPE, F, V, S, Tkernel, TUJ, TUinf, Tintegration}(maxparticles, particles,
+    return ParticleField{FLOAT_TYPE, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
                                             formulation, viscous;
                                             np=0, SFS=SFS, kernel=kernel,
                                             UJ=UJ, Uinf=Uinf, 

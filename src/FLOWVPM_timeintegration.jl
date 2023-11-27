@@ -11,7 +11,7 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
+function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                                 dt::Real; relax::Bool=false) where {R, V}
 
     # Evaluate UJ, SFS, and C
@@ -79,7 +79,7 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale},
+function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                               dt::Real; relax::Bool=false ) where {R, V, R2}
 
     # Evaluate UJ, SFS, and C
@@ -159,7 +159,7 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                             dt::Real; relax::Bool=false) where {R, V}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
@@ -262,7 +262,7 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale},
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                      dt::Real; relax::Bool=false ) where {R, V, R2}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],

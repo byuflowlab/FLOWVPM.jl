@@ -27,7 +27,7 @@ function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGra
     particle_field.particles[i].J .= val
 end
 Base.length(particle_field::ParticleField) = particle_field.np
-Base.eltype(::ParticleField{TF}) where TF = TF
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
 function fmm.buffer_element(system::ParticleField)
     return deepcopy(system.particles[1])
