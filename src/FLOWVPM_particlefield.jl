@@ -116,7 +116,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                           )
 end
 
-function ParticleField(maxparticles::Int;
+function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(),
                                     SFS::S=SFS_default, kernel::Tkernel=kernel_default,
@@ -126,7 +126,7 @@ function ParticleField(maxparticles::Int;
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration}
 
     # create particle field
-    particles = [zero(Particle{FLOAT_TYPE}) for _ in 1:maxparticles]
+    particles = [zero(Particle{R}) for _ in 1:maxparticles]
 
     # Set index of each particle
     for (i, P) in enumerate(particles)
@@ -134,7 +134,7 @@ function ParticleField(maxparticles::Int;
     end
 
     # Generate and return ParticleField
-    return ParticleField{FLOAT_TYPE, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
+    return ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
                                             formulation, viscous;
                                             np=0, SFS=SFS, kernel=kernel,
                                             UJ=UJ, Uinf=Uinf, 
