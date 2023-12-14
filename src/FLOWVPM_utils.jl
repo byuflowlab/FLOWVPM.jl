@@ -42,6 +42,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
+                      custom_UJ=nothing,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
                       create_savepath::Bool=true,

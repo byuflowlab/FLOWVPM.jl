@@ -12,12 +12,16 @@
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
 function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                                dt::Real; relax::Bool=false) where {R, V}
+                                dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
     pfield.SFS(pfield, BeforeUJ())
-    pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    if isnothing(custom_UJ)
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    else
+        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    end
     pfield.SFS(pfield, AfterUJ())
 
     # Calculate freestream
@@ -80,12 +84,16 @@ Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
 function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                              dt::Real; relax::Bool=false ) where {R, V, R2}
+                              dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
 
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
     pfield.SFS(pfield, BeforeUJ())
-    pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    if isnothing(custom_UJ)
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    else
+        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    end
     pfield.SFS(pfield, AfterUJ())
     
     # Calculate freestream
@@ -160,7 +168,7 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                            dt::Real; relax::Bool=false) where {R, V}
+                            dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
 
@@ -179,7 +187,11 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
-        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        else
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
@@ -263,7 +275,7 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                     dt::Real; relax::Bool=false ) where {R, V, R2}
+                     dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
     #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
@@ -285,7 +297,11 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
-        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        else
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
