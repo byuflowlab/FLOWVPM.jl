@@ -102,7 +102,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax)
+            nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
 
             # Remove static particles (assumes particles remained sorted)
             if remove==nothing || remove
@@ -190,6 +190,8 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true)]
     h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
     h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
+    h5["velocity"] = [P.U[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["vorticity"] = [P.W[i] for i in 1:3, P in iterate(self; include_static=true)]
 
     if isLES(self)
         h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
@@ -253,6 +255,20 @@ function save(self::ParticleField, file_name::String; path::String="",
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
                             " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":Gamma</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: vorticity
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"vorticity\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":vorticity</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: sigma

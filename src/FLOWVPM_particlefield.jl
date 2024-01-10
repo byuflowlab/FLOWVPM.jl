@@ -67,13 +67,13 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     t::R                                        # Current time
 
     # Solver setting
-    kernel::Tkernel                              # Vortex particle kernel
-    UJ::TUJ                                # Particle-to-particle calculation
+    kernel::Tkernel                             # Vortex particle kernel
+    UJ::TUJ                                     # Particle-to-particle calculation
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
     SFS::S                                      # Subfilter-scale contributions scheme
-    integration::Tintegration                       # Time integration scheme
+    integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
@@ -311,13 +311,21 @@ function remove_particle(self::ParticleField, i::Int)
 
     if i != get_np(self)
         # Overwrite target particle with last particle in the field
-        # fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
-        self.particles[i] = Plast
+        Ptarg = get_particle(self, i)
 
-        # Ptarg = get_particle(self, i)
-        # Ptarg.circulation .= Plast.circulation
-        # Ptarg.C .= Plast.C
-        # Ptarg.static .= Plast.static
+        Ptarg.X .= Plast.X
+        Ptarg.Gamma .= Plast.Gamma
+        Ptarg.sigma .= Plast.sigma
+        Ptarg.vol .= Plast.vol
+        Ptarg.circulation .= Plast.circulation
+        Ptarg.static .= Plast.static
+        Ptarg.U .= Plast.U
+        Ptarg.W .= Plast.W
+        Ptarg.J .= Plast.J
+        Ptarg.PSE .= Plast.PSE
+        Ptarg.C .= Plast.C
+        Ptarg.static .= Plast.static
+        Ptarg.index .= Plast.index
     end
 
     # Remove last particle in the field

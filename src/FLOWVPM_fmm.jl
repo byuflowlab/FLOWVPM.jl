@@ -10,27 +10,22 @@ Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].U
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = particle_field.particles[i].J
 Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
-function Base.setindex!(particle_field::ParticleField, val, i)
-    particle_field.particles[i] = val
-end
-function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential)
-    nothing
-end
-function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential)
-    nothing
-end
+
+Base.setindex!(particle_field::ParticleField, val, i) = particle_field.particles[i] = val
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
 function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity)
-    particle_field.particles[i].U .= val
+    for j in 1:3
+        particle_field.particles[i].U[j] = val[j]
+    end
 end
-function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient)
-    particle_field.particles[i].J .= val
-end
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[i].J .= val
+
 Base.length(particle_field::ParticleField) = particle_field.np
+
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
-function fmm.buffer_element(system::ParticleField)
-    return deepcopy(system.particles[1])
-end
+fmm.buffer_element(system::ParticleField) = deepcopy(system.particles[1])
 
 fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
 
@@ -123,8 +118,9 @@ end
 
 function fmm.direct!(target_system, target_index, source_system::ParticleField, source_index)
     for j_target in target_index
+        du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3 = (zero(eltype(target_system)) for _ in 1:9)
+        Ux, Uy, Uz = (zero(eltype(target_system)) for _ in 1:3)
         target_x, target_y, target_z = target_system[j_target,fmm.POSITION]
-        velocity_gradient = reshape(target_system[j_target,fmm.VELOCITY_GRADIENT],9)
         for i_source in source_index
             gamma_x, gamma_y, gamma_z = source_system.particles[i_source].Gamma
             source_x, source_y, source_z = source_system.particles[i_source].X
@@ -144,10 +140,9 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
                 crss3 = -const4 / r^3 * ( dx*gamma_y - dy*gamma_x )
 
                 # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-                Ux = g_sgm * crss1
-                Uy = g_sgm * crss2
-                Uz = g_sgm * crss3
-                target_system[j_target,fmm.VELOCITY] .+= Ux, Uy, Uz
+                Ux += g_sgm * crss1
+                Uy += g_sgm * crss2
+                Uz += g_sgm * crss3
 
                 # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                 # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
@@ -156,19 +151,20 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
                 # Adds the Kronecker delta term
                 aux2 = -const4 * g_sgm / r^3
                 # j=1
-                du1x1 = aux * crss1 * dx
-                du2x1 = aux * crss2 * dx - aux2 * gamma_z
-                du3x1 = aux * crss3 * dx + aux2 * gamma_y
+                du1x1 += aux * crss1 * dx
+                du2x1 += aux * crss2 * dx - aux2 * gamma_z
+                du3x1 += aux * crss3 * dx + aux2 * gamma_y
                 # j=2
-                du1x2 = aux * crss1 * dy + aux2 * gamma_z
-                du2x2 = aux * crss2 * dy
-                du3x2 = aux * crss3 * dy - aux2 * gamma_x
+                du1x2 += aux * crss1 * dy + aux2 * gamma_z
+                du2x2 += aux * crss2 * dy
+                du3x2 += aux * crss3 * dy - aux2 * gamma_x
                 # j=3
-                du1x3 = aux * crss1 * dz - aux2 * gamma_y
-                du2x3 = aux * crss2 * dz + aux2 * gamma_x
-                du3x3 = aux * crss3 * dz
-                velocity_gradient .+= du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
+                du1x3 += aux * crss1 * dz - aux2 * gamma_y
+                du2x3 += aux * crss2 * dz + aux2 * gamma_x
+                du3x3 += aux * crss3 * dz
             end
         end
+        target_system[j_target,fmm.VELOCITY] += SVector{3,typeof(Ux)}(Ux, Uy, Uz)
+        target_system[j_target,fmm.VELOCITY_GRADIENT] += SMatrix{3,3,typeof(du1x1),9}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
     end
 end
