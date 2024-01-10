@@ -67,13 +67,13 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     t::R                                        # Current time
 
     # Solver setting
-    kernel::Tkernel                              # Vortex particle kernel
-    UJ::TUJ                                # Particle-to-particle calculation
+    kernel::Tkernel                             # Vortex particle kernel
+    UJ::TUJ                                     # Particle-to-particle calculation
 
     # Optional inputs
     Uinf::Function                              # Uniform freestream function Uinf(t)
     SFS::S                                      # Subfilter-scale contributions scheme
-    integration::Tintegration                       # Time integration scheme
+    integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::Relaxation{R}                   # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings

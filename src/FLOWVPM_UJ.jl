@@ -138,7 +138,7 @@ function UJ_fmm(pfield::ParticleField;
         rbf::Bool=false, 
         sfs::Bool=false, 
         sfs_type::Int=-1, # unused
-        transposed_sfs::Bool=true,
+        transposed_sfs::Bool=true, # unused
         reset::Bool=true, 
         reset_sfs::Bool=false,
         sort::Bool=true
