@@ -503,7 +503,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     end
 
     # Flush temporal memory
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); p.M .= zero(R); end;
 
     return nothing
 end

@@ -107,7 +107,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
 end
 
 CoreSpreading(nu, sgm0, zeta::Tzeta; rbf::Trbf=rbf_conjugategradient, optargs...
-                    ) where {Tzeta,Trbf} = CoreSpreading{FLOAT_TYPE,Tzeta,Trbf}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), args...; optargs...)
+                    ) where {Tzeta,Trbf} = CoreSpreading{FLOAT_TYPE,Tzeta,Trbf}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), zeta; rbf, optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`

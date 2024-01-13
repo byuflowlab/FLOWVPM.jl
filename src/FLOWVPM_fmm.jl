@@ -109,7 +109,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
 
                 # include self-induced contribution to SFS
                 if source_system.toggle_sfs
-                    source_system.SFS.model(target_particle::Particle, source_particle::Particle, r, source_system.kernel.zeta, source_system.transposed)
+                    Estr_direct(target_particle::Particle, source_particle::Particle, r, source_system.kernel.zeta, source_system.transposed)
                 end
             end
         end
