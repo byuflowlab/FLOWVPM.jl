@@ -44,6 +44,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       static_particles_function::Function=static_particles_default,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
+                      save_pfield::Bool=true,
                       create_savepath::Bool=true,
                       run_name::String="pfield",
                       save_code::String="",
@@ -117,7 +118,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                             vprintln(str, v_lvl+2) : nothing)
 
         # Save particle field
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+        if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
                                         overwrite_time=overwrite_time)
@@ -149,8 +150,9 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1; nt=self.nt, t=self.t,
-                                            formulation=formulation_classic)
+        dummy_pfield = ParticleField(1, eltype(self.M); nt=self.nt, t=self.t,
+                                            formulation=formulation_classic,
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.M)(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
@@ -500,7 +502,7 @@ function create_path(save_path::String, prompt::Bool)
             opts1 = ["y", "n"]
             while false==(inp1 in opts1)
                 print("\n\nFolder $save_path already exists. Remove? (y/n) ")
-                inp1 = readline()[1:end]
+                inp1 = "y"#readline()[1:end]
             end
             if inp1=="y"
                 rm(save_path, recursive=true, force=true)

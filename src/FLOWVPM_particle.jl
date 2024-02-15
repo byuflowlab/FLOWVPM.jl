@@ -82,6 +82,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros
                                                       init_zero(Int32))
 
 
+
 ##### FUNCTIONS ################################################################
 get_U(P::Particle) = P.U
 
