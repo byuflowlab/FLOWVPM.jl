@@ -21,7 +21,7 @@ function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity)
 end
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[i].J .= val
 
-Base.length(particle_field::ParticleField) = particle_field.np
+fmm.get_n_bodies(particle_field::ParticleField) = particle_field.np
 
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
