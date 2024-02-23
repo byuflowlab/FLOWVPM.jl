@@ -314,25 +314,20 @@ function remove_particle(self::ParticleField, i::Int)
 
     if i != get_np(self)
         # Overwrite target particle with last particle in the field
-        # fmm.overwriteBody(self.bodies, i-1, get_np(self)-1)
         Ptarg = get_particle(self, i)
-        
+
         Ptarg.X .= Plast.X
         Ptarg.Gamma .= Plast.Gamma
         Ptarg.sigma .= Plast.sigma
         Ptarg.vol .= Plast.vol
         Ptarg.circulation .= Plast.circulation
         Ptarg.static .= Plast.static
-
         Ptarg.U .= Plast.U
         Ptarg.W .= Plast.W
         Ptarg.J .= Plast.J
         Ptarg.PSE .= Plast.PSE
-
-        Ptarg.M .= Plast.M
         Ptarg.C .= Plast.C
-        Ptarg.S .= Plast.S
-
+        Ptarg.static .= Plast.static
         Ptarg.index .= Plast.index
     end
 
