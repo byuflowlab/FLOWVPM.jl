@@ -40,7 +40,7 @@ struct Particle{T}
   # Properties
   # U::MVector{3,T}                # Velocity at particle (3-elem array)
   # W::MVector{3,T}                # Vorticity at particle (3-elem array)
-  J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  # J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
   # PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
@@ -88,7 +88,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       init_zero(Bool),
                                                       # init_zeros3(T),
                                                       # init_zeros3(T),
-                                                      init_zeros33(T),
+                                                      # init_zeros33(T),
                                                       # init_zeros3(T),
                                                       init_zeros33(T),
                                                       # init_zeros3(T),
@@ -104,9 +104,9 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
 get_U(P::Particle) = P.var[10:12]
 
 get_W(P::Particle) = (get_W1(P), get_W2(P), get_W3(P))
-get_W1(P::Particle) = P.J[3,2]-P.J[2,3]
-get_W2(P::Particle) = P.J[1,3]-P.J[3,1]
-get_W3(P::Particle) = P.J[2,1]-P.J[1,2]
+get_W1(P::Particle) = P.var[21]-P.var[23]
+get_W2(P::Particle) = P.var[22]-P.var[18]
+get_W3(P::Particle) = P.var[17]-P.var[19]
 
 get_SFS1(P::Particle) = P.var[40]
 get_SFS2(P::Particle) = P.var[41]

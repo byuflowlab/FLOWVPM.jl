@@ -318,7 +318,7 @@ function remove_particle(self::ParticleField, i::Int)
 
         Ptarg.var[1:15] .= Plast.var[1:15]
         Ptarg.static .= Plast.static
-        Ptarg.J .= Plast.J
+        Ptarg.var[16:24] .= Plast.var[16:24]
         Ptarg.var[25:27] .= Plast.var[25:27]
         Ptarg.var[37:39] .= Plast.var[37:39]
         Ptarg.static .= Plast.static
@@ -361,21 +361,7 @@ function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle(P::Particle{T}, tzero::T) where {T}
-    P.var[10:12] .= tzero
-
-    P.var[13:15] .= tzero
-
-    P.J[1, 1] = tzero
-    P.J[2, 1] = tzero
-    P.J[3, 1] = tzero
-    P.J[1, 2] = tzero
-    P.J[2, 2] = tzero
-    P.J[3, 2] = tzero
-    P.J[1, 3] = tzero
-    P.J[2, 3] = tzero
-    P.J[3, 3] = tzero
-
-    P.var[25:27] .= tzero
+    P.var[10:27] .= tzero
 end
 _reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 

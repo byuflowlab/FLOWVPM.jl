@@ -383,14 +383,14 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] = p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6]
-            p.M[2, 1] = p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6]
-            p.M[3, 1] = p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6]
+            p.M[1, 1] = p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
+            p.M[2, 1] = p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
+            p.M[3, 1] = p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] = p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6]
-            p.M[2, 1] = p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6]
-            p.M[3, 1] = p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6]
+            p.M[1, 1] = p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
+            p.M[2, 1] = p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
+            p.M[3, 1] = p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
@@ -433,14 +433,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] -= p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6]
-            p.M[2, 1] -= p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6]
-            p.M[3, 1] -= p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6]
+            p.M[1, 1] -= p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
+            p.M[2, 1] -= p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
+            p.M[3, 1] -= p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] -= p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6]
-            p.M[2, 1] -= p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6]
-            p.M[3, 1] -= p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6]
+            p.M[1, 1] -= p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
+            p.M[2, 1] -= p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
+            p.M[3, 1] -= p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored

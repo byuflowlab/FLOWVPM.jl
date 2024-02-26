@@ -43,14 +43,14 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any
         ## Vortex stretching contributions
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.var[4] += dt*(p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6])
-            p.var[5] += dt*(p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6])
-            p.var[6] += dt*(p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6])
+            p.var[4] += dt*(p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6])
+            p.var[5] += dt*(p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6])
+            p.var[6] += dt*(p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6])
         else
             # Classic scheme (Γ⋅∇)U
-            p.var[4] += dt*(p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6])
-            p.var[5] += dt*(p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6])
-            p.var[6] += dt*(p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6])
+            p.var[4] += dt*(p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6])
+            p.var[5] += dt*(p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6])
+            p.var[6] += dt*(p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6])
         end
 
         ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
@@ -116,14 +116,14 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
         # Store stretching S under MM[1:3]
         if pfield.transposed
             # Transposed scheme S = (Γ⋅∇')U
-            MM[1] = (p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6])
-            MM[2] = (p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6])
-            MM[3] = (p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6])
+            MM[1] = (p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6])
+            MM[2] = (p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6])
+            MM[3] = (p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6])
         else
             # Classic scheme S = (Γ⋅∇)U
-            MM[1] = (p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6])
-            MM[2] = (p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6])
-            MM[3] = (p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6])
+            MM[1] = (p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6])
+            MM[2] = (p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6])
+            MM[3] = (p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6])
         end
 
         # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
@@ -213,14 +213,14 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
             ## Stretching + SFS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             else
                 # Classic scheme (Γ⋅∇)U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             end
 
             # Update vectorial circulation
@@ -323,14 +323,14 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             # Store stretching S under M[1:3]
             if pfield.transposed
                 # Transposed scheme S = (Γ⋅∇')U
-                MM[1] = p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6]
-                MM[2] = p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6]
-                MM[3] = p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6]
+                MM[1] = p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
+                MM[2] = p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
+                MM[3] = p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
             else
                 # Classic scheme (Γ⋅∇)U
-                MM[1] = p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6]
-                MM[2] = p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6]
-                MM[3] = p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6]
+                MM[1] = p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
+                MM[2] = p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
+                MM[3] = p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
             end
 
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)

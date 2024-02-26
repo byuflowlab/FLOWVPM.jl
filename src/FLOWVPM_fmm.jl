@@ -8,7 +8,7 @@ Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:An
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].var[4:6]
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].var[10:12]
-Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = particle_field.particles[i].J
+Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(particle_field.particles[i].var[16:24], (3,3))
 Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
 
 Base.setindex!(particle_field::ParticleField, val, i) = particle_field.particles[i] = val
@@ -17,7 +17,7 @@ Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = n
 function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity)
     particle_field.particles[i].var[10:12] .= val[1:3]
 end
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[i].J .= val
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[i].var[16:24] .= reshape(val, 9)
 
 fmm.get_n_bodies(particle_field::ParticleField) = particle_field.np
 
@@ -58,7 +58,8 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
         r = zero(eltype(source_system))
         for target_particle in view(target_system.particles,target_index)
             target_x, target_y, target_z = target_particle.var[1:3]
-            J = reshape(target_particle.J,9)
+            # J = reshape(target_particle.var[16:24],9)
+            J = target_particle.var[16:24]
             for source_particle in view(source_system.particles,source_index)
                 gamma_x, gamma_y, gamma_z = source_particle.var[4:6]
                 source_x, source_y, source_z = source_particle.var[1:3]

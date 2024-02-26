@@ -38,14 +38,14 @@ Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
 function relax_pedrizzetti(rlxf::Real, p::Particle)
 
-    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmw = sqrt( (p.var[21]-p.var[23])*(p.var[21]-p.var[23]) +
+                    (p.var[22]-p.var[18])*(p.var[22]-p.var[18]) +
+                    (p.var[17]-p.var[19])*(p.var[17]-p.var[19]))
     nrmGamma = sqrt(p.var[4]^2 + p.var[5]^2 + p.var[6]^2)
 
-    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.var[21]-p.var[23])/nrmw
+    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.var[22]-p.var[18])/nrmw
+    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.var[17]-p.var[19])/nrmw
 
     return nothing
 end
@@ -60,20 +60,20 @@ to continually decrease over time. See notebook 20200921 for derivation.
 """
 function relax_correctedpedrizzetti(rlxf::Real, p::Particle)
 
-    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
-                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
-                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmw = sqrt( (p.var[21]-p.var[23])*(p.var[21]-p.var[23]) +
+                    (p.var[22]-p.var[18])*(p.var[22]-p.var[18]) +
+                    (p.var[17]-p.var[19])*(p.var[17]-p.var[19]))
     nrmGamma = sqrt(p.var[4]^2 + p.var[5]^2 + p.var[6]^2)
 
     b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
-                                    p.var[4]*(p.J[3,2]-p.J[2,3]) +
-                                    p.var[5]*(p.J[1,3]-p.J[3,1]) +
-                                    p.var[6]*(p.J[2,1]-p.J[1,2])
+                                    p.var[4]*(p.var[21]-p.var[23]) +
+                                    p.var[5]*(p.var[22]-p.var[18]) +
+                                    p.var[6]*(p.var[17]-p.var[19])
                                    ) / (nrmGamma*nrmw))
 
-    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.var[21]-p.var[23])/nrmw
+    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.var[22]-p.var[18])/nrmw
+    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.var[17]-p.var[19])/nrmw
 
     # Normalize the direction of the new vector to maintain the same strength
     p.var[4:6] ./= sqrt(b2)

@@ -18,14 +18,14 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     # Stretching term
     if transposed
         # Transposed scheme (Γq⋅∇')(Up - Uq)
-        S1 = (target_particle.J[1,1] - source_particle.J[1,1])*source_particle.var[4]+(target_particle.J[2,1] - source_particle.J[2,1])*source_particle.var[5]+(target_particle.J[3,1] - source_particle.J[3,1])*source_particle.var[6]
-        S2 = (target_particle.J[1,2] - source_particle.J[1,2])*source_particle.var[4]+(target_particle.J[2,2] - source_particle.J[2,2])*source_particle.var[5]+(target_particle.J[3,2] - source_particle.J[3,2])*source_particle.var[6]
-        S3 = (target_particle.J[1,3] - source_particle.J[1,3])*source_particle.var[4]+(target_particle.J[2,3] - source_particle.J[2,3])*source_particle.var[5]+(target_particle.J[3,3] - source_particle.J[3,3])*source_particle.var[6]
+        S1 = (target_particle.var[16] - source_particle.var[16])*source_particle.var[4]+(target_particle.var[17] - source_particle.var[17])*source_particle.var[5]+(target_particle.var[18] - source_particle.var[18])*source_particle.var[6]
+        S2 = (target_particle.var[19] - source_particle.var[19])*source_particle.var[4]+(target_particle.var[20] - source_particle.var[20])*source_particle.var[5]+(target_particle.var[21] - source_particle.var[21])*source_particle.var[6]
+        S3 = (target_particle.var[22] - source_particle.var[22])*source_particle.var[4]+(target_particle.var[23] - source_particle.var[23])*source_particle.var[5]+(target_particle.var[24] - source_particle.var[24])*source_particle.var[6]
     else
         # Classic scheme (Γq⋅∇)(Up - Uq)
-        S1 = (p.J[1,1] - source_particle.J[1,1])*source_particle.var[4]+(p.J[1,2] - source_particle.J[1,2])*source_particle.var[5]+(p.J[1,3] - source_particle.J[1,3])*source_particle.var[6]
-        S2 = (p.J[2,1] - source_particle.J[2,1])*source_particle.var[4]+(p.J[2,2] - source_particle.J[2,2])*source_particle.var[5]+(p.J[2,3] - source_particle.J[2,3])*source_particle.var[6]
-        S3 = (p.J[3,1] - source_particle.J[3,1])*source_particle.var[4]+(p.J[3,2] - source_particle.J[3,2])*source_particle.var[5]+(p.J[3,3] - source_particle.J[3,3])*source_particle.var[6]
+        S1 = (p.var[16] - source_particle.var[16])*source_particle.var[4]+(p.var[19] - source_particle.var[19])*source_particle.var[5]+(p.var[22] - source_particle.var[22])*source_particle.var[6]
+        S2 = (p.var[17] - source_particle.var[17])*source_particle.var[4]+(p.var[20] - source_particle.var[20])*source_particle.var[5]+(p.var[23] - source_particle.var[23])*source_particle.var[6]
+        S3 = (p.var[18] - source_particle.var[18])*source_particle.var[4]+(p.var[21] - source_particle.var[21])*source_particle.var[5]+(p.var[24] - source_particle.var[24])*source_particle.var[6]
     end
 
     zeta_sgm = (r/source_particle.var[7]) / source_particle.var[7]^3

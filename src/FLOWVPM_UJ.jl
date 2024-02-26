@@ -88,31 +88,31 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
                 # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
                 aux = dg_sgmdr/(Pj.var[7]*r) - 3*g_sgm /r^2
                 # j=1
-                Pi.J[1, 1] += aux * crss1 * dX1
-                Pi.J[2, 1] += aux * crss2 * dX1
-                Pi.J[3, 1] += aux * crss3 * dX1
+                Pi.var[16] += aux * crss1 * dX1
+                Pi.var[17] += aux * crss2 * dX1
+                Pi.var[18] += aux * crss3 * dX1
                 # j=2
-                Pi.J[1, 2] += aux * crss1 * dX2
-                Pi.J[2, 2] += aux * crss2 * dX2
-                Pi.J[3, 2] += aux * crss3 * dX2
+                Pi.var[19] += aux * crss1 * dX2
+                Pi.var[20] += aux * crss2 * dX2
+                Pi.var[21] += aux * crss3 * dX2
                 # j=3
-                Pi.J[1, 3] += aux * crss1 * dX3
-                Pi.J[2, 3] += aux * crss2 * dX3
-                Pi.J[3, 3] += aux * crss3 * dX3
+                Pi.var[22] += aux * crss1 * dX3
+                Pi.var[23] += aux * crss2 * dX3
+                Pi.var[24] += aux * crss3 * dX3
 
                 # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
                 # Adds the Kronecker delta term
                 aux = - const4 * g_sgm / r^3
 
                 # j=1
-                Pi.J[2, 1] -= aux * Pj.var[6]
-                Pi.J[3, 1] += aux * Pj.var[5]
+                Pi.var[17] -= aux * Pj.var[6]
+                Pi.var[18] += aux * Pj.var[5]
                 # j=2
-                Pi.J[1, 2] += aux * Pj.var[6]
-                Pi.J[3, 2] -= aux * Pj.var[4]
+                Pi.var[19] += aux * Pj.var[6]
+                Pi.var[21] -= aux * Pj.var[4]
                 # j=3
-                Pi.J[1, 3] -= aux * Pj.var[5]
-                Pi.J[2, 3] += aux * Pj.var[4]
+                Pi.var[22] -= aux * Pj.var[5]
+                Pi.var[23] += aux * Pj.var[4]
 
             end
             if toggle_sfs
