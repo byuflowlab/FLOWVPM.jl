@@ -7,7 +7,7 @@ Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.p
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].var[4:6]
-Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].U
+Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].var[10:12]
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = particle_field.particles[i].J
 Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
 
@@ -15,9 +15,7 @@ Base.setindex!(particle_field::ParticleField, val, i) = particle_field.particles
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
 function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity)
-    for j in 1:3
-        particle_field.particles[i].U[j] = val[j]
-    end
+    particle_field.particles[i].var[10:12] .= val[1:3]
 end
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[i].J .= val
 
@@ -83,7 +81,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
-                    target_particle.U .+= Ux, Uy, Uz
+                    target_particle.var[10:12] .+= Ux, Uy, Uz
 
                     # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                     # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp

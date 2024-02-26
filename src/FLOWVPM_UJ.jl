@@ -80,9 +80,9 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
                 crss3 = -const4 / r^3 * ( dX1*Pj.var[5] - dX2*Pj.var[4] )
 
                 # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-                Pi.U[1] += g_sgm * crss1
-                Pi.U[2] += g_sgm * crss2
-                Pi.U[3] += g_sgm * crss3
+                Pi.var[10] += g_sgm * crss1
+                Pi.var[11] += g_sgm * crss2
+                Pi.var[12] += g_sgm * crss3
 
                 # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                 # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp

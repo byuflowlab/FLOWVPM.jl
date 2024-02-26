@@ -235,7 +235,7 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 get_X(self::ParticleField, i::Int) = get_particle(self, i).var[1:3]
 get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).var[4:6]
 get_sigma(self::ParticleField, i::Int) = get_particle(self, i).var[7]
-get_U(self::ParticleField, i::Int) = get_particle(self, i).U
+get_U(self::ParticleField, i::Int) = get_particle(self, i).var[10:12]
 get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
 """
@@ -316,9 +316,8 @@ function remove_particle(self::ParticleField, i::Int)
         # Overwrite target particle with last particle in the field
         Ptarg = get_particle(self, i)
 
-        Ptarg.var[1:9] .= Plast.var[1:9]
+        Ptarg.var[1:12] .= Plast.var[1:12]
         Ptarg.static .= Plast.static
-        Ptarg.U .= Plast.U
         Ptarg.W .= Plast.W
         Ptarg.J .= Plast.J
         Ptarg.PSE .= Plast.PSE
@@ -363,9 +362,9 @@ function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle(P::Particle{T}, tzero::T) where {T}
-    P.U[1] = tzero
-    P.U[2] = tzero
-    P.U[3] = tzero
+    P.var[10] = tzero
+    P.var[11] = tzero
+    P.var[12] = tzero
 
     P.W .= tzero
 
