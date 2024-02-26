@@ -177,7 +177,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.X .= X
     P.Gamma .= Gamma
     P.sigma .= sigma
-    P.vol .= vol
+    P.var[8] = vol
     P.circulation .= abs.(circulation)
     P.C .= C
     P.static .= static
@@ -196,7 +196,7 @@ Add a copy of Particle `P` to the field.
 """
 function add_particle(self::ParticleField, P::Particle)
     return add_particle(self, P.X, P.Gamma, P.sigma;
-                            vol=P.vol, circulation=P.circulation,
+                        vol=P.var[8], circulation=P.circulation,
                             C=P.C, static=P.static)
 end
 

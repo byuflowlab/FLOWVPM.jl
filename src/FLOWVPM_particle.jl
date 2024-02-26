@@ -54,6 +54,9 @@ struct Particle{T}
 #   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
   index::MVector{1,Int32}        # Particle index (1-elem array)
+
+  # Combined vector of all variables
+  var::MVector{42,T}
 end
 
 function init_zero(type::DataType)
@@ -68,6 +71,10 @@ function init_zeros33(type::DataType)
     return MMatrix{3,3,type,9}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
 end
 
+function init_zeros42(type::DataType)
+    return @MVector zeros(type, 42)
+end
+
 Base.eltype(::Particle{T}) where T = T
 Base.eltype(::AbstractArray{Particle{T}}) where T = T
 
@@ -79,7 +86,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros
                                                       init_zeros33(T), init_zeros3(T), init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
-                                                      init_zero(Int32))
+                                                    init_zero(Int32), init_zeros42(T))
 
 
 

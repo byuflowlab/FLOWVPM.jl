@@ -225,7 +225,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     # Recalculate particle volume from current particle smoothing
     if scheme.recalculate_vols
         for p in iterator(pfield)
-            p.vol[1] = 4/3*pi*p.sigma[1]^3
+            p.var[8] = 4/3*pi*p.sigma[1]^3
         end
     end
 
@@ -298,7 +298,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            P.M[i] = P.M[i+6]*P.vol[1]
+            P.M[i] = P.M[i+6]*P.var[8]
             # Sets initial guess as Gamma for vorticity evaluation
             P.Gamma[i] = P.M[i]
         end
