@@ -178,7 +178,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.Gamma .= Gamma
     P.var[7] = sigma
     P.var[8] = vol
-    P.circulation .= abs.(circulation)
+    P.var[9] = abs.(circulation)
     P.C .= C
     P.static .= static
     P.index .= index==-1 ? get_np(self) : index
@@ -196,7 +196,7 @@ Add a copy of Particle `P` to the field.
 """
 function add_particle(self::ParticleField, P::Particle)
     return add_particle(self, P.X, P.Gamma, P.var[7];
-                        vol=P.var[8], circulation=P.circulation,
+                        vol=P.var[8], circulation=P.var[9],
                             C=P.C, static=P.static)
 end
 
@@ -318,9 +318,7 @@ function remove_particle(self::ParticleField, i::Int)
 
         Ptarg.X .= Plast.X
         Ptarg.Gamma .= Plast.Gamma
-        Ptarg.var[7] = Plast.var[7]
-        Ptarg.var[8] = Plast.var[8]
-        Ptarg.circulation .= Plast.circulation
+        Ptarg.var[7:9] .= Plast.var[7:9]
         Ptarg.static .= Plast.static
         Ptarg.U .= Plast.U
         Ptarg.W .= Plast.W
