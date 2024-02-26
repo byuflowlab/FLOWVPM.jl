@@ -35,9 +35,9 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any
         C::R = p.C[1]
 
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        p.var[1] += dt*(p.U[1] + Uinf[1])
+        p.var[2] += dt*(p.U[2] + Uinf[2])
+        p.var[3] += dt*(p.U[3] + Uinf[3])
 
         # Update vectorial circulation
         ## Vortex stretching contributions
@@ -109,9 +109,9 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
         C::R = p.C[1]
 
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        p.var[1] += dt*(p.U[1] + Uinf[1])
+        p.var[2] += dt*(p.U[2] + Uinf[2])
+        p.var[3] += dt*(p.U[3] + Uinf[3])
 
         # Store stretching S under MM[1:3]
         if pfield.transposed
@@ -206,9 +206,9 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
             p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
 
             # Update position
-            p.X[1] += b*p.M[1, 1]
-            p.X[2] += b*p.M[2, 1]
-            p.X[3] += b*p.M[3, 1]
+            p.var[1] += b*p.M[1, 1]
+            p.var[2] += b*p.M[2, 1]
+            p.var[3] += b*p.M[3, 1]
 
             ## Stretching + SFS contributions
             if pfield.transposed
@@ -316,9 +316,9 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
 
             # Update position
-            p.X[1] += b*p.M[1, 1]
-            p.X[2] += b*p.M[2, 1]
-            p.X[3] += b*p.M[3, 1]
+            p.var[1] += b*p.M[1, 1]
+            p.var[2] += b*p.M[2, 1]
+            p.var[3] += b*p.M[3, 1]
 
             # Store stretching S under M[1:3]
             if pfield.transposed

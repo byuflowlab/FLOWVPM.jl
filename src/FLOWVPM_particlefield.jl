@@ -174,7 +174,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P = get_particle(self, get_np(self)+1; emptyparticle=true)
 
     # Populate the empty particle
-    P.X .= X
+    P.var[1:3] .= X
     P.var[4:6] .= Gamma
     P.var[7] = sigma
     P.var[8] = vol
@@ -195,7 +195,7 @@ end
 Add a copy of Particle `P` to the field.
 """
 function add_particle(self::ParticleField, P::Particle)
-    return add_particle(self, P.X, P.var[4:6], P.var[7];
+    return add_particle(self, P.var[1:3], P.var[4:6], P.var[7];
                         vol=P.var[8], circulation=P.var[9],
                             C=P.C, static=P.static)
 end
@@ -232,7 +232,7 @@ iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
 "Alias for `get_particleiterator`"
 iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
-get_X(self::ParticleField, i::Int) = get_particle(self, i).X
+get_X(self::ParticleField, i::Int) = get_particle(self, i).var[1:3]
 get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).var[4:6]
 get_sigma(self::ParticleField, i::Int) = get_particle(self, i).var[7]
 get_U(self::ParticleField, i::Int) = get_particle(self, i).U
@@ -262,7 +262,7 @@ julia> # Add particles
 
 julia> # Iterate over particles
        for P in FLOWVPM.get_particleiterator(pfield)
-           println(P.X)
+           println(P.var[1:3])
        end
 [1.0, 10.0, 100.0]
 [2.0, 20.0, 200.0]
@@ -316,8 +316,7 @@ function remove_particle(self::ParticleField, i::Int)
         # Overwrite target particle with last particle in the field
         Ptarg = get_particle(self, i)
 
-        Ptarg.X .= Plast.X
-        Ptarg.var[4:9] .= Plast.var[4:9]
+        Ptarg.var[1:9] .= Plast.var[1:9]
         Ptarg.static .= Plast.static
         Ptarg.U .= Plast.U
         Ptarg.W .= Plast.W

@@ -63,9 +63,9 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
     for Pi in targets
         for Pj in sources
 
-            dX1 = Pi.X[1] - Pj.X[1]
-            dX2 = Pi.X[2] - Pj.X[2]
-            dX3 = Pi.X[3] - Pj.X[3]
+            dX1 = Pi.var[1] - Pj.var[1]
+            dX2 = Pi.var[2] - Pj.var[2]
+            dX3 = Pi.var[3] - Pj.var[3]
             r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
 
             if !iszero(r2)

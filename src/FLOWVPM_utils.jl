@@ -185,7 +185,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["X"] = [P.var[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["Gamma"] = [P.var[i] for i in 4:6, P in iterate(self; include_static=true)]
     h5["sigma"] = [P.var[7] for P in iterate(self; include_static=true)]
     h5["circulation"] = [P.var[9] for P in iterate(self; include_static=true)]
