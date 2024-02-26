@@ -89,7 +89,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zeros3(T),
                                                       # init_zeros3(T),
                                                       init_zeros33(T),
-                                                      init_zeros3(T),
+                                                      # init_zeros3(T),
                                                       init_zeros33(T),
                                                       init_zeros3(T),
                                                       init_zeros3(T),
