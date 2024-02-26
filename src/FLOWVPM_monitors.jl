@@ -125,11 +125,11 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
     mean = 0
     N, nzero, Nstatic, Ntot = 0, 0, 0, get_np(pfield)
     for P in iterator(pfield)
-        if P.C[1] == 0
+        if P.var[37] == 0
             nzero += 1
         else
             N += 1
-            mean += abs(P.C[1])
+            mean += abs(P.var[37])
         end
 
         if P.static[1]
@@ -145,7 +145,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
 
     for P in iterator(pfield)
 
-        C = abs(P.C[1])
+        C = abs(P.var[37])
 
         if C != 0
             val = C - mean

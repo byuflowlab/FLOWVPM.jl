@@ -116,7 +116,7 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # "Calculate" model coefficient
         for p in iterator(pfield)
-            p.C[1] = SFS.Cs
+            p.var[37] = SFS.Cs
         end
 
         # Apply clipping strategies
@@ -125,7 +125,7 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
-                    p.C[1] *= 0
+                    p.var[37] *= 0
                 end
 
             end
@@ -212,7 +212,7 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
-                    p.C[1] *= 0
+                    p.var[37] *= 0
                 end
 
             end
@@ -244,7 +244,7 @@ end
 SFS model. See 20210901 notebook for derivation.
 """
 function clipping_backscatter(P::Particle, pfield)
-    return P.C[1]*(P.var[4]*get_SFS1(P) + P.var[5]*get_SFS2(P) + P.var[6]*get_SFS3(P)) < 0
+    return P.var[37]*(P.var[4]*get_SFS1(P) + P.var[5]*get_SFS2(P) + P.var[6]*get_SFS3(P)) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -281,7 +281,7 @@ function control_magnitude(P::Particle{R}, pfield) where {R}
     if pfield.nt == 0
         # error("Logic error: It was not possible to estimate time step.")
         nothing
-    elseif P.C[1] != 0
+    elseif P.var[37] != 0
         deltat::R = pfield.t / pfield.nt
 
         f::R = pfield.formulation.f
@@ -289,7 +289,7 @@ function control_magnitude(P::Particle{R}, pfield) where {R}
 
         aux = get_SFS1(P)*P.var[4] + get_SFS2(P)*P.var[5] + get_SFS3(P)*P.var[6]
         aux /= P.var[4]*P.var[4] + P.var[5]*P.var[5] + P.var[6]*P.var[6]
-        aux -= (1+3*f)*(zeta0/P.var[7]^3) / deltat / P.C[1]
+        aux -= (1+3*f)*(zeta0/P.var[7]^3) / deltat / P.var[37]
 
         # f_p filter criterion
         if aux > 0
@@ -353,7 +353,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
                                        minC::Real, maxC::Real) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
-    #                C=<Γ⋅L>/<Γ⋅m> <=> p.C[1], <Γ⋅L> <=> p.C[2], <Γ⋅m> <=> p.C[3]
+    #                C=<Γ⋅L>/<Γ⋅m> <=> p.var[37], <Γ⋅L> <=> p.var[38], <Γ⋅m> <=> p.var[39]
 
     # ERROR CASES
     if minC < 0
@@ -415,7 +415,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
                                        force_positive::Bool=false) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
-    #                C=<Γ⋅L>/<Γ⋅m> <=> p.C[1], <Γ⋅L> <=> p.C[2], <Γ⋅m> <=> p.C[3]
+    #                C=<Γ⋅L>/<Γ⋅m> <=> p.var[37], <Γ⋅L> <=> p.var[38], <Γ⋅m> <=> p.var[39]
 
     # ERROR CASES
     if minC < 0
@@ -463,20 +463,20 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         deno /= zeta0/p.var[7]^3
 
         # Initialize denominator to something other than zero
-        if p.C[3] == 0
-            p.C[3] = deno
+        if p.var[39] == 0
+            p.var[39] = deno
         end
 
         # Lagrangian average of numerator and denominator
-        nume = rlxf*nume + (1-rlxf)*p.C[2]
-        deno = rlxf*deno + (1-rlxf)*p.C[3]
+        nume = rlxf*nume + (1-rlxf)*p.var[38]
+        deno = rlxf*deno + (1-rlxf)*p.var[39]
 
         # Enforce maximum and minimum |C| values
         if abs(nume/deno) > maxC            # Case: C is too large
 
             # Avoid case of denominator becoming zero
-            if abs(deno) < abs(p.C[3])
-                deno = sign(deno) * abs(p.C[3])
+            if abs(deno) < abs(p.var[39])
+                deno = sign(deno) * abs(p.var[39])
             end
 
             # Enforce maximum value of |Cd|
@@ -492,14 +492,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Save numerator and denominator of model coefficient
-        p.C[2] = nume
-        p.C[3] = deno
+        p.var[38] = nume
+        p.var[39] = deno
 
         # Store model coefficient
-        p.C[1] = p.C[2] / p.C[3]
+        p.var[37] = p.var[38] / p.var[39]
 
         # Force the coefficient to be positive
-        p.C[1] *= sign(p.C[1])^force_positive
+        p.var[37] *= sign(p.var[37])^force_positive
     end
 
     # Flush temporal memory
@@ -521,7 +521,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
                                            Lambda=(lmbd, lmbdcrit) -> (lmbd - lmbdcrit) / (1 - lmbdcrit)
                                          ) where {R}
 
-    # Storage terms: f(λ) <=> p.C[1], test-filter ξ <=> p.C[2], primary-filter ξ <=> p.C[3]
+    # Storage terms: f(λ) <=> p.var[37], test-filter ξ <=> p.var[38], primary-filter ξ <=> p.var[39]
 
     # ERROR CASES
     if minC < 0
@@ -541,9 +541,9 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     # Calculate UJ with test filter
     pfield.UJ(pfield; sfs=false, reset=true, reset_sfs=false)
 
-    # Store test-filter ξ under p.C[2]
+    # Store test-filter ξ under p.var[38]
     for p in iterator(pfield)
-        p.C[2] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+        p.var[38] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
     end
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
@@ -555,15 +555,15 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     # Calculate UJ with domain filter
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
 
-    # Store domain-filter ξ under p.C[3]
+    # Store domain-filter ξ under p.var[39]
     for p in iterator(pfield)
-        p.C[3] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+        p.var[39] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
     end
 
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     for p in iterator(pfield)
-        Lmbd = Lambda(p.C[2]/p.C[3], lambdacrit)
-        p.C[1] = minC + sensor(Lmbd)*( maxC - minC )
+        Lmbd = Lambda(p.var[38]/p.var[39], lambdacrit)
+        p.var[37] = minC + sensor(Lmbd)*( maxC - minC )
     end
 
     return nothing

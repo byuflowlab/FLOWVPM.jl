@@ -32,7 +32,7 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
-        C::R = p.C[1]
+        C::R = p.var[37]
 
         # Update position
         p.var[1] += dt*(p.var[10] + Uinf[1])
@@ -106,7 +106,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
-        C::R = p.C[1]
+        C::R = p.var[37]
 
         # Update position
         p.var[1] += dt*(p.var[10] + Uinf[1])
@@ -197,7 +197,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
 
-            C::R = p.C[1]
+            C::R = p.var[37]
 
             # Low-storage RK step
             ## Velocity
@@ -307,7 +307,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
 
-            C::R = p.C[1]
+            C::R = p.var[37]
 
             # Low-storage RK step
             ## Velocity

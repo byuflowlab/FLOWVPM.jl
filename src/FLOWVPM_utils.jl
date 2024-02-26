@@ -196,7 +196,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["vorticity"] = [P.var[i] for i in 13:15, P in iterate(self; include_static=true)]
 
     if isLES(self)
-        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
+        h5["C"] = [P.var[i] for i in 37:39, P in iterate(self; include_static=true)]
     end
 
     # # Connectivity information
