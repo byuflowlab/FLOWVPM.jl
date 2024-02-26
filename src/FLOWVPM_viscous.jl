@@ -235,7 +235,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p.var[3+i] += dt * scheme.nu*p.PSE[i]
+                p.var[3+i] += dt * scheme.nu*p.var[24+i]
             end
         end
 
@@ -245,8 +245,8 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p.M[i, 2] += dt * scheme.nu*p.PSE[i]
-                p.var[3+i] += aux2 * dt * scheme.nu*p.PSE[i]
+                p.M[i, 2] += dt * scheme.nu*p.var[24+i]
+                p.var[3+i] += aux2 * dt * scheme.nu*p.var[24+i]
             end
         end
 

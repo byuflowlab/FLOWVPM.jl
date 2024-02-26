@@ -41,7 +41,7 @@ struct Particle{T}
   # U::MVector{3,T}                # Velocity at particle (3-elem array)
   # W::MVector{3,T}                # Vorticity at particle (3-elem array)
   J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
-  PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
+  # PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
   M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
