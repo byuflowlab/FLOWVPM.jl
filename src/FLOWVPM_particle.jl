@@ -30,38 +30,37 @@ Vortex particle data structure
 """
 struct Particle{T}
   # User inputs
-  X::MVector{3,T}                # Position (3-elem array)
-  Gamma::MVector{3,T}            # Vectorial circulation (3-elem array)
-  sigma::MVector{1,T}            # Smoothing radius (1-elem array)
-  vol::MVector{1,T}              # Volume (1-elem array)
-  circulation::MVector{1,T}      # Scalar circulation (1-elem array)
-  static::MVector{1,Bool}        # If true, this particle is not evolved in time
+  X::SVector{3,T}                # Position (3-elem array)
+  Gamma::SVector{3,T}            # Vectorial circulation (3-elem array)
+  sigma::T            # Smoothing radius (1-elem array)
+  vol::T              # Volume (1-elem array)
+  circulation::T      # Scalar circulation (1-elem array)
+  static::SVector{1,Bool}        # If true, this particle is not evolved in time
 
   # Properties
-  U::MVector{3,T}                # Velocity at particle (3-elem array)
-  W::MVector{3,T}                # Vorticity at particle (3-elem array)
-  J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
-  PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
+  U::SVector{3,T}                # Velocity at particle (3-elem array)
+  W::SVector{3,T}                # Vorticity at particle (3-elem array)
+  J::SMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  PSE::SVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
-  M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
-  C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
-  S::MVector{3,T}                # Stretching term
+  C::SVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
+  S::SVector{3,T}                # Stretching term
 
   # ExaFMM internal variables
 #   Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
 #   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
-  index::MVector{1,Int32}        # Particle index (1-elem array)
+  index::Int32        # Particle index (1-elem array)
 end
 
 function init_zero(type::DataType)
-    return MVector{1,type}(0.0)
+    return SVector{1,type}(0.0)
 end
 
 function init_zeros3(type::DataType)
-    return MVector{3,type}(0.0,0.0,0.0)
+    return SVector{3,type}(0.0,0.0,0.0)
 end
 
 function init_zeros33(type::DataType)
@@ -80,7 +79,6 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                       init_zero(Int32))
-
 
 
 ##### FUNCTIONS ################################################################

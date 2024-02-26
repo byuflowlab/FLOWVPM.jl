@@ -4,7 +4,7 @@
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = particle_field.particles[i].X
 Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.particles[i].sigma[1]
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
+Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].Gamma
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].U
