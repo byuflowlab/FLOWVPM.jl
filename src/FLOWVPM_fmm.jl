@@ -6,7 +6,7 @@ Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = particle_field
 Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.particles[i].var[7]
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
-Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].Gamma
+Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].var[4:6]
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].U
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = particle_field.particles[i].J
 Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
@@ -36,7 +36,7 @@ fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
         Wy = zero(eltype(target_system))
         Wz = zero(eltype(target_system))
         for i_source in source_index
-            gamma_x, gamma_y, gamma_z = source_system.particles[i_source].Gamma
+            gamma_x, gamma_y, gamma_z = source_system.particles[i_source].var[4:6]
             source_x, source_y, source_z = source_system.particles[i_source].X
             sigma = source_system.particles[i_source].var[7]
             dx = target_x - source_x
@@ -62,7 +62,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
             target_x, target_y, target_z = target_particle.X
             J = reshape(target_particle.J,9)
             for source_particle in view(source_system.particles,source_index)
-                gamma_x, gamma_y, gamma_z = source_particle.Gamma
+                gamma_x, gamma_y, gamma_z = source_particle.var[4:6]
                 source_x, source_y, source_z = source_particle.X
                 sigma = source_particle.var[7]
                 dx = target_x - source_x
@@ -122,7 +122,7 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
         Ux, Uy, Uz = (zero(eltype(target_system)) for _ in 1:3)
         target_x, target_y, target_z = target_system[j_target,fmm.POSITION]
         for i_source in source_index
-            gamma_x, gamma_y, gamma_z = source_system.particles[i_source].Gamma
+            gamma_x, gamma_y, gamma_z = source_system.particles[i_source].var[4:6]
             source_x, source_y, source_z = source_system.particles[i_source].X
             sigma = source_system.particles[i_source].var[8]
             dx = target_x - source_x

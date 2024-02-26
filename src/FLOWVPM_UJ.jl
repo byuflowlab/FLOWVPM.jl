@@ -75,9 +75,9 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
                 g_sgm, dg_sgmdr = g_dgdr(r/Pj.var[7])
 
                 # K × Γp
-                crss1 = -const4 / r^3 * ( dX2*Pj.Gamma[3] - dX3*Pj.Gamma[2] )
-                crss2 = -const4 / r^3 * ( dX3*Pj.Gamma[1] - dX1*Pj.Gamma[3] )
-                crss3 = -const4 / r^3 * ( dX1*Pj.Gamma[2] - dX2*Pj.Gamma[1] )
+                crss1 = -const4 / r^3 * ( dX2*Pj.var[6] - dX3*Pj.var[5] )
+                crss2 = -const4 / r^3 * ( dX3*Pj.var[4] - dX1*Pj.var[6] )
+                crss3 = -const4 / r^3 * ( dX1*Pj.var[5] - dX2*Pj.var[4] )
 
                 # U = ∑g_σ(x-xp) * K(x-xp) × Γp
                 Pi.U[1] += g_sgm * crss1
@@ -105,14 +105,14 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
                 aux = - const4 * g_sgm / r^3
 
                 # j=1
-                Pi.J[2, 1] -= aux * Pj.Gamma[3]
-                Pi.J[3, 1] += aux * Pj.Gamma[2]
+                Pi.J[2, 1] -= aux * Pj.var[6]
+                Pi.J[3, 1] += aux * Pj.var[5]
                 # j=2
-                Pi.J[1, 2] += aux * Pj.Gamma[3]
-                Pi.J[3, 2] -= aux * Pj.Gamma[1]
+                Pi.J[1, 2] += aux * Pj.var[6]
+                Pi.J[3, 2] -= aux * Pj.var[4]
                 # j=3
-                Pi.J[1, 3] -= aux * Pj.Gamma[2]
-                Pi.J[2, 3] += aux * Pj.Gamma[1]
+                Pi.J[1, 3] -= aux * Pj.var[5]
+                Pi.J[2, 3] += aux * Pj.var[4]
 
             end
             if toggle_sfs

@@ -235,7 +235,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p.Gamma[i] += dt * scheme.nu*p.PSE[i]
+                p.var[3+i] += dt * scheme.nu*p.PSE[i]
             end
         end
 
@@ -246,7 +246,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         for p in iterator(pfield)
             for i in 1:3
                 p.M[i, 2] += dt * scheme.nu*p.PSE[i]
-                p.Gamma[i] += aux2 * dt * scheme.nu*p.PSE[i]
+                p.var[3+i] += aux2 * dt * scheme.nu*p.PSE[i]
             end
         end
 
@@ -286,7 +286,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     if cs.debug
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1).var[4:6], digits=8))\n"*
                 "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1).M[7:9], digits=8))\n")
     end
 
@@ -300,7 +300,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
             P.M[i] = P.M[i+6]*P.var[8]
             # Sets initial guess as Gamma for vorticity evaluation
-            P.Gamma[i] = P.M[i]
+            P.var[3+i] = P.M[i]
         end
     end
 
@@ -313,7 +313,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             P.M[i+3] = P.M[i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
 
             # Update coefficients
-            P.Gamma[i] = P.M[i+3]             # p0 = r0
+            P.var[3+i] = P.M[i+3]             # p0 = r0
 
             # Initial field residual
             cs.rr0s[i] += P.M[i+3]^2
@@ -338,7 +338,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.pAps .= 0
         for P in iterator(pfield)
             for i in 1:3
-                cs.pAps[i] += P.Gamma[i] * P.Jexa[i]
+                cs.pAps[i] += P.var[3+i] * P.Jexa[i]
             end
         end
 
@@ -352,7 +352,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P.M[i] += cs.alphas[i]*P.Gamma[i]   # x = x + alpha*p
+                P.M[i] += cs.alphas[i]*P.var[3+i]   # x = x + alpha*p
                 P.M[i+3] -= cs.alphas[i].*P.Jexa[i] # r = r - alpha*Ap
                 cs.rrs[i] += P.M[i+3]^2             # Update field residual
             end
@@ -370,7 +370,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P.Gamma[i] = P.M[i+3] + cs.betas[i]*P.Gamma[i]
+                P.var[3+i] = P.M[i+3] + cs.betas[i]*P.var[3+i]
             end
         end
 
@@ -407,7 +407,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Save final solution
     for P in iterator(pfield)
         for i in 1:3
-            P.Gamma[i] = P.M[i]
+            P.var[3+i] = P.M[i]
         end
     end
 
@@ -415,7 +415,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         # Evaluate current vorticity
         cs.zeta(pfield)
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1).var[4:6], digits=8))\n"*
                 "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_particle(pfield, 1).Jexa[1:3], digits=8))")
         println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
 
@@ -467,9 +467,9 @@ function zeta_direct(sources, targets, zeta::Function)
 
             zeta_sgm = 1/Pj.var[7]^3*zeta(r/Pj.var[7])
 
-            Pi.Jexa[1] += Pj.Gamma[1]*zeta_sgm
-            Pi.Jexa[2] += Pj.Gamma[2]*zeta_sgm
-            Pi.Jexa[3] += Pj.Gamma[3]*zeta_sgm
+            Pi.Jexa[1] += Pj.var[4]*zeta_sgm
+            Pi.Jexa[2] += Pj.var[5]*zeta_sgm
+            Pi.Jexa[3] += Pj.var[6]*zeta_sgm
 
         end
     end

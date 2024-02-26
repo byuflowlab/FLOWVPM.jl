@@ -276,7 +276,7 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.Gamma)
+            normGamma = norm(P.var[4:6])
             magGammatot += normGamma
 
             for i in 1:3
@@ -291,7 +291,7 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.Gamma)
+            normGamma = norm(P.var[4:6])
 
             outR[ri] += normGamma*sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
             outsgm[ri] += normGamma*P.var[7]
@@ -386,8 +386,8 @@ function calc_elliptic_radius(outRm, outRp, Z, pfield, nrings, intervals;
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            weightx = dot(P.Gamma, unity)
-            weighty = dot(P.Gamma, unitx)
+            weightx = dot(P.var[4:6], unity)
+            weighty = dot(P.var[4:6], unitx)
 
             if P.X[1]-Z[ri][1] < 0
                 outRm[ri][1] -= abs(weightx*P.X[1])

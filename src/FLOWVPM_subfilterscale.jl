@@ -244,7 +244,7 @@ end
 SFS model. See 20210901 notebook for derivation.
 """
 function clipping_backscatter(P::Particle, pfield)
-    return P.C[1]*(P.Gamma[1]*get_SFS1(P) + P.Gamma[2]*get_SFS2(P) + P.Gamma[3]*get_SFS3(P)) < 0
+    return P.C[1]*(P.var[4]*get_SFS1(P) + P.var[5]*get_SFS2(P) + P.var[6]*get_SFS3(P)) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -261,13 +261,13 @@ See 20210901 notebook for derivation.
 """
 function control_directional(P::Particle, pfield)
 
-    aux = get_SFS1(P)*P.Gamma[1] + get_SFS2(P)*P.Gamma[2] + get_SFS3(P)*P.Gamma[3]
-    aux /= (P.Gamma[1]*P.Gamma[1] + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3])
+    aux = get_SFS1(P)*P.var[4] + get_SFS2(P)*P.var[5] + get_SFS3(P)*P.var[6]
+    aux /= (P.var[4]*P.var[4] + P.var[5]*P.var[5] + P.var[6]*P.var[6])
 
     # Replaces old SFS with the direcionally controlled SFS
-    add_SFS1(P, -get_SFS1(P) + aux*P.Gamma[1])
-    add_SFS2(P, -get_SFS2(P) + aux*P.Gamma[2])
-    add_SFS3(P, -get_SFS3(P) + aux*P.Gamma[3])
+    add_SFS1(P, -get_SFS1(P) + aux*P.var[4])
+    add_SFS2(P, -get_SFS2(P) + aux*P.var[5])
+    add_SFS3(P, -get_SFS3(P) + aux*P.var[6])
 end
 
 """
@@ -287,15 +287,15 @@ function control_magnitude(P::Particle{R}, pfield) where {R}
         f::R = pfield.formulation.f
         zeta0::R = pfield.kernel.zeta(0)
 
-        aux = get_SFS1(P)*P.Gamma[1] + get_SFS2(P)*P.Gamma[2] + get_SFS3(P)*P.Gamma[3]
-        aux /= P.Gamma[1]*P.Gamma[1] + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3]
+        aux = get_SFS1(P)*P.var[4] + get_SFS2(P)*P.var[5] + get_SFS3(P)*P.var[6]
+        aux /= P.var[4]*P.var[4] + P.var[5]*P.var[5] + P.var[6]*P.var[6]
         aux -= (1+3*f)*(zeta0/P.var[7]^3) / deltat / P.C[1]
 
         # f_p filter criterion
         if aux > 0
-            add_SFS1(P, -aux*P.Gamma[1])
-            add_SFS2(P, -aux*P.Gamma[2])
-            add_SFS3(P, -aux*P.Gamma[3])
+            add_SFS1(P, -aux*P.var[4])
+            add_SFS2(P, -aux*P.var[5])
+            add_SFS3(P, -aux*P.var[6])
         end
     end
 end
@@ -383,14 +383,14 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] = p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
-            p.M[2, 1] = p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
-            p.M[3, 1] = p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            p.M[1, 1] = p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6]
+            p.M[2, 1] = p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6]
+            p.M[3, 1] = p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] = p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
-            p.M[2, 1] = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
-            p.M[3, 1] = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            p.M[1, 1] = p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6]
+            p.M[2, 1] = p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6]
+            p.M[3, 1] = p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
@@ -433,14 +433,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] -= p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
-            p.M[2, 1] -= p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
-            p.M[3, 1] -= p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            p.M[1, 1] -= p.J[1,1]*p.var[4]+p.J[2,1]*p.var[5]+p.J[3,1]*p.var[6]
+            p.M[2, 1] -= p.J[1,2]*p.var[4]+p.J[2,2]*p.var[5]+p.J[3,2]*p.var[6]
+            p.M[3, 1] -= p.J[1,3]*p.var[4]+p.J[2,3]*p.var[5]+p.J[3,3]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] -= p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
-            p.M[2, 1] -= p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
-            p.M[3, 1] -= p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+            p.M[1, 1] -= p.J[1,1]*p.var[4]+p.J[1,2]*p.var[5]+p.J[1,3]*p.var[6]
+            p.M[2, 1] -= p.J[2,1]*p.var[4]+p.J[2,2]*p.var[5]+p.J[2,3]*p.var[6]
+            p.M[3, 1] -= p.J[3,1]*p.var[4]+p.J[3,2]*p.var[5]+p.J[3,3]*p.var[6]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
@@ -457,9 +457,9 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     for p in iterator(pfield)
 
         # Calculate numerator and denominator
-        nume = p.M[1,1]*p.Gamma[1] + p.M[2,1]*p.Gamma[2] + p.M[3,1]*p.Gamma[3]
+        nume = p.M[1,1]*p.var[4] + p.M[2,1]*p.var[5] + p.M[3,1]*p.var[6]
         nume *= 3*alpha - 2
-        deno = p.M[1,2]*p.Gamma[1] + p.M[2,2]*p.Gamma[2] + p.M[3,2]*p.Gamma[3]
+        deno = p.M[1,2]*p.var[4] + p.M[2,2]*p.var[5] + p.M[3,2]*p.var[6]
         deno /= zeta0/p.var[7]^3
 
         # Initialize denominator to something other than zero

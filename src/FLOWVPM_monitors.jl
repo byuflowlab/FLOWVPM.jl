@@ -27,8 +27,8 @@ function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
     # Calculate enstrophy
     enstrophy = 0
     for P in iterator(pfield)
-        enstrophy += (P.Gamma[1]*P.Gamma[1]
-                      + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3]
+        enstrophy += (P.var[4]*P.var[4]
+                      + P.var[5]*P.var[5] + P.var[6]*P.var[6]
                                                               ) / P.var[7]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
@@ -79,8 +79,8 @@ function monitor_enstrophy_Gammaomega(pfield, t, dt; save_path=nothing, run_name
         # Calculate enstrophy
         enstrophy = 0
         for P in iterator(pfield)
-            enstrophy += ( P.Gamma[1]*get_W1(P)
-                          + P.Gamma[2]*get_W2(P) + P.Gamma[3]*get_W3(P) )
+            enstrophy += ( P.var[4]*get_W1(P)
+                          + P.var[5]*get_W2(P) + P.var[6]*get_W3(P) )
         end
         enstrophy *= 0.5
 

@@ -41,11 +41,11 @@ function relax_pedrizzetti(rlxf::Real, p::Particle)
     nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
                     (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
                     (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+    nrmGamma = sqrt(p.var[4]^2 + p.var[5]^2 + p.var[6]^2)
 
-    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
 
     return nothing
 end
@@ -63,20 +63,20 @@ function relax_correctedpedrizzetti(rlxf::Real, p::Particle)
     nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
                     (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
                     (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
-    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
+    nrmGamma = sqrt(p.var[4]^2 + p.var[5]^2 + p.var[6]^2)
 
     b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
-                                    p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
-                                    p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
-                                    p.Gamma[3]*(p.J[2,1]-p.J[1,2])
+                                    p.var[4]*(p.J[3,2]-p.J[2,3]) +
+                                    p.var[5]*(p.J[1,3]-p.J[3,1]) +
+                                    p.var[6]*(p.J[2,1]-p.J[1,2])
                                    ) / (nrmGamma*nrmw))
 
-    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
-    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
-    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
+    p.var[4] = (1-rlxf)*p.var[4] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.var[5] = (1-rlxf)*p.var[5] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.var[6] = (1-rlxf)*p.var[6] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
 
     # Normalize the direction of the new vector to maintain the same strength
-    p.Gamma ./= sqrt(b2)
+    p.var[4:6] ./= sqrt(b2)
 
     return nothing
 end
