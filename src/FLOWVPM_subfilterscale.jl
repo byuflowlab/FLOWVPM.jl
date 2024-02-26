@@ -289,7 +289,7 @@ function control_magnitude(P::Particle{R}, pfield) where {R}
 
         aux = get_SFS1(P)*P.Gamma[1] + get_SFS2(P)*P.Gamma[2] + get_SFS3(P)*P.Gamma[3]
         aux /= P.Gamma[1]*P.Gamma[1] + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3]
-        aux -= (1+3*f)*(zeta0/P.sigma[1]^3) / deltat / P.C[1]
+        aux -= (1+3*f)*(zeta0/P.var[7]^3) / deltat / P.C[1]
 
         # f_p filter criterion
         if aux > 0
@@ -367,7 +367,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
     for p in iterator(pfield)
-        p.sigma[1] *= alpha
+        p.var[7] *= alpha
     end
 
     # Calculate UJ with test filter
@@ -403,7 +403,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
     for p in iterator(pfield)
-        p.sigma[1] /= alpha
+        p.var[7] /= alpha
     end
 
     return nothing
@@ -460,7 +460,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         nume = p.M[1,1]*p.Gamma[1] + p.M[2,1]*p.Gamma[2] + p.M[3,1]*p.Gamma[3]
         nume *= 3*alpha - 2
         deno = p.M[1,2]*p.Gamma[1] + p.M[2,2]*p.Gamma[2] + p.M[3,2]*p.Gamma[3]
-        deno /= zeta0/p.sigma[1]^3
+        deno /= zeta0/p.var[7]^3
 
         # Initialize denominator to something other than zero
         if p.C[3] == 0
@@ -535,7 +535,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
     for p in iterator(pfield)
-        p.sigma[1] *= alpha
+        p.var[7] *= alpha
     end
 
     # Calculate UJ with test filter
@@ -549,7 +549,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
     for p in iterator(pfield)
-        p.sigma[1] /= alpha
+        p.var[7] /= alpha
     end
 
     # Calculate UJ with domain filter

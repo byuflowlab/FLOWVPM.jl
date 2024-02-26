@@ -32,7 +32,7 @@ struct Particle{T}
   # User inputs
   X::MVector{3,T}                # Position (3-elem array)
   Gamma::MVector{3,T}            # Vectorial circulation (3-elem array)
-  sigma::MVector{1,T}            # Smoothing radius (1-elem array)
+  # sigma::MVector{1,T}            # Smoothing radius (1-elem array)
   vol::MVector{1,T}              # Volume (1-elem array)
   circulation::MVector{1,T}      # Scalar circulation (1-elem array)
   static::MVector{1,Bool}        # If true, this particle is not evolved in time
@@ -79,14 +79,23 @@ Base.eltype(::Particle{T}) where T = T
 Base.eltype(::AbstractArray{Particle{T}}) where T = T
 
 # Empty initializer
-Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros3(T),
-                                                      init_zero(T),  init_zero(T), init_zero(T),
+Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T),
+                                                      init_zeros3(T),
+                                                      # init_zero(T),
+                                                      init_zero(T),
+                                                      init_zero(T),
                                                       init_zero(Bool),
-                                                      init_zeros3(T), init_zeros3(T), init_zeros33(T), init_zeros3(T),
-                                                      init_zeros33(T), init_zeros3(T), init_zeros3(T),
+                                                      init_zeros3(T),
+                                                      init_zeros3(T),
+                                                      init_zeros33(T),
+                                                      init_zeros3(T),
+                                                      init_zeros33(T),
+                                                      init_zeros3(T),
+                                                      init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
-                                                    init_zero(Int32), init_zeros42(T))
+                                                    init_zero(Int32),
+                                                    init_zeros42(T))
 
 
 

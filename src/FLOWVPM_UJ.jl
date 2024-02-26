@@ -72,7 +72,7 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
                 r = sqrt(r2) 
 
                 # Regularizing function and deriv
-                g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
+                g_sgm, dg_sgmdr = g_dgdr(r/Pj.var[7])
 
                 # K × Γp
                 crss1 = -const4 / r^3 * ( dX2*Pj.Gamma[3] - dX3*Pj.Gamma[2] )
@@ -86,7 +86,7 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
 
                 # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                 # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-                aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2
+                aux = dg_sgmdr/(Pj.var[7]*r) - 3*g_sgm /r^2
                 # j=1
                 Pi.J[1, 1] += aux * crss1 * dX1
                 Pi.J[2, 1] += aux * crss2 * dX1

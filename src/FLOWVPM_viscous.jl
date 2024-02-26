@@ -128,7 +128,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Core spreading
         for p in iterator(pfield)
-            p.sigma[1] = sqrt(p.sigma[1]^2 + 2*scheme.nu*dt)
+            p.var[7] = sqrt(p.var[7]^2 + 2*scheme.nu*dt)
         end
 
         proceed = true
@@ -141,7 +141,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
             # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
             # Should I be solving dsigmadt = nu/sigma instead?
             p.M[1, 3] = aux1*p.M[1, 3] + dt*2*scheme.nu
-            p.sigma[1] = sqrt(p.sigma[1]^2 + aux2*p.M[1, 3])
+            p.var[7] = sqrt(p.var[7]^2 + aux2*p.M[1, 3])
         end
 
         # Update things in the last RK inner iteration
@@ -179,7 +179,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                     p.M[i+6] = p.Jexa[i]
                 end
                 # Reset core sizes
-                p.sigma[1] = scheme.sgm0
+                p.var[7] = scheme.sgm0
             end
 
             # Calculate new strengths through RBF to preserve original vorticity
@@ -225,7 +225,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     # Recalculate particle volume from current particle smoothing
     if scheme.recalculate_vols
         for p in iterator(pfield)
-            p.var[8] = 4/3*pi*p.sigma[1]^3
+            p.var[8] = 4/3*pi*p.var[7]^3
         end
     end
 
@@ -465,7 +465,7 @@ function zeta_direct(sources, targets, zeta::Function)
             dX3 = Pi.X[3] - Pj.X[3]
             r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
 
-            zeta_sgm = 1/Pj.sigma[1]^3*zeta(r/Pj.sigma[1])
+            zeta_sgm = 1/Pj.var[7]^3*zeta(r/Pj.var[7])
 
             Pi.Jexa[1] += Pj.Gamma[1]*zeta_sgm
             Pi.Jexa[2] += Pj.Gamma[2]*zeta_sgm

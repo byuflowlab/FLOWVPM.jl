@@ -3,7 +3,7 @@
 ################################################################################
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = particle_field.particles[i].X
-Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.particles[i].sigma[1]
+Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.particles[i].var[7]
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].Gamma
@@ -38,12 +38,12 @@ fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
         for i_source in source_index
             gamma_x, gamma_y, gamma_z = source_system.particles[i_source].Gamma
             source_x, source_y, source_z = source_system.particles[i_source].X
-            sigma = source_system.particles[i_source].sigma[1]
+            sigma = source_system.particles[i_source].var[7]
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z
             r = sqrt(dx*dx + dy*dy + dz*dz)
-            sigma = source_system.particles[i_source].sigma[1]
+            sigma = source_system.particles[i_source].var[7]
             zeta = source_system.zeta(r/sigma)/(sigma*sigma*sigma)
             Wx += zeta * gamma_x
             Wy += zeta * gamma_y
@@ -64,7 +64,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
             for source_particle in view(source_system.particles,source_index)
                 gamma_x, gamma_y, gamma_z = source_particle.Gamma
                 source_x, source_y, source_z = source_particle.X
-                sigma = source_particle.sigma[1]
+                sigma = source_particle.var[7]
                 dx = target_x - source_x
                 dy = target_y - source_y
                 dz = target_z - source_z
@@ -124,7 +124,7 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
         for i_source in source_index
             gamma_x, gamma_y, gamma_z = source_system.particles[i_source].Gamma
             source_x, source_y, source_z = source_system.particles[i_source].X
-            sigma = source_system.particles[i_source].sigma[1]
+            sigma = source_system.particles[i_source].var[8]
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z

@@ -54,9 +54,9 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any
         end
 
         ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-        p.Gamma[1] -= dt*C*get_SFS1(p) * p.sigma[1]^3/zeta0
-        p.Gamma[2] -= dt*C*get_SFS2(p) * p.sigma[1]^3/zeta0
-        p.Gamma[3] -= dt*C*get_SFS3(p) * p.sigma[1]^3/zeta0
+        p.Gamma[1] -= dt*C*get_SFS1(p) * p.var[7]^3/zeta0
+        p.Gamma[2] -= dt*C*get_SFS2(p) * p.var[7]^3/zeta0
+        p.Gamma[3] -= dt*C*get_SFS3(p) * p.var[7]^3/zeta0
 
         # Relaxation: Align vectorial circulation to local vorticity
         if relax
@@ -128,16 +128,16 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
 
         # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
         MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
-        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
+        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.var[7]^3/zeta0
         MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
         # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ - Cϵ)
-        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.var[7]^3/zeta0)
 
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
-        p.sigma[1] -= dt * ( p.sigma[1] * MM[4] )
+        p.var[7] -= dt * ( p.var[7] * MM[4] )
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
@@ -213,14 +213,14 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
             ## Stretching + SFS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             else
                 # Classic scheme (Γ⋅∇)U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             end
 
             # Update vectorial circulation
@@ -335,17 +335,17 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
-            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
+            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.var[7]^3/zeta0
             MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.var[7]^3/zeta0)
 
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-            p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
+            p.M[2, 3] = a*p.M[2, 3] - dt*( p.var[7] * MM[4] )
 
             # Update vectorial circulation
             p.Gamma[1] += b*p.M[1, 2]
@@ -353,7 +353,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             p.Gamma[3] += b*p.M[3, 2]
 
             # Update cross-sectional area
-            p.sigma[1] += b*p.M[2, 3]
+            p.var[7] += b*p.M[2, 3]
 
         end
 

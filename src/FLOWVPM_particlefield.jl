@@ -176,7 +176,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     # Populate the empty particle
     P.X .= X
     P.Gamma .= Gamma
-    P.sigma .= sigma
+    P.var[7] = sigma
     P.var[8] = vol
     P.circulation .= abs.(circulation)
     P.C .= C
@@ -195,7 +195,7 @@ end
 Add a copy of Particle `P` to the field.
 """
 function add_particle(self::ParticleField, P::Particle)
-    return add_particle(self, P.X, P.Gamma, P.sigma;
+    return add_particle(self, P.X, P.Gamma, P.var[7];
                         vol=P.var[8], circulation=P.circulation,
                             C=P.C, static=P.static)
 end
@@ -234,7 +234,7 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
 get_X(self::ParticleField, i::Int) = get_particle(self, i).X
 get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).Gamma
-get_sigma(self::ParticleField, i::Int) = get_particle(self, i).sigma[1]
+get_sigma(self::ParticleField, i::Int) = get_particle(self, i).var[7]
 get_U(self::ParticleField, i::Int) = get_particle(self, i).U
 get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
@@ -318,8 +318,8 @@ function remove_particle(self::ParticleField, i::Int)
 
         Ptarg.X .= Plast.X
         Ptarg.Gamma .= Plast.Gamma
-        Ptarg.sigma .= Plast.sigma
-        Ptarg.vol .= Plast.vol
+        Ptarg.var[7] = Plast.var[7]
+        Ptarg.var[8] = Plast.var[8]
         Ptarg.circulation .= Plast.circulation
         Ptarg.static .= Plast.static
         Ptarg.U .= Plast.U

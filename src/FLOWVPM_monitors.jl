@@ -29,7 +29,7 @@ function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
     for P in iterator(pfield)
         enstrophy += (P.Gamma[1]*P.Gamma[1]
                       + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3]
-                                                              ) / P.sigma[1]^3
+                                                              ) / P.var[7]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
 

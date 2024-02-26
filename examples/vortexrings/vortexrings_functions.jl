@@ -249,7 +249,7 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
             P = vpm.get_particle(pfield, pi)
 
             outR[ri] += sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
-            outsgm[ri] += P.sigma[1]
+            outsgm[ri] += P.var[7]
 
         end
         outR[ri] /= Np
@@ -294,7 +294,7 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
             normGamma = norm(P.Gamma)
 
             outR[ri] += normGamma*sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
-            outsgm[ri] += normGamma*P.sigma[1]
+            outsgm[ri] += normGamma*P.var[7]
 
         end
         outR[ri] /= magGammatot
