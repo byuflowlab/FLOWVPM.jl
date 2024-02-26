@@ -155,7 +155,7 @@ end
 
 # Field inside the Particle type where the SFS contribution is stored (make sure
 # this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
-const _SFS = :S
+# const _SFS = :S
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions

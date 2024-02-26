@@ -387,7 +387,8 @@ function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
-    getproperty(P, _SFS)::MVector{3,T} .= tzero
+    # getproperty(P, _SFS)::MVector{3,T} .= tzero
+    P.var[40:42] .= tzero
     # P.C .= tzero
 end
 _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))

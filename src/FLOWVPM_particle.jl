@@ -46,7 +46,7 @@ struct Particle{T}
   # Internal variables
   M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
   # C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
-  S::MVector{3,T}                # Stretching term
+  # S::MVector{3,T}                # Stretching term
 
   # ExaFMM internal variables
 #   Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
@@ -92,7 +92,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zeros3(T),
                                                       init_zeros33(T),
                                                       # init_zeros3(T),
-                                                      init_zeros3(T),
+                                                      # init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     init_zero(Int32),
@@ -108,12 +108,19 @@ get_W1(P::Particle) = P.J[3,2]-P.J[2,3]
 get_W2(P::Particle) = P.J[1,3]-P.J[3,1]
 get_W3(P::Particle) = P.J[2,1]-P.J[1,2]
 
-get_SFS1(P::Particle{T}) where {T} = getproperty(P, _SFS)[1]::T
-get_SFS2(P::Particle{T}) where {T} = getproperty(P, _SFS)[2]::T
-get_SFS3(P::Particle{T}) where {T} = getproperty(P, _SFS)[3]::T
-add_SFS1(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[1]::T += val
-add_SFS2(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[2]::T += val
-add_SFS3(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[3]::T += val
+get_SFS1(P::Particle) = P.var[40]
+get_SFS2(P::Particle) = P.var[41]
+get_SFS3(P::Particle) = P.var[42]
+add_SFS1(P::Particle, val) = P.var[40] += val
+add_SFS2(P::Particle, val) = P.var[41] += val
+add_SFS3(P::Particle, val) = P.var[42] += val
+
+# get_SFS1(P::Particle{T}) where {T} = getproperty(P, _SFS)[1]::T
+# get_SFS2(P::Particle{T}) where {T} = getproperty(P, _SFS)[2]::T
+# get_SFS3(P::Particle{T}) where {T} = getproperty(P, _SFS)[3]::T
+# add_SFS1(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[1]::T += val
+# add_SFS2(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[2]::T += val
+# add_SFS3(P::Particle{T}, val) where {T} = getproperty(P, _SFS)[3]::T += val
 
 ##### INTERNAL FUNCTIONS #######################################################
 
