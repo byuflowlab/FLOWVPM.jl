@@ -316,9 +316,8 @@ function remove_particle(self::ParticleField, i::Int)
         # Overwrite target particle with last particle in the field
         Ptarg = get_particle(self, i)
 
-        Ptarg.var[1:12] .= Plast.var[1:12]
+        Ptarg.var[1:15] .= Plast.var[1:15]
         Ptarg.static .= Plast.static
-        Ptarg.W .= Plast.W
         Ptarg.J .= Plast.J
         Ptarg.PSE .= Plast.PSE
         Ptarg.C .= Plast.C
@@ -362,11 +361,9 @@ function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle(P::Particle{T}, tzero::T) where {T}
-    P.var[10] = tzero
-    P.var[11] = tzero
-    P.var[12] = tzero
+    P.var[10:12] .= tzero
 
-    P.W .= tzero
+    P.var[13:15] .= tzero
 
     P.J[1, 1] = tzero
     P.J[2, 1] = tzero

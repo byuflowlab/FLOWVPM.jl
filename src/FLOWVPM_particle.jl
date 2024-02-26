@@ -39,7 +39,7 @@ struct Particle{T}
 
   # Properties
   # U::MVector{3,T}                # Velocity at particle (3-elem array)
-  W::MVector{3,T}                # Vorticity at particle (3-elem array)
+  # W::MVector{3,T}                # Vorticity at particle (3-elem array)
   J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
   PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
@@ -87,7 +87,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zero(T),
                                                       init_zero(Bool),
                                                       # init_zeros3(T),
-                                                      init_zeros3(T),
+                                                      # init_zeros3(T),
                                                       init_zeros33(T),
                                                       init_zeros3(T),
                                                       init_zeros33(T),

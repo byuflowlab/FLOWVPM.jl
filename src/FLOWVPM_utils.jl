@@ -193,7 +193,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
     h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
     h5["velocity"] = [P.var[i] for i in 10:12, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [P.W[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["vorticity"] = [P.var[i] for i in 13:15, P in iterate(self; include_static=true)]
 
     if isLES(self)
         h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]

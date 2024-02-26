@@ -47,7 +47,7 @@ fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
             Wy += zeta * gamma_y
             Wz += zeta * gamma_z
         end
-        target_system.particles[j_target].W .+= Wx, Wy, Wz
+        target_system.particles[j_target].var[13:15] .+= Wx, Wy, Wz
     end
 end
 
