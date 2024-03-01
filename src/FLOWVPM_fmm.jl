@@ -8,7 +8,7 @@ Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:An
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[i].var[4:6]
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[i].var[10:12]
-Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(particle_field.particles[i].var[16:24], (3,3))
+Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(particle_field.particles[i].var[16:24], (3, 3))
 Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
 
 Base.setindex!(particle_field::ParticleField, val, i) = particle_field.particles[i] = val
@@ -58,8 +58,6 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
         r = zero(eltype(source_system))
         for target_particle in view(target_system.particles,target_index)
             target_x, target_y, target_z = target_particle.var[1:3]
-            # J = reshape(target_particle.var[16:24],9)
-            J = target_particle.var[16:24]
             for source_particle in view(source_system.particles,source_index)
                 gamma_x, gamma_y, gamma_z = source_particle.var[4:6]
                 source_x, source_y, source_z = source_particle.var[1:3]
@@ -103,7 +101,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
 
-                    J .+= du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
+                    target_particle.var[16:24] .+= du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
                 end
 
                 # include self-induced contribution to SFS
