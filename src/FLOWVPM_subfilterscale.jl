@@ -383,20 +383,20 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] = p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
-            p.M[2, 1] = p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
-            p.M[3, 1] = p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
+            p.var[28] = p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
+            p.var[29] = p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
+            p.var[30] = p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] = p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
-            p.M[2, 1] = p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
-            p.M[3, 1] = p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
+            p.var[28] = p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
+            p.var[29] = p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
+            p.var[30] = p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
-        p.M[1, 2] = get_SFS1(p)
-        p.M[2, 2] = get_SFS2(p)
-        p.M[3, 2] = get_SFS3(p)
+        p.var[31] = get_SFS1(p)
+        p.var[32] = get_SFS2(p)
+        p.var[33] = get_SFS3(p)
     end
 
 
@@ -433,21 +433,21 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.M[1, 1] -= p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
-            p.M[2, 1] -= p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
-            p.M[3, 1] -= p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
+            p.var[28] -= p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
+            p.var[29] -= p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
+            p.var[30] -= p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.M[1, 1] -= p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
-            p.M[2, 1] -= p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
-            p.M[3, 1] -= p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
+            p.var[28] -= p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
+            p.var[29] -= p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
+            p.var[30] -= p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
         # under p.M[:, 2], resulting in dEdσ
-        p.M[1, 2] -= get_SFS1(p)
-        p.M[2, 2] -= get_SFS2(p)
-        p.M[3, 2] -= get_SFS3(p)
+        p.var[31] -= get_SFS1(p)
+        p.var[32] -= get_SFS2(p)
+        p.var[33] -= get_SFS3(p)
     end
 
 
@@ -457,9 +457,9 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     for p in iterator(pfield)
 
         # Calculate numerator and denominator
-        nume = p.M[1,1]*p.var[4] + p.M[2,1]*p.var[5] + p.M[3,1]*p.var[6]
+        nume = p.var[28]*p.var[4] + p.var[29]*p.var[5] + p.var[30]*p.var[6]
         nume *= 3*alpha - 2
-        deno = p.M[1,2]*p.var[4] + p.M[2,2]*p.var[5] + p.M[3,2]*p.var[6]
+        deno = p.var[31]*p.var[4] + p.var[32]*p.var[5] + p.var[33]*p.var[6]
         deno /= zeta0/p.var[7]^3
 
         # Initialize denominator to something other than zero

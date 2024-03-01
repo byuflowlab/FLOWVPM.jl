@@ -170,7 +170,7 @@ integration scheme. See Notebook entry 20180105.
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                             dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
-    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.var[34]
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -179,7 +179,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); p.var[28:36] .= zeroR; end;
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
@@ -201,32 +201,32 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale,
 
             # Low-storage RK step
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.var[10] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.var[11] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.var[12] + Uinf[3])
+            p.var[28] = a*p.var[28] + dt*(p.var[10] + Uinf[1])
+            p.var[29] = a*p.var[29] + dt*(p.var[11] + Uinf[2])
+            p.var[30] = a*p.var[30] + dt*(p.var[12] + Uinf[3])
 
             # Update position
-            p.var[1] += b*p.M[1, 1]
-            p.var[2] += b*p.M[2, 1]
-            p.var[3] += b*p.M[3, 1]
+            p.var[1] += b*p.var[28]
+            p.var[2] += b*p.var[29]
+            p.var[3] += b*p.var[30]
 
             ## Stretching + SFS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
+                p.var[31] = a*p.var[31] + dt*(p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.var[32] = a*p.var[32] + dt*(p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.var[33] = a*p.var[33] + dt*(p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             else
                 # Classic scheme (Γ⋅∇)U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
+                p.var[31] = a*p.var[31] + dt*(p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+                p.var[32] = a*p.var[32] + dt*(p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+                p.var[33] = a*p.var[33] + dt*(p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
             end
 
             # Update vectorial circulation
-            p.var[4] += b*p.M[1, 2]
-            p.var[5] += b*p.M[2, 2]
-            p.var[6] += b*p.M[3, 2]
+            p.var[4] += b*p.var[31]
+            p.var[5] += b*p.var[32]
+            p.var[6] += b*p.var[33]
 
         end
 
@@ -277,8 +277,8 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
                      dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
 
-    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
-    #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.var[34],
+    #                      qsmg <=> p.var[35], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -289,7 +289,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); p.var[28:36] .= zeroR; end;
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
@@ -311,14 +311,14 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
             # Low-storage RK step
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.var[10] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.var[11] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.var[12] + Uinf[3])
+            p.var[28] = a*p.var[28] + dt*(p.var[10] + Uinf[1])
+            p.var[29] = a*p.var[29] + dt*(p.var[11] + Uinf[2])
+            p.var[30] = a*p.var[30] + dt*(p.var[12] + Uinf[3])
 
             # Update position
-            p.var[1] += b*p.M[1, 1]
-            p.var[2] += b*p.M[2, 1]
-            p.var[3] += b*p.M[3, 1]
+            p.var[1] += b*p.var[28]
+            p.var[2] += b*p.var[29]
+            p.var[3] += b*p.var[30]
 
             # Store stretching S under M[1:3]
             if pfield.transposed
@@ -340,20 +340,20 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.var[4] - C*get_SFS1(p)*p.var[7]^3/zeta0)
-            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.var[5] - C*get_SFS2(p)*p.var[7]^3/zeta0)
-            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
+            p.var[31] = a*p.var[31] + dt*(MM[1] - 3*MM[4]*p.var[4] - C*get_SFS1(p)*p.var[7]^3/zeta0)
+            p.var[32] = a*p.var[32] + dt*(MM[2] - 3*MM[4]*p.var[5] - C*get_SFS2(p)*p.var[7]^3/zeta0)
+            p.var[33] = a*p.var[33] + dt*(MM[3] - 3*MM[4]*p.var[6] - C*get_SFS3(p)*p.var[7]^3/zeta0)
 
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-            p.M[2, 3] = a*p.M[2, 3] - dt*( p.var[7] * MM[4] )
+            p.var[35] = a*p.var[35] - dt*( p.var[7] * MM[4] )
 
             # Update vectorial circulation
-            p.var[4] += b*p.M[1, 2]
-            p.var[5] += b*p.M[2, 2]
-            p.var[6] += b*p.M[3, 2]
+            p.var[4] += b*p.var[31]
+            p.var[5] += b*p.var[32]
+            p.var[6] += b*p.var[33]
 
             # Update cross-sectional area
-            p.var[7] += b*p.M[2, 3]
+            p.var[7] += b*p.var[35]
 
         end
 

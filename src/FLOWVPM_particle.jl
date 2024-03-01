@@ -44,7 +44,7 @@ struct Particle{T}
   # PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
-  M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
+  # M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
   # C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
   # S::MVector{3,T}                # Stretching term
 
@@ -90,7 +90,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zeros3(T),
                                                       # init_zeros33(T),
                                                       # init_zeros3(T),
-                                                      init_zeros33(T),
+                                                      # init_zeros33(T),
                                                       # init_zeros3(T),
                                                       # init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),

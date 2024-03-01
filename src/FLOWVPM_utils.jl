@@ -151,9 +151,9 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, eltype(self.M); nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1, eltype(self.var[28:36]); nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
-                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.M)(0.3)))
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.var[28:36])(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
