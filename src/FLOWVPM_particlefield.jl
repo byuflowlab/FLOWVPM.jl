@@ -180,7 +180,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.var[8] = vol
     P.var[9] = abs.(circulation)
     P.var[37:39] .= C
-    P.static .= static
+    P.var[43] = static ? 1.0 : 0.0
     P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
@@ -197,7 +197,7 @@ Add a copy of Particle `P` to the field.
 function add_particle(self::ParticleField, P::Particle)
     return add_particle(self, P.var[1:3], P.var[4:6], P.var[7];
                         vol=P.var[8], circulation=P.var[9],
-                        C=P.var[37:39], static=P.static)
+                        C=P.var[37:39], static=is_static(P))
 end
 
 """
@@ -274,7 +274,7 @@ function get_particleiterator(args...; include_static=false, optargs...)
     if include_static
         return _get_particleiterator(args...; optargs...)
     else
-        return (P for P in _get_particleiterator(args...; optargs...) if !P.static[1])
+        return (P for P in _get_particleiterator(args...; optargs...) if !is_static(P))
     end
 end
 
@@ -317,11 +317,11 @@ function remove_particle(self::ParticleField, i::Int)
         Ptarg = get_particle(self, i)
 
         Ptarg.var[1:15] .= Plast.var[1:15]
-        Ptarg.static .= Plast.static
+        Ptarg.var[43] .= Plast.var[43]
         Ptarg.var[16:24] .= Plast.var[16:24]
         Ptarg.var[25:27] .= Plast.var[25:27]
         Ptarg.var[37:39] .= Plast.var[37:39]
-        Ptarg.static .= Plast.static
+        Ptarg.var[43] .= Plast.var[43]
         Ptarg.index .= Plast.index
     end
 

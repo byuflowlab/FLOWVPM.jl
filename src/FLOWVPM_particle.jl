@@ -35,7 +35,7 @@ struct Particle{T}
   # sigma::MVector{1,T}            # Smoothing radius (1-elem array)
   # vol::MVector{1,T}              # Volume (1-elem array)
   # circulation::MVector{1,T}      # Scalar circulation (1-elem array)
-  static::MVector{1,Bool}        # If true, this particle is not evolved in time
+  # static::MVector{1,Bool}        # If true, this particle is not evolved in time
 
   # Properties
   # U::MVector{3,T}                # Velocity at particle (3-elem array)
@@ -56,7 +56,7 @@ struct Particle{T}
   index::MVector{1,Int32}        # Particle index (1-elem array)
 
   # Combined vector of all variables
-  var::MVector{42,T}
+  var::MVector{43,T}
 end
 
 function init_zero(type::DataType)
@@ -71,8 +71,8 @@ function init_zeros33(type::DataType)
     return MMatrix{3,3,type,9}(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
 end
 
-function init_zeros42(type::DataType)
-    return @MVector zeros(type, 42)
+function init_zeros43(type::DataType)
+    return @MVector zeros(type, 43)
 end
 
 Base.eltype(::Particle{T}) where T = T
@@ -85,7 +85,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zero(T),
                                                       # init_zero(T),
                                                       # init_zero(T),
-                                                      init_zero(Bool),
+                                                      # init_zero(Bool),
                                                       # init_zeros3(T),
                                                       # init_zeros3(T),
                                                       # init_zeros33(T),
@@ -96,7 +96,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     init_zero(Int32),
-                                                    init_zeros42(T))
+                                                    init_zeros43(T))
 
 
 
@@ -114,6 +114,8 @@ get_SFS3(P::Particle) = P.var[42]
 add_SFS1(P::Particle, val) = P.var[40] += val
 add_SFS2(P::Particle, val) = P.var[41] += val
 add_SFS3(P::Particle, val) = P.var[42] += val
+
+is_static(P::Particle) = Bool(P.var[43])
 
 # get_SFS1(P::Particle{T}) where {T} = getproperty(P, _SFS)[1]::T
 # get_SFS2(P::Particle{T}) where {T} = getproperty(P, _SFS)[2]::T

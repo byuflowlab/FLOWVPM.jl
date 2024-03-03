@@ -190,7 +190,7 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["sigma"] = [P.var[7] for P in iterate(self; include_static=true)]
     h5["circulation"] = [P.var[9] for P in iterate(self; include_static=true)]
     h5["vol"] = [P.var[8] for P in iterate(self; include_static=true)]
-    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
+    h5["static"] = Int[P.var[43] for P in iterate(self; include_static=true)]
     h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
     h5["velocity"] = [P.var[i] for i in 10:12, P in iterate(self; include_static=true)]
     h5["vorticity"] = [P.var[i] for i in 13:15, P in iterate(self; include_static=true)]
