@@ -53,7 +53,7 @@ struct Particle{T}
 #   dJdx1exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx2exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
 #   dJdx3exa::Array{T, 2}         # Derivative of Jacobian (9-elem array)
-  index::MVector{1,Int32}        # Particle index (1-elem array)
+  # index::MVector{1,Int32}        # Particle index (1-elem array)
 
   # Combined vector of all variables
   var::MVector{43,T}
@@ -95,7 +95,7 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(
                                                       # init_zeros3(T),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
-                                                    init_zero(Int32),
+                                                    # init_zero(Int32),
                                                     init_zeros43(T))
 
 

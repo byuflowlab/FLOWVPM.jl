@@ -134,9 +134,9 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     particles = [zero(Particle{R}) for _ in 1:maxparticles]
 
     # Set index of each particle
-    for (i, P) in enumerate(particles)
-        P.index[1] = i
-    end
+    # for (i, P) in enumerate(particles)
+    #     P.index[1] = i
+    # end
     # Generate and return ParticleField
     return ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
@@ -155,13 +155,13 @@ isLES(self::ParticleField) = isSFSenabled(self.SFS)
 
 ##### FUNCTIONS ################################################################
 """
-  `add_particle(self::ParticleField, X, Gamma, sigma; vol=0, index=np)`
+  `add_particle(self::ParticleField, X, Gamma, sigma; vol=0)`
 
 Add a particle to the field.
 """
 function add_particle(self::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, static=false, index=-1)
+                                           C=0, static=false)
     # ERROR CASES
     if get_np(self)==self.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
@@ -181,7 +181,7 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     P.var[9] = abs.(circulation)
     P.var[37:39] .= C
     P.var[43] = static ? 1.0 : 0.0
-    P.index .= index==-1 ? get_np(self) : index
+    # P.index .= index==-1 ? get_np(self) : index
 
     # Add particle to the field
     self.np += 1
@@ -322,7 +322,6 @@ function remove_particle(self::ParticleField, i::Int)
         Ptarg.var[25:27] .= Plast.var[25:27]
         Ptarg.var[37:39] .= Plast.var[37:39]
         Ptarg.var[43] .= Plast.var[43]
-        Ptarg.index .= Plast.index
     end
 
     # Remove last particle in the field
