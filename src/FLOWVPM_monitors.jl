@@ -27,9 +27,9 @@ function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
     # Calculate enstrophy
     enstrophy = 0
     for P in iterator(pfield)
-        enstrophy += (P.var[4]*P.var[4]
-                      + P.var[5]*P.var[5] + P.var[6]*P.var[6]
-                                                              ) / P.var[7]^3
+        enstrophy += (P[4]*P[4]
+                      + P[5]*P[5] + P[6]*P[6]
+                                                              ) / P[7]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
 
@@ -79,8 +79,8 @@ function monitor_enstrophy_Gammaomega(pfield, t, dt; save_path=nothing, run_name
         # Calculate enstrophy
         enstrophy = 0
         for P in iterator(pfield)
-            enstrophy += ( P.var[4]*get_W1(P)
-                          + P.var[5]*get_W2(P) + P.var[6]*get_W3(P) )
+            enstrophy += ( P[4]*get_W1(P)
+                          + P[5]*get_W2(P) + P[6]*get_W3(P) )
         end
         enstrophy *= 0.5
 
@@ -125,11 +125,11 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
     mean = 0
     N, nzero, Nstatic, Ntot = 0, 0, 0, get_np(pfield)
     for P in iterator(pfield)
-        if P.var[37] == 0
+        if P[37] == 0
             nzero += 1
         else
             N += 1
-            mean += abs(P.var[37])
+            mean += abs(P[37])
         end
 
         if P.static[1]
@@ -145,7 +145,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
 
     for P in iterator(pfield)
 
-        C = abs(P.var[37])
+        C = abs(P[37])
 
         if C != 0
             val = C - mean

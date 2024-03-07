@@ -116,7 +116,7 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # "Calculate" model coefficient
         for p in iterator(pfield)
-            p.var[37] = SFS.Cs
+            p[37] = SFS.Cs
         end
 
         # Apply clipping strategies
@@ -125,7 +125,7 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
-                    p.var[37] *= 0
+                    p[37] *= 0
                 end
 
             end
@@ -212,7 +212,7 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
-                    p.var[37] *= 0
+                    p[37] *= 0
                 end
 
             end
@@ -243,8 +243,8 @@ end
     Backscatter control strategy of SFS enstrophy production by clipping of the
 SFS model. See 20210901 notebook for derivation.
 """
-function clipping_backscatter(P::Particle, pfield)
-    return P.var[37]*(P.var[4]*get_SFS1(P) + P.var[5]*get_SFS2(P) + P.var[6]*get_SFS3(P)) < 0
+function clipping_backscatter(P, pfield)
+    return P[37]*(P[4]*get_SFS1(P) + P[5]*get_SFS2(P) + P[6]*get_SFS3(P)) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -259,15 +259,15 @@ end
 to affect only the vortex strength magnitude and not the vortex orientation.
 See 20210901 notebook for derivation.
 """
-function control_directional(P::Particle, pfield)
+function control_directional(P, pfield)
 
-    aux = get_SFS1(P)*P.var[4] + get_SFS2(P)*P.var[5] + get_SFS3(P)*P.var[6]
-    aux /= (P.var[4]*P.var[4] + P.var[5]*P.var[5] + P.var[6]*P.var[6])
+    aux = get_SFS1(P)*P[4] + get_SFS2(P)*P[5] + get_SFS3(P)*P[6]
+    aux /= (P[4]*P[4] + P[5]*P[5] + P[6]*P[6])
 
     # Replaces old SFS with the direcionally controlled SFS
-    add_SFS1(P, -get_SFS1(P) + aux*P.var[4])
-    add_SFS2(P, -get_SFS2(P) + aux*P.var[5])
-    add_SFS3(P, -get_SFS3(P) + aux*P.var[6])
+    add_SFS1(P, -get_SFS1(P) + aux*P[4])
+    add_SFS2(P, -get_SFS2(P) + aux*P[5])
+    add_SFS3(P, -get_SFS3(P) + aux*P[6])
 end
 
 """
@@ -275,27 +275,27 @@ end
 magnitude of the forward scattering (diffussion) of the model.
 See 20210901 notebook for derivation.
 """
-function control_magnitude(P::Particle{R}, pfield) where {R}
+function control_magnitude(P, pfield)
 
     # Estimate Δt
     if pfield.nt == 0
         # error("Logic error: It was not possible to estimate time step.")
         nothing
-    elseif P.var[37] != 0
+    elseif P[37] != 0
         deltat::R = pfield.t / pfield.nt
 
         f::R = pfield.formulation.f
         zeta0::R = pfield.kernel.zeta(0)
 
-        aux = get_SFS1(P)*P.var[4] + get_SFS2(P)*P.var[5] + get_SFS3(P)*P.var[6]
-        aux /= P.var[4]*P.var[4] + P.var[5]*P.var[5] + P.var[6]*P.var[6]
-        aux -= (1+3*f)*(zeta0/P.var[7]^3) / deltat / P.var[37]
+        aux = get_SFS1(P)*P[4] + get_SFS2(P)*P[5] + get_SFS3(P)*P[6]
+        aux /= P[4]*P[4] + P[5]*P[5] + P[6]*P[6]
+        aux -= (1+3*f)*(zeta0/P[7]^3) / deltat / P[37]
 
         # f_p filter criterion
         if aux > 0
-            add_SFS1(P, -aux*P.var[4])
-            add_SFS2(P, -aux*P.var[5])
-            add_SFS3(P, -aux*P.var[6])
+            add_SFS1(P, -aux*P[4])
+            add_SFS2(P, -aux*P[5])
+            add_SFS3(P, -aux*P[6])
         end
     end
 end
@@ -353,7 +353,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
                                        minC::Real, maxC::Real) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
-    #                C=<Γ⋅L>/<Γ⋅m> <=> p.var[37], <Γ⋅L> <=> p.var[38], <Γ⋅m> <=> p.var[39]
+    #                C=<Γ⋅L>/<Γ⋅m> <=> p[37], <Γ⋅L> <=> p[38], <Γ⋅m> <=> p[39]
 
     # ERROR CASES
     if minC < 0
@@ -367,7 +367,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
     for p in iterator(pfield)
-        p.var[7] *= alpha
+        p[7] *= alpha
     end
 
     # Calculate UJ with test filter
@@ -383,27 +383,27 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.var[28] = p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
-            p.var[29] = p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
-            p.var[30] = p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
+            p[28] = p[16]*p[4]+p[17]*p[5]+p[18]*p[6]
+            p[29] = p[19]*p[4]+p[20]*p[5]+p[21]*p[6]
+            p[30] = p[22]*p[4]+p[23]*p[5]+p[24]*p[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.var[28] = p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
-            p.var[29] = p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
-            p.var[30] = p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
+            p[28] = p[16]*p[4]+p[19]*p[5]+p[22]*p[6]
+            p[29] = p[17]*p[4]+p[20]*p[5]+p[23]*p[6]
+            p[30] = p[18]*p[4]+p[21]*p[5]+p[24]*p[6]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
-        p.var[31] = get_SFS1(p)
-        p.var[32] = get_SFS2(p)
-        p.var[33] = get_SFS3(p)
+        p[31] = get_SFS1(p)
+        p[32] = get_SFS2(p)
+        p[33] = get_SFS3(p)
     end
 
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
     for p in iterator(pfield)
-        p.var[7] /= alpha
+        p[7] /= alpha
     end
 
     return nothing
@@ -415,7 +415,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
                                        force_positive::Bool=false) where {R}
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
-    #                C=<Γ⋅L>/<Γ⋅m> <=> p.var[37], <Γ⋅L> <=> p.var[38], <Γ⋅m> <=> p.var[39]
+    #                C=<Γ⋅L>/<Γ⋅m> <=> p[37], <Γ⋅L> <=> p[38], <Γ⋅m> <=> p[39]
 
     # ERROR CASES
     if minC < 0
@@ -433,21 +433,21 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.var[28] -= p.var[16]*p.var[4]+p.var[17]*p.var[5]+p.var[18]*p.var[6]
-            p.var[29] -= p.var[19]*p.var[4]+p.var[20]*p.var[5]+p.var[21]*p.var[6]
-            p.var[30] -= p.var[22]*p.var[4]+p.var[23]*p.var[5]+p.var[24]*p.var[6]
+            p[28] -= p[16]*p[4]+p[17]*p[5]+p[18]*p[6]
+            p[29] -= p[19]*p[4]+p[20]*p[5]+p[21]*p[6]
+            p[30] -= p[22]*p[4]+p[23]*p[5]+p[24]*p[6]
         else
             # Classic scheme (Γ⋅∇)U
-            p.var[28] -= p.var[16]*p.var[4]+p.var[19]*p.var[5]+p.var[22]*p.var[6]
-            p.var[29] -= p.var[17]*p.var[4]+p.var[20]*p.var[5]+p.var[23]*p.var[6]
-            p.var[30] -= p.var[18]*p.var[4]+p.var[21]*p.var[5]+p.var[24]*p.var[6]
+            p[28] -= p[16]*p[4]+p[19]*p[5]+p[22]*p[6]
+            p[29] -= p[17]*p[4]+p[20]*p[5]+p[23]*p[6]
+            p[30] -= p[18]*p[4]+p[21]*p[5]+p[24]*p[6]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
         # under p.M[:, 2], resulting in dEdσ
-        p.var[31] -= get_SFS1(p)
-        p.var[32] -= get_SFS2(p)
-        p.var[33] -= get_SFS3(p)
+        p[31] -= get_SFS1(p)
+        p[32] -= get_SFS2(p)
+        p[33] -= get_SFS3(p)
     end
 
 
@@ -457,26 +457,26 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     for p in iterator(pfield)
 
         # Calculate numerator and denominator
-        nume = p.var[28]*p.var[4] + p.var[29]*p.var[5] + p.var[30]*p.var[6]
+        nume = p[28]*p[4] + p[29]*p[5] + p[30]*p[6]
         nume *= 3*alpha - 2
-        deno = p.var[31]*p.var[4] + p.var[32]*p.var[5] + p.var[33]*p.var[6]
-        deno /= zeta0/p.var[7]^3
+        deno = p[31]*p[4] + p[32]*p[5] + p[33]*p[6]
+        deno /= zeta0/p[7]^3
 
         # Initialize denominator to something other than zero
-        if p.var[39] == 0
-            p.var[39] = deno
+        if p[39] == 0
+            p[39] = deno
         end
 
         # Lagrangian average of numerator and denominator
-        nume = rlxf*nume + (1-rlxf)*p.var[38]
-        deno = rlxf*deno + (1-rlxf)*p.var[39]
+        nume = rlxf*nume + (1-rlxf)*p[38]
+        deno = rlxf*deno + (1-rlxf)*p[39]
 
         # Enforce maximum and minimum |C| values
         if abs(nume/deno) > maxC            # Case: C is too large
 
             # Avoid case of denominator becoming zero
-            if abs(deno) < abs(p.var[39])
-                deno = sign(deno) * abs(p.var[39])
+            if abs(deno) < abs(p[39])
+                deno = sign(deno) * abs(p[39])
             end
 
             # Enforce maximum value of |Cd|
@@ -492,14 +492,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Save numerator and denominator of model coefficient
-        p.var[38] = nume
-        p.var[39] = deno
+        p[38] = nume
+        p[39] = deno
 
         # Store model coefficient
-        p.var[37] = p.var[38] / p.var[39]
+        p[37] = p[38] / p[39]
 
         # Force the coefficient to be positive
-        p.var[37] *= sign(p.var[37])^force_positive
+        p[37] *= sign(p[37])^force_positive
     end
 
     # Flush temporal memory
@@ -521,7 +521,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
                                            Lambda=(lmbd, lmbdcrit) -> (lmbd - lmbdcrit) / (1 - lmbdcrit)
                                          ) where {R}
 
-    # Storage terms: f(λ) <=> p.var[37], test-filter ξ <=> p.var[38], primary-filter ξ <=> p.var[39]
+    # Storage terms: f(λ) <=> p[37], test-filter ξ <=> p[38], primary-filter ξ <=> p[39]
 
     # ERROR CASES
     if minC < 0
@@ -535,35 +535,35 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
     for p in iterator(pfield)
-        p.var[7] *= alpha
+        p[7] *= alpha
     end
 
     # Calculate UJ with test filter
     pfield.UJ(pfield; sfs=false, reset=true, reset_sfs=false)
 
-    # Store test-filter ξ under p.var[38]
+    # Store test-filter ξ under p[38]
     for p in iterator(pfield)
-        p.var[38] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+        p[38] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
     end
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
     for p in iterator(pfield)
-        p.var[7] /= alpha
+        p[7] /= alpha
     end
 
     # Calculate UJ with domain filter
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
 
-    # Store domain-filter ξ under p.var[39]
+    # Store domain-filter ξ under p[39]
     for p in iterator(pfield)
-        p.var[39] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
+        p[39] = get_W1(p)^2 + get_W2(p)^2 + get_W3(p)^2
     end
 
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     for p in iterator(pfield)
-        Lmbd = Lambda(p.var[38]/p.var[39], lambdacrit)
-        p.var[37] = minC + sensor(Lmbd)*( maxC - minC )
+        Lmbd = Lambda(p[38]/p[39], lambdacrit)
+        p[37] = minC + sensor(Lmbd)*( maxC - minC )
     end
 
     return nothing

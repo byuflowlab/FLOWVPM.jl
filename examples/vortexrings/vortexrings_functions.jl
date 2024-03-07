@@ -237,7 +237,7 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            outZ[ri] .+= P.var[1:3]
+            outZ[ri] .+= P[1:3]
 
         end
         outZ[ri] ./= Np
@@ -248,8 +248,8 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
 
             P = vpm.get_particle(pfield, pi)
 
-            outR[ri] += sqrt((P.var[1] - outZ[ri][1])^2 + (P.var[2] - outZ[ri][2])^2 + (P.var[3] - outZ[ri][3])^2)
-            outsgm[ri] += P.var[7]
+            outR[ri] += sqrt((P[1] - outZ[ri][1])^2 + (P[2] - outZ[ri][2])^2 + (P[3] - outZ[ri][3])^2)
+            outsgm[ri] += P[7]
 
         end
         outR[ri] /= Np
@@ -276,11 +276,11 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.var[4:6])
+            normGamma = norm(P[4:6])
             magGammatot += normGamma
 
             for i in 1:3
-                outZ[ri][i] += normGamma*P.var[i]
+                outZ[ri][i] += normGamma*P[i]
             end
 
         end
@@ -291,10 +291,10 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.var[4:6])
+            normGamma = norm(P[4:6])
 
-            outR[ri] += normGamma*sqrt((P.var[1] - outZ[ri][1])^2 + (P.var[2] - outZ[ri][2])^2 + (P.var[3] - outZ[ri][3])^2)
-            outsgm[ri] += normGamma*P.var[7]
+            outR[ri] += normGamma*sqrt((P[1] - outZ[ri][1])^2 + (P[2] - outZ[ri][2])^2 + (P[3] - outZ[ri][3])^2)
+            outsgm[ri] += normGamma*P[7]
 
         end
         outR[ri] /= magGammatot
@@ -325,7 +325,7 @@ function calc_rings_weightedW2!(outZ, outR, outsgm, pfield, nrings, intervals; z
             magW2tot += W2
 
             for i in 1:3
-                outZ[ri][i] += W2*P.var[i]
+                outZ[ri][i] += W2*P[i]
             end
 
         end
@@ -341,12 +341,12 @@ function calc_rings_weightedW2!(outZ, outR, outsgm, pfield, nrings, intervals; z
             P = vpm.get_particle(pfield, pi)
 
             r = 0
-            for i in 1:3; r += (i!=zdir)*(P.var[i] - outZ[ri][i])^2; end;
+            for i in 1:3; r += (i!=zdir)*(P[i] - outZ[ri][i])^2; end;
             r = sqrt(r)
 
-            tht = zdir==1 ? atan(P.var[3], P.var[2]) :
-                  zdir==2 ? atan(P.var[1], P.var[3]) :
-                            atan(P.var[2], P.var[1])
+            tht = zdir==1 ? atan(P[3], P[2]) :
+                  zdir==2 ? atan(P[1], P[3]) :
+                            atan(P[2], P[1])
 
             Wtht = zdir==1 ? vpm.get_W2(P)*cos(tht) + vpm.get_W3(P)*sin(tht) :
                    zdir==2 ? vpm.get_W3(P)*cos(tht) + vpm.get_W1(P)*sin(tht) :
@@ -386,22 +386,22 @@ function calc_elliptic_radius(outRm, outRp, Z, pfield, nrings, intervals;
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            weightx = dot(P.var[4:6], unity)
-            weighty = dot(P.var[4:6], unitx)
+            weightx = dot(P[4:6], unity)
+            weighty = dot(P[4:6], unitx)
 
-            if P.var[1]-Z[ri][1] < 0
-                outRm[ri][1] -= abs(weightx*P.var[1])
+            if P[1]-Z[ri][1] < 0
+                outRm[ri][1] -= abs(weightx*P[1])
                 weightxmtot += abs(weightx)
             else
-                outRp[ri][1] += abs(weightx*P.var[1])
+                outRp[ri][1] += abs(weightx*P[1])
                 weightxptot += abs(weightx)
             end
 
-            if P.var[2]-Z[ri][2] < 0
-                outRm[ri][2] -= abs(weighty*P.var[2])
+            if P[2]-Z[ri][2] < 0
+                outRm[ri][2] -= abs(weighty*P[2])
                 weightymtot += abs(weighty)
             else
-                outRp[ri][2] += abs(weighty*P.var[2])
+                outRp[ri][2] += abs(weighty*P[2])
                 weightyptot += abs(weighty)
             end
 
@@ -555,7 +555,7 @@ function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
             ws[1, pi, ri] = vpm.get_W1(P)
             ws[2, pi, ri] = vpm.get_W2(P)
             ws[3, pi, ri] = vpm.get_W3(P)
-            Xs[:, pi, ri] .= P.var[1:3]
+            Xs[:, pi, ri] .= P[1:3]
         end
     end
 

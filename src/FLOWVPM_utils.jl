@@ -102,9 +102,18 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             # Add static particles
             remove = static_particles_function(pfield, pfield.t, dt)
 
+        # DEBUG
+        # println("STEP $i / $nsteps")
+        # if i > 3; error("DONE"); end
+        # print("HERE 1  ")
+        # println(pfield.particles[:, 1])
+
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
 
+        # DEBUG
+        # print("HERE 2  ")
+        # println(pfield.particles[:, 1])
             # Remove static particles (assumes particles remained sorted)
             if remove==nothing || remove
                 for pi in get_np(pfield):-1:(org_np+1)
@@ -151,9 +160,9 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, eltype(self.var[28:36]); nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1, eltype(self.particles); nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
-                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.var[28:36])(0.3)))
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.particles)(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
@@ -185,18 +194,18 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [P.var[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [P.var[i] for i in 4:6, P in iterate(self; include_static=true)]
-    h5["sigma"] = [P.var[7] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [P.var[9] for P in iterate(self; include_static=true)]
-    h5["vol"] = [P.var[8] for P in iterate(self; include_static=true)]
-    h5["static"] = Int[P.var[43] for P in iterate(self; include_static=true)]
+    h5["X"] = [P[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [P[i] for i in 4:6, P in iterate(self; include_static=true)]
+    h5["sigma"] = [P[7] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [P[9] for P in iterate(self; include_static=true)]
+    h5["vol"] = [P[8] for P in iterate(self; include_static=true)]
+    h5["static"] = Int[P[43] for P in iterate(self; include_static=true)]
     # h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
-    h5["velocity"] = [P.var[i] for i in 10:12, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [P.var[i] for i in 13:15, P in iterate(self; include_static=true)]
+    h5["velocity"] = [P[i] for i in 10:12, P in iterate(self; include_static=true)]
+    h5["vorticity"] = [P[i] for i in 13:15, P in iterate(self; include_static=true)]
 
     if isLES(self)
-        h5["C"] = [P.var[i] for i in 37:39, P in iterate(self; include_static=true)]
+        h5["C"] = [P[i] for i in 37:39, P in iterate(self; include_static=true)]
     end
 
     # # Connectivity information

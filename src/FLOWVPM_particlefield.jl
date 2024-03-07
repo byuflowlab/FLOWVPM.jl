@@ -8,6 +8,7 @@
   * Created   : Aug 2020
 =###############################################################################
 
+const nfields = 43
 ################################################################################
 # FMM STRUCT
 ################################################################################
@@ -57,7 +58,7 @@ end
 mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-    particles::Array{Particle{R}, 1}            # Array of particles
+    particles::Matrix{R}                        # Array of particles
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
 
@@ -116,6 +117,9 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     #                       )
 end
 
+is_static(pfield::ParticleField, i::Int) = is_static(pfield.particles[:, i])
+is_static(particle) = Bool(particle[43])
+
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(), 
@@ -131,7 +135,8 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                             ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration}
 
     # create particle field
-    particles = [zero(Particle{R}) for _ in 1:maxparticles]
+    # particles = [zero(Particle{R}) for _ in 1:maxparticles]
+    particles = zeros(R, nfields, maxparticles)
 
     # Set index of each particle
     # for (i, P) in enumerate(particles)
@@ -170,18 +175,17 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     #     error("Got invalid circulation less or equal to zero! ($(circulation))")
     end
 
-    # Fetch next empty particle in the field
-    P = get_particle(self, get_np(self)+1; emptyparticle=true)
+    # Fetch the index of the next empty particle in the field
+    i_next = get_np(self)+1
 
     # Populate the empty particle
-    P.var[1:3] .= X
-    P.var[4:6] .= Gamma
-    P.var[7] = sigma
-    P.var[8] = vol
-    P.var[9] = abs.(circulation)
-    P.var[37:39] .= C
-    P.var[43] = static ? 1.0 : 0.0
-    # P.index .= index==-1 ? get_np(self) : index
+    self.particles[1:3, i_next] .= X
+    self.particles[4:6, i_next] .= Gamma
+    self.particles[7, i_next] = sigma
+    self.particles[8, i_next] = vol
+    self.particles[9, i_next] = abs.(circulation)
+    self.particles[37:39, i_next] .= C
+    self.particles[43, i_next] = Float64(static)
 
     # Add particle to the field
     self.np += 1
@@ -194,10 +198,10 @@ end
 
 Add a copy of Particle `P` to the field.
 """
-function add_particle(self::ParticleField, P::Particle)
-    return add_particle(self, P.var[1:3], P.var[4:6], P.var[7];
-                        vol=P.var[8], circulation=P.var[9],
-                        C=P.var[37:39], static=is_static(P))
+function add_particle(self::ParticleField, particle)
+    return add_particle(self, particle[1:3], particle[4:6], particle[7];
+                        vol=particle[8], circulation=particle[9],
+                        C=particle[37:39], static=is_static(particle))
 end
 
 """
@@ -223,7 +227,7 @@ function get_particle(self::ParticleField, i::Int; emptyparticle=false)
                                                           " $(get_np(self)+1)")
     end
 
-    return self.particles[i]
+    return view(self.particles, :, i)
 end
 
 "Alias for `get_particleiterator`"
@@ -232,11 +236,32 @@ iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
 "Alias for `get_particleiterator`"
 iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
-get_X(self::ParticleField, i::Int) = get_particle(self, i).var[1:3]
-get_Gamma(self::ParticleField, i::Int) = get_particle(self, i).var[4:6]
-get_sigma(self::ParticleField, i::Int) = get_particle(self, i).var[7]
-get_U(self::ParticleField, i::Int) = get_particle(self, i).var[10:12]
-get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
+"Get functions for particles"
+get_X(particle) = view(particle, 1:3)
+
+get_Gamma(particle) = view(particle, 4:6)
+get_sigma(particle) = view(particle, 7)[1]
+get_U(particle) = view(particle, 10:12)
+get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
+
+get_W1(particle) = particle[21]-particle[23]
+get_W2(particle) = particle[22]-particle[18]
+get_W3(particle) = particle[17]-particle[19]
+
+get_SFS1(particle) = particle[40]
+get_SFS2(particle) = particle[41]
+get_SFS3(particle) = particle[42]
+
+add_SFS1(particle, val) = particle[40] += val
+add_SFS2(particle, val) = particle[41] += val
+add_SFS3(particle, val) = particle[42] += val
+
+"Get functions for particles in ParticleField"
+get_X(self::ParticleField, i::Int) = get_X(self.particles[:, i])
+get_Gamma(self::ParticleField, i::Int) = get_Gamma(self.particles[:, i])
+get_sigma(self::ParticleField, i::Int) = get_sigma(self.particles[:, i])
+get_U(self::ParticleField, i::Int) = get_U(self.particles[:, i])
+get_W(self::ParticleField, i::Int) = get_W(self.particles[:, i])
 
 """
     `isinviscid(pfield::ParticleField)`
@@ -278,20 +303,21 @@ function get_particleiterator(args...; include_static=false, optargs...)
     end
 end
 
-function _get_particleiterator(self::ParticleField{R, F, V}; start_i::Int=1,
-                              end_i::Int=-1, reverse=false) where {R, F, V}
-    # ERROR CASES
+function _get_particleiterator(self::ParticleField; start_i::Int=1, end_i::Int=-1, reverse=false)
     if end_i > get_np(self)
         error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
-                                                    " particles in the field.")
+              " particles in the field.")
     end
 
-    strt = reverse ? (end_i==-1 ? get_np(self) : end_i) : start_i
-    stp = reverse ? -1 : 1
-    nd = reverse ? start_i : (end_i==-1 ? get_np(self) : end_i)
+    last_i = end_i==-1 ? get_np(self) : end_i
 
-    return view( self.particles, strt:stp:nd
-                )::SubArray{Particle{R}, 1, Array{Particle{R}, 1}, Tuple{StepRange{Int64,Int64}}, true}
+    if reverse
+        i_particles = last_i : -1 : start_i
+    else
+        i_particles = start_i : last_i
+    end
+
+    return eachcol(view(self.particles, :, i_particles))
 end
 
 """
@@ -307,31 +333,20 @@ function remove_particle(self::ParticleField, i::Int)
         error("Requested removal of invalid particle index $i")
     elseif i>get_np(self)
         error("Requested removal of particle $i, but there is only"*
-                                " $(get_np(self)) particles in the field.")
+              " $(get_np(self)) particles in the field.")
     end
-
-    Plast = get_particle(self, get_np(self))
 
     if i != get_np(self)
         # Overwrite target particle with last particle in the field
-        Ptarg = get_particle(self, i)
-
-        Ptarg.var[1:15] .= Plast.var[1:15]
-        Ptarg.var[43] .= Plast.var[43]
-        Ptarg.var[16:24] .= Plast.var[16:24]
-        Ptarg.var[25:27] .= Plast.var[25:27]
-        Ptarg.var[37:39] .= Plast.var[37:39]
-        Ptarg.var[43] .= Plast.var[43]
+        self.particles[:, i] = self.particles[:, get_np(self)]
     end
 
     # Remove last particle in the field
-    _reset_particle(Plast)
-    _reset_particle_sfs(Plast)
+    _reset_particle(self, get_np(self))
     self.np -= 1
 
     return nothing
 end
-
 
 """
   `nextstep(self::ParticleField, dt; relax=false)`
@@ -352,29 +367,25 @@ end
 
 
 ##### INTERNAL FUNCTIONS #######################################################
-function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
-    tzero = zero(R)
-    for P in iterator(self; include_static=true)
-        _reset_particle(P, tzero)
-    end
-end
+_reset_particles(self::ParticleField) = self.particles[10:27, :] .= zero(eltype(self.particles))
 
-function _reset_particle(P::Particle{T}, tzero::T) where {T}
-    P.var[10:27] .= tzero
-end
-_reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
+_reset_particle(particle) = particle[10:27] .= zero(eltype(particle))
 
-function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
-    tzero = zero(R)
-    for P in iterator(self; include_static=true)
-        _reset_particle_sfs(P, tzero)
-    end
-end
+_reset_particles_sfs(self::ParticleField) = self.particles[40:42, :] .= zero(eltype(self.particles))
 
-function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
-    # getproperty(P, _SFS)::MVector{3,T} .= tzero
-    P.var[40:42] .= tzero
-    # P.C .= tzero
-end
-_reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
+_reset_particles_sfs(self::ParticleField, i::Int) = self.particles[40:42, i] .= zero(eltype(self.particles))
+
+_reset_particle_sfs(particle) = particle[40:42] .= zero(eltype(particle))
+
+# Alternative that uses a parameteric type
+# _reset_particles(self::ParticleField) = self.particles[10:27, :] .= zero(eltype(self.particles))
+#
+# _reset_particle(particle::Vector{TF}) where {TF} = particle[10:27] .= zero(TF)
+#
+# _reset_particles_sfs(self::ParticleField) = self.particles[40:42, :] .= zero(eltype(self.particles))
+#
+# _reset_particles_sfs(self::ParticleField, i::Int) = _reset_particle_sfs(self.particles[:, i])
+#
+# _reset_particle_sfs(particle::Vector{TF}) where {TF} = particle[40:42] .= zero(TF)
+
 ##### END OF PARTICLE FIELD#####################################################
