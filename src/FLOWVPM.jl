@@ -43,7 +43,7 @@ const FLOAT_TYPE = Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
-                    "particle", "relaxation", "subfilterscale",
+                    "relaxation", "subfilterscale",
                     "particlefield", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]
