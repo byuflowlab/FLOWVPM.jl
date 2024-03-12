@@ -18,11 +18,10 @@ Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = n
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = get_U(particle_field, i) .= val
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = get_J(particle_field, i) .= reshape(val, 9)
 
-fmm.get_n_bodies(particle_field::ParticleField) = particle_field.np
+fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
 
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
-# fmm.buffer_element(system::ParticleField) = deepcopy(system.particles[1])
 fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
 
 fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
