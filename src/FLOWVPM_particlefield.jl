@@ -240,8 +240,9 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 get_X(particle) = view(particle, 1:3)
 
 get_Gamma(particle) = view(particle, 4:6)
-get_sigma(particle) = view(particle, 7)[1]
+get_sigma(particle) = particle[7]
 get_U(particle) = view(particle, 10:12)
+get_J(particle) = view(particle, 16:24)
 get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
 
 get_W1(particle) = particle[21]-particle[23]
@@ -257,11 +258,12 @@ add_SFS2(particle, val) = particle[41] += val
 add_SFS3(particle, val) = particle[42] += val
 
 "Get functions for particles in ParticleField"
-get_X(self::ParticleField, i::Int) = get_X(self.particles[:, i])
-get_Gamma(self::ParticleField, i::Int) = get_Gamma(self.particles[:, i])
-get_sigma(self::ParticleField, i::Int) = get_sigma(self.particles[:, i])
-get_U(self::ParticleField, i::Int) = get_U(self.particles[:, i])
-get_W(self::ParticleField, i::Int) = get_W(self.particles[:, i])
+get_X(self::ParticleField, i::Int) = get_X(get_particle(self, i))
+get_Gamma(self::ParticleField, i::Int) = get_Gamma(get_particle(self, i))
+get_sigma(self::ParticleField, i::Int) = get_sigma(get_particle(self, i))
+get_U(self::ParticleField, i::Int) = get_U(get_particle(self, i))
+get_J(self::ParticleField, i::Int) = get_J(get_particle(self, i))
+get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
 """
     `isinviscid(pfield::ParticleField)`

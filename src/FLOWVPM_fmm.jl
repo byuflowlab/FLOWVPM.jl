@@ -2,28 +2,31 @@
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
 
-Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = particle_field.particles[1:3, i]
-Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = particle_field.particles[7, i]
+Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
+Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
-Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = particle_field.particles[4:6, i]
-Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = particle_field.particles[10:12, i]
-Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(particle_field.particles[16:24, i], (3, 3))
-Base.getindex(particle_field::ParticleField, i) = particle_field.particles[i]
+Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = get_Gamma(particle_field, i)
+Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
+Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
+Base.getindex(particle_field::ParticleField, i) = get_particle(particle_field, i)
 
-Base.setindex!(particle_field::ParticleField, val, i) = particle_field.particles[i] = val
+Base.setindex!(particle_field::ParticleField, val, i) = get_particle(particle_field, i) .= val
+
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
-function Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity)
-    particle_field.particles[10:12, i] .= val[1:3]
-end
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = particle_field.particles[16:24, i] .= reshape(val, 9)
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = get_U(particle_field, i) .= val
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = get_J(particle_field, i) .= reshape(val, 9)
 
 fmm.get_n_bodies(particle_field::ParticleField) = particle_field.np
 
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
-fmm.buffer_element(system::ParticleField) = deepcopy(system.particles[1])
+# fmm.buffer_element(system::ParticleField) = deepcopy(system.particles[1])
+function fmm.buffer_element(system::ParticleField)
+    # return deepcopy(get_particle(system, 1))
+    return zeros(eltype(system.particles), 43)
+end
 
 fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
 

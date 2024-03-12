@@ -102,18 +102,9 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             # Add static particles
             remove = static_particles_function(pfield, pfield.t, dt)
 
-        # DEBUG
-        # println("STEP $i / $nsteps")
-        # if i > 3; error("DONE"); end
-        # print("HERE 1  ")
-        # println(pfield.particles[:, 1])
-
             # Step in time solving governing equations
             nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
 
-        # DEBUG
-        # print("HERE 2  ")
-        # println(pfield.particles[:, 1])
             # Remove static particles (assumes particles remained sorted)
             if remove==nothing || remove
                 for pi in get_np(pfield):-1:(org_np+1)
