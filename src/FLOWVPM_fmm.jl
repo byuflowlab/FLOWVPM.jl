@@ -23,10 +23,7 @@ fmm.get_n_bodies(particle_field::ParticleField) = particle_field.np
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
 # fmm.buffer_element(system::ParticleField) = deepcopy(system.particles[1])
-function fmm.buffer_element(system::ParticleField)
-    # return deepcopy(get_particle(system, 1))
-    return zeros(eltype(system.particles), 43)
-end
+fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
 
 fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
 
@@ -109,7 +106,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
 
                 # include self-induced contribution to SFS
                 if source_system.toggle_sfs
-                    Estr_direct(target_particle::Particle, source_particle::Particle, r, source_system.kernel.zeta, source_system.transposed)
+                    Estr_direct(target_particle, source_particle, r, source_system.kernel.zeta, source_system.transposed)
                 end
             end
         end

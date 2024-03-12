@@ -10,10 +10,10 @@ vpm = FLOWVPM
 
 
 for (description, integration, UJ, nc) in (
-                                            # ("Euler time-integration + direct UJ", vpm.euler, vpm.UJ_direct, 0),
-                                            # ("Runge-Kutta time-integration + direct UJ", vpm.rungekutta3, vpm.UJ_direct, 0),
+                                            ("Euler time-integration + direct UJ", vpm.euler, vpm.UJ_direct, 0),
+                                            ("Runge-Kutta time-integration + direct UJ", vpm.rungekutta3, vpm.UJ_direct, 0),
                                             ("FMM UJ", vpm.euler, vpm.UJ_fmm, 0),
-                                            # ("Full inviscid scheme", vpm.rungekutta3, vpm.UJ_fmm, 1),
+                                            ("Full inviscid scheme", vpm.rungekutta3, vpm.UJ_fmm, 1),
                                           )
 
     println("\n"^2*description*" test: Single vortex ring...")
