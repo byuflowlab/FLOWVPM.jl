@@ -55,7 +55,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
     else
         r = zero(eltype(source_system))
         for target_particle in eachcol(view(target_system.particles, :, target_index))
-            target_x, target_y, target_z = get_X(target_particle) #target_particle[1:3]
+            target_x, target_y, target_z = get_X(target_particle)
             for source_particle in eachcol(view(source_system.particles, :, source_index))
                 gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
                 source_x, source_y, source_z = get_X(source_particle)

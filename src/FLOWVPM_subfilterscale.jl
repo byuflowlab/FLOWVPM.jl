@@ -265,9 +265,7 @@ function control_directional(P, pfield)
     aux /= (get_Gamma(P)[1]*get_Gamma(P)[1] + get_Gamma(P)[2]*get_Gamma(P)[2] + get_Gamma(P)[3]*get_Gamma(P)[3])
 
     # Replaces old SFS with the direcionally controlled SFS
-    add_SFS1(P, -get_SFS1(P) + aux*get_Gamma(P)[1])
-    add_SFS2(P, -get_SFS2(P) + aux*get_Gamma(P)[2])
-    add_SFS3(P, -get_SFS3(P) + aux*get_Gamma(P)[3])
+    get_SFS(P) .= aux*get_Gamma(P)
 end
 
 """

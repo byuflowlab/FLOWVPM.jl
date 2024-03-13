@@ -153,50 +153,50 @@ end
     Returns true if the particle field solver implements a subfilter-scale model
 of turbulence for large eddy simulation (LES).
 """
-isLES(self::ParticleField) = isSFSenabled(self.SFS)
+isLES(pfield::ParticleField) = isSFSenabled(pfield.SFS)
 
 ##### FUNCTIONS ################################################################
 """
-  `add_particle(self::ParticleField, X, Gamma, sigma; vol=0)`
+  `add_particle(pfield::ParticleField, X, Gamma, sigma; vol=0)`
 
 Add a particle to the field.
 """
-function add_particle(self::ParticleField, X, Gamma, sigma;
+function add_particle(pfield::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
                                            C=0, static=false)
     # ERROR CASES
-    if get_np(self)==self.maxparticles
-        error("PARTICLE OVERFLOW. Max number of particles $(self.maxparticles)"*
+    if get_np(pfield)==pfield.maxparticles
+        error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
                                                             " has been reached")
     # elseif circulation<=0
     #     error("Got invalid circulation less or equal to zero! ($(circulation))")
     end
 
     # Fetch the index of the next empty particle in the field
-    i_next = get_np(self)+1
+    i_next = get_np(pfield)+1
 
     # Add particle to the field
-    self.np += 1
+    pfield.np += 1
 
     # Populate the empty particle
-    set_X(self, i_next, X)
-    set_Gamma(self, i_next, Gamma)
-    set_sigma(self, i_next, sigma)
-    set_vol(self, i_next, vol)
-    set_circulation(self, i_next, circulation)
-    set_C(self, i_next, C)
-    set_static(self, i_next, Float64(static))
+    set_X(pfield, i_next, X)
+    set_Gamma(pfield, i_next, Gamma)
+    set_sigma(pfield, i_next, sigma)
+    set_vol(pfield, i_next, vol)
+    set_circulation(pfield, i_next, circulation)
+    set_C(pfield, i_next, C)
+    set_static(pfield, i_next, Float64(static))
 
     return nothing
 end
 
 """
-  `add_particle(self::ParticleField, P)`
+  `add_particle(pfield::ParticleField, P)`
 
 Add a copy of Particle `P` to the field.
 """
-function add_particle(self::ParticleField, P)
-    return add_particle(self, get_X(P), get_Gamma(P), get_sigma(P)[];
+function add_particle(pfield::ParticleField, P)
+    return add_particle(pfield, get_X(P), get_Gamma(P), get_sigma(P)[];
                         vol=get_vol(P)[], circulation=get_circulation(P)[],
                         C=get_C(P), static=is_static(particle))
 end
@@ -206,25 +206,25 @@ end
 
     Returns current number of particles in the field.
 """
-get_np(self::ParticleField) = self.np
+get_np(pfield::ParticleField) = pfield.np
 
 """
     `get_particle(pfield::ParticleField, i)`
 
     Returns the i-th particle in the field.
 """
-function get_particle(self::ParticleField, i::Int; emptyparticle=false)
+function get_particle(pfield::ParticleField, i::Int; emptyparticle=false)
     if i<=0
         error("Requested invalid particle index $i")
-    elseif !emptyparticle && i>get_np(self)
-        error("Requested particle $i, but there is only $(get_np(self))"*
+    elseif !emptyparticle && i>get_np(pfield)
+        error("Requested particle $i, but there is only $(get_np(pfield))"*
                                                     " particles in the field.")
-    elseif emptyparticle && i!=(get_np(self)+1)
+    elseif emptyparticle && i!=(get_np(pfield)+1)
         error("Requested empty particle $i, but next empty particle is"*
-                                                          " $(get_np(self)+1)")
+                                                          " $(get_np(pfield)+1)")
     end
 
-    return view(self.particles, :, i)
+    return view(pfield.particles, :, i)
 end
 
 "Alias for `get_particleiterator`"
@@ -236,90 +236,86 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
 # maps the indices of each particle's fields
-get_X(particle) = view(particle, 1:3)
-get_Gamma(particle) = view(particle, 4:6)
-get_sigma(particle) = view(particle, 7)
-get_vol(particle) = view(particle, 8)
-get_circulation(particle) = view(particle, 9)
-get_U(particle) = view(particle, 10:12)
-get_vorticity(particle) = view(particle, 13:15)
-get_J(particle) = view(particle, 16:24)
-get_PSE(particle) = view(particle, 25:27)
-get_M(particle) = view(particle, 28:36)
-get_C(particle) = view(particle, 37:39)
-get_SFS(particle) = view(particle, 40:42)
-get_static(particle) = view(particle, 43)
+get_X(P) = view(P, 1:3)
+get_Gamma(P) = view(P, 4:6)
+get_sigma(P) = view(P, 7)
+get_vol(P) = view(P, 8)
+get_circulation(P) = view(P, 9)
+get_U(P) = view(P, 10:12)
+get_vorticity(P) = view(P, 13:15)
+get_J(P) = view(P, 16:24)
+get_PSE(P) = view(P, 25:27)
+get_M(P) = view(P, 28:36)
+get_C(P) = view(P, 37:39)
+get_SFS(P) = view(P, 40:42)
+get_static(P) = view(P, 43)
 
-is_static(particle) = Bool(particle[43])
+is_static(P) = Bool(P[43])
 
 # This extra function computes the vorticity using the cross-product
-get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
+get_W(P) = (get_W1(P), get_W2(P), get_W3(P))
 
-get_W1(particle) = particle[21]-particle[23]
-get_W2(particle) = particle[22]-particle[18]
-get_W3(particle) = particle[17]-particle[19]
+get_W1(P) = get_J(P)[6]-get_J(P)[8]
+get_W2(P) = get_J(P)[7]-get_J(P)[3]
+get_W3(P) = get_J(P)[2]-get_J(P)[4]
 
-get_SFS1(particle) = particle[40]
-get_SFS2(particle) = particle[41]
-get_SFS3(particle) = particle[42]
-
-add_SFS1(particle, val) = particle[40] += val
-add_SFS2(particle, val) = particle[41] += val
-add_SFS3(particle, val) = particle[42] += val
+get_SFS1(P) = get_SFS(P)[1]
+get_SFS2(P) = get_SFS(P)[2]
+get_SFS3(P) = get_SFS(P)[3]
 
 "Get functions for particles in ParticleField"
-get_X(self::ParticleField, i::Int) = get_X(get_particle(self, i))
-get_Gamma(self::ParticleField, i::Int) = get_Gamma(get_particle(self, i))
-get_sigma(self::ParticleField, i::Int) = get_sigma(get_particle(self, i))
-get_vol(self::ParticleField, i::Int) = get_vol(get_particle(self, i))
-get_circulation(self::ParticleField, i::Int) = get_circulation(get_particle(self, i))
-get_U(self::ParticleField, i::Int) = get_U(get_particle(self, i))
-get_vorticity(self::ParticleField, i::Int) = get_vorticity(get_particle(self, i))
-get_J(self::ParticleField, i::Int) = get_J(get_particle(self, i))
-get_PSE(self::ParticleField, i::Int) = get_PSE(get_particle(self, i))
-get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
-get_M(self::ParticleField, i::Int) = get_M(get_particle(self, i))
-get_C(self::ParticleField, i::Int) = get_C(get_particle(self, i))
-get_static(self::ParticleField, i::Int) = get_static(get_particle(self, i))
+get_X(pfield::ParticleField, i::Int) = get_X(get_particle(pfield, i))
+get_Gamma(pfield::ParticleField, i::Int) = get_Gamma(get_particle(pfield, i))
+get_sigma(pfield::ParticleField, i::Int) = get_sigma(get_particle(pfield, i))
+get_vol(pfield::ParticleField, i::Int) = get_vol(get_particle(pfield, i))
+get_circulation(pfield::ParticleField, i::Int) = get_circulation(get_particle(pfield, i))
+get_U(pfield::ParticleField, i::Int) = get_U(get_particle(pfield, i))
+get_vorticity(pfield::ParticleField, i::Int) = get_vorticity(get_particle(pfield, i))
+get_J(pfield::ParticleField, i::Int) = get_J(get_particle(pfield, i))
+get_PSE(pfield::ParticleField, i::Int) = get_PSE(get_particle(pfield, i))
+get_W(pfield::ParticleField, i::Int) = get_W(get_particle(pfield, i))
+get_M(pfield::ParticleField, i::Int) = get_M(get_particle(pfield, i))
+get_C(pfield::ParticleField, i::Int) = get_C(get_particle(pfield, i))
+get_static(pfield::ParticleField, i::Int) = get_static(get_particle(pfield, i))
 
-is_static(pfield::ParticleField, i::Int) = is_static(get_particle(self, i))
+is_static(pfield::ParticleField, i::Int) = is_static(get_particle(pfield, i))
 
 "Set functions for particles"
-set_X(particle, val) = get_X(particle) .= val
-set_Gamma(particle, val) = get_Gamma(particle) .= val
-set_sigma(particle, val) = get_sigma(particle) .= val
-set_vol(particle, val) = get_vol(particle) .= val
-set_circulation(particle, val) = get_circulation(particle) .= val
-set_U(particle, val) = get_U(particle) .= val
-set_vorticity(particle, val) = get_vorticity(particle) .= val
-set_J(particle, val) = get_J(particle) .= val
-set_M(particle, val) = get_M(particle) .= val
-set_C(particle, val) = get_C(particle) .= val
-set_static(particle, val) = get_static(particle) .= val
-set_PSE(particle, val) = get_PSE(particle) .= val
-set_SFS(particle, val) = get_SFS(particle) .= val
+set_X(P, val) = get_X(P) .= val
+set_Gamma(P, val) = get_Gamma(P) .= val
+set_sigma(P, val) = get_sigma(P) .= val
+set_vol(P, val) = get_vol(P) .= val
+set_circulation(P, val) = get_circulation(P) .= val
+set_U(P, val) = get_U(P) .= val
+set_vorticity(P, val) = get_vorticity(P) .= val
+set_J(P, val) = get_J(P) .= val
+set_M(P, val) = get_M(P) .= val
+set_C(P, val) = get_C(P) .= val
+set_static(P, val) = get_static(P) .= val
+set_PSE(P, val) = get_PSE(P) .= val
+set_SFS(P, val) = get_SFS(P) .= val
 
 "Set functions for particles in ParticleField"
-set_X(self::ParticleField, i::Int, val) = set_X(get_particle(self, i), val)
-set_Gamma(self::ParticleField, i::Int, val) = set_Gamma(get_particle(self, i), val)
-set_sigma(self::ParticleField, i::Int, val) = set_sigma(get_particle(self, i), val)
-set_vol(self::ParticleField, i::Int, val) = set_vol(get_particle(self, i), val)
-set_circulation(self::ParticleField, i::Int, val) = set_circulation(get_particle(self, i), val)
-set_U(self::ParticleField, i::Int, val) = set_U(get_particle(self, i), val)
-set_vorticity(self::ParticleField, i::Int, val) = set_vorticity(get_particle(self, i), val)
-set_J(self::ParticleField, i::Int, val) = set_J(get_particle(self, i), val)
-set_M(self::ParticleField, i::Int, val) = set_M(get_particle(self, i), val)
-set_C(self::ParticleField, i::Int, val) = set_C(get_particle(self, i), val)
-set_static(self::ParticleField, i::Int, val) = set_static(get_particle(self, i), val)
-set_PSE(self::ParticleField, i::Int, val) = set_PSE(get_particle(self, i), val)
-set_SFS(self::ParticleField, i::Int, val) = set_SFS(get_particle(self, i), val)
+set_X(pfield::ParticleField, i::Int, val) = set_X(get_particle(pfield, i), val)
+set_Gamma(pfield::ParticleField, i::Int, val) = set_Gamma(get_particle(pfield, i), val)
+set_sigma(pfield::ParticleField, i::Int, val) = set_sigma(get_particle(pfield, i), val)
+set_vol(pfield::ParticleField, i::Int, val) = set_vol(get_particle(pfield, i), val)
+set_circulation(pfield::ParticleField, i::Int, val) = set_circulation(get_particle(pfield, i), val)
+set_U(pfield::ParticleField, i::Int, val) = set_U(get_particle(pfield, i), val)
+set_vorticity(pfield::ParticleField, i::Int, val) = set_vorticity(get_particle(pfield, i), val)
+set_J(pfield::ParticleField, i::Int, val) = set_J(get_particle(pfield, i), val)
+set_M(pfield::ParticleField, i::Int, val) = set_M(get_particle(pfield, i), val)
+set_C(pfield::ParticleField, i::Int, val) = set_C(get_particle(pfield, i), val)
+set_static(pfield::ParticleField, i::Int, val) = set_static(get_particle(pfield, i), val)
+set_PSE(pfield::ParticleField, i::Int, val) = set_PSE(get_particle(pfield, i), val)
+set_SFS(pfield::ParticleField, i::Int, val) = set_SFS(get_particle(pfield, i), val)
 
 """
     `isinviscid(pfield::ParticleField)`
 
 Returns true if particle field is inviscid.
 """
-isinviscid(self::ParticleField) = isinviscid(self.viscous)
+isinviscid(pfield::ParticleField) = isinviscid(pfield.viscous)
 
 
 """
@@ -354,13 +350,13 @@ function get_particleiterator(args...; include_static=false, optargs...)
     end
 end
 
-function _get_particleiterator(self::ParticleField; start_i::Int=1, end_i::Int=-1, reverse=false)
-    if end_i > get_np(self)
-        error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
+function _get_particleiterator(pfield::ParticleField; start_i::Int=1, end_i::Int=-1, reverse=false)
+    if end_i > get_np(pfield)
+        error("Requested end_i=$(end_i), but there is only $(get_np(pfield))"*
               " particles in the field.")
     end
 
-    last_i = end_i==-1 ? get_np(self) : end_i
+    last_i = end_i==-1 ? get_np(pfield) : end_i
 
     if reverse
         i_particles = last_i : -1 : start_i
@@ -368,7 +364,7 @@ function _get_particleiterator(self::ParticleField; start_i::Int=1, end_i::Int=-
         i_particles = start_i : last_i
     end
 
-    return eachcol(view(self.particles, :, i_particles))
+    return eachcol(view(pfield.particles, :, i_particles))
 end
 
 """
@@ -379,47 +375,47 @@ that entered the field into the memory slot of the target particle. To remove
 particles sequentally, you will need to go from the last particle back to the
 first one (see documentation of `get_particleiterator` for an example).
 """
-function remove_particle(self::ParticleField, i::Int)
+function remove_particle(pfield::ParticleField, i::Int)
     if i<=0
         error("Requested removal of invalid particle index $i")
-    elseif i>get_np(self)
+    elseif i>get_np(pfield)
         error("Requested removal of particle $i, but there is only"*
-              " $(get_np(self)) particles in the field.")
+              " $(get_np(pfield)) particles in the field.")
     end
 
-    if i != get_np(self)
+    if i != get_np(pfield)
         # Overwrite target particle with last particle in the field
-        self.particles[:, i] = self.particles[:, get_np(self)]
+        pfield.particles[:, i] = pfield.particles[:, get_np(pfield)]
     end
 
     # Remove last particle in the field
-    _reset_particle(self, get_np(self))
-    self.np -= 1
+    _reset_particle(pfield, get_np(pfield))
+    pfield.np -= 1
 
     return nothing
 end
 
 """
-  `nextstep(self::ParticleField, dt; relax=false)`
+  `nextstep(pfield::ParticleField, dt; relax=false)`
 
 Steps the particle field in time by a step `dt`.
 """
-function nextstep(self::ParticleField, dt::Real; optargs...)
+function nextstep(pfield::ParticleField, dt::Real; optargs...)
 
     # Step in time
-    if get_np(self)!=0
-        self.integration(self, dt; optargs...)
+    if get_np(pfield)!=0
+        pfield.integration(pfield, dt; optargs...)
     end
 
     # Updates time
-    self.t += dt
-    self.nt += 1
+    pfield.t += dt
+    pfield.nt += 1
 end
 
 
 ##### INTERNAL FUNCTIONS #######################################################
-function _reset_particles(self::ParticleField)
-    for particle in iterate(self)
+function _reset_particles(pfield::ParticleField)
+    for particle in iterate(pfield)
         _reset_particle(particle)
     end
 end
@@ -432,14 +428,14 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
-function _reset_particles_sfs(self::ParticleField)
-    for particle in iterate(self)
+function _reset_particles_sfs(pfield::ParticleField)
+    for particle in iterate(pfield)
         _reset_particle_sfs(particle)
     end
 end
 
-function _reset_particles_sfs(self::ParticleField, i::Int)
-    _reset_particle(get_particle(self, i))
+function _reset_particles_sfs(pfield::ParticleField, i::Int)
+    _reset_particle(get_particle(pfield, i))
 end
 
 function _reset_particle_sfs(particle)

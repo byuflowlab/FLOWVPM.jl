@@ -31,9 +31,7 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     zeta_sgm = (r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
-    add_SFS1(target_particle, zeta_sgm*S1)
-    add_SFS2(target_particle, zeta_sgm*S2)
-    add_SFS3(target_particle, zeta_sgm*S3)
+    get_SFS(target_particle) .+= zeta_sgm*S1, zeta_sgm*S2, zeta_sgm*S3
 end
 
 """
