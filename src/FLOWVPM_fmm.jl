@@ -3,7 +3,7 @@
 ################################################################################
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)
+Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)[]
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = MVector{3,R}(0.0,0.0,0.0)
 Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = get_Gamma(particle_field, i)
@@ -15,8 +15,8 @@ Base.setindex!(particle_field::ParticleField, val, i) = get_particle(particle_fi
 
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = get_U(particle_field, i) .= val
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = get_J(particle_field, i) .= reshape(val, 9)
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = set_U(particle_field, i, val)
+Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = set_J(particle_field, i, reshape(val, 9))
 
 fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
 
@@ -33,20 +33,19 @@ fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
         Wy = zero(eltype(target_system))
         Wz = zero(eltype(target_system))
         for i_source in source_index
-            gamma_x, gamma_y, gamma_z = source_system.particles[4:6, i_source]
-            source_x, source_y, source_z = source_system.particles[1:3, i_source]
-            sigma = source_system.particles[7, i_source]
+            gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source)
+            source_x, source_y, source_z = get_X(source_system, i_source)
+            sigma = get_sigma(source_system, i_source)[]
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z
             r = sqrt(dx*dx + dy*dy + dz*dz)
-            sigma = source_system.particles[7, i_source]
             zeta = source_system.zeta(r/sigma)/(sigma*sigma*sigma)
             Wx += zeta * gamma_x
             Wy += zeta * gamma_y
             Wz += zeta * gamma_z
         end
-        target_system.particles[13:15, j_target] .+= Wx, Wy, Wz
+        get_vorticity(target_system, j_target) .+= Wx, Wy, Wz
     end
 end
 
@@ -60,7 +59,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
             for source_particle in eachcol(view(source_system.particles, :, source_index))
                 gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
                 source_x, source_y, source_z = get_X(source_particle)
-                sigma = get_sigma(source_particle)
+                sigma = get_sigma(source_particle)[]
                 dx = target_x - source_x
                 dy = target_y - source_y
                 dz = target_z - source_z
@@ -100,7 +99,7 @@ function fmm.direct!(target_system::ParticleField, target_index, source_system::
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
 
-                    target_particle[16:24] .+= du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
+                    get_J(target_particle) .+= du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
                 end
 
                 # include self-induced contribution to SFS
@@ -118,9 +117,9 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
         Ux, Uy, Uz = (zero(eltype(target_system)) for _ in 1:3)
         target_x, target_y, target_z = target_system[j_target,fmm.POSITION]
         for i_source in source_index
-            gamma_x, gamma_y, gamma_z = source_system.particles[4:6, i_source]
-            source_x, source_y, source_z = source_system.particles[1:3, i_source]
-            sigma = source_system.particles[8, i_source]
+            gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source)
+            source_x, source_y, source_z = get_X(source_system, i_source)
+            sigma = get_sigma(source_system, i_source)[]
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z
@@ -160,7 +159,7 @@ function fmm.direct!(target_system, target_index, source_system::ParticleField, 
                 du3x3 += aux * crss3 * dz
             end
         end
-        target_system[j_target,fmm.VELOCITY] += SVector{3,typeof(Ux)}(Ux, Uy, Uz)
-        target_system[j_target,fmm.VELOCITY_GRADIENT] += SMatrix{3,3,typeof(du1x1),9}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
+        target_system[j_target,fmm.VELOCITY] .+= SVector{3,typeof(Ux)}(Ux, Uy, Uz)
+        target_system[j_target,fmm.VELOCITY_GRADIENT] .+= SMatrix{3,3,typeof(du1x1),9}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
     end
 end

@@ -237,12 +237,15 @@ iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
 iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
 "Get functions for particles"
+# This is (and should be) the only place that explicitly
+# maps the indices of each particle's fields
 get_X(particle) = view(particle, 1:3)
 get_Gamma(particle) = view(particle, 4:6)
 get_sigma(particle) = view(particle, 7)
 get_vol(particle) = view(particle, 8)
 get_circulation(particle) = view(particle, 9)
 get_U(particle) = view(particle, 10:12)
+get_vorticity(particle) = view(particle, 13:15)
 get_J(particle) = view(particle, 16:24)
 get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
 get_SFS(particle) = view(particle, 40:42)
@@ -263,7 +266,10 @@ add_SFS3(particle, val) = particle[42] += val
 get_X(self::ParticleField, i::Int) = get_X(get_particle(self, i))
 get_Gamma(self::ParticleField, i::Int) = get_Gamma(get_particle(self, i))
 get_sigma(self::ParticleField, i::Int) = get_sigma(get_particle(self, i))
+get_vol(self::ParticleField, i::Int) = get_vol(get_particle(self, i))
+get_circulation(self::ParticleField, i::Int) = get_circulation(get_particle(self, i))
 get_U(self::ParticleField, i::Int) = get_U(get_particle(self, i))
+get_vorticity(self::ParticleField, i::Int) = get_vorticity(get_particle(self, i))
 get_J(self::ParticleField, i::Int) = get_J(get_particle(self, i))
 get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
@@ -274,6 +280,7 @@ set_sigma(particle, val) = get_sigma(particle) .= val
 set_vol(particle) = set_vol(particle) .= val
 set_circulation(particle) = set_circulation(particle) .= val
 set_U(particle, val) = get_U(particle) .= val
+set_vorticity(particle, val) = get_vorticity(particle) .= val
 set_J(particle, val) = get_J(particle) .= val
 set_SFS(particle, val) = get_SFS(particle) .= val
 
@@ -281,7 +288,10 @@ set_SFS(particle, val) = get_SFS(particle) .= val
 set_X(self::ParticleField, i::Int, val) = set_X(get_particle(self, i), val)
 set_Gamma(self::ParticleField, i::Int, val) = set_Gamma(get_particle(self, i), val)
 set_sigma(self::ParticleField, i::Int, val) = set_sigma(get_particle(self, i), val)
+set_vol(self::ParticleField, i::Int, val) = set_vol(get_particle(self, i), val)
+set_circulation(self::ParticleField, i::Int, val) = set_circulation(get_particle(self, i), val)
 set_U(self::ParticleField, i::Int, val) = set_U(get_particle(self, i), val)
+set_vorticity(self::ParticleField, i::Int, val) = set_vorticity(get_particle(self, i), val)
 set_J(self::ParticleField, i::Int, val) = set_J(get_particle(self, i), val)
 set_SFS(self::ParticleField, i::Int, val) = set_SFS(get_particle(self, i), val)
 
