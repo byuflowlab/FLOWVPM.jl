@@ -117,9 +117,6 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     #                       )
 end
 
-is_static(pfield::ParticleField, i::Int) = is_static(pfield.particles[:, i])
-is_static(particle) = Bool(particle[43])
-
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(), 
@@ -248,8 +245,15 @@ get_U(particle) = view(particle, 10:12)
 get_vorticity(particle) = view(particle, 13:15)
 get_J(particle) = view(particle, 16:24)
 get_PSE(particle) = view(particle, 25:27)
-get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
+get_M(particle) = view(particle, 28:36)
+get_C(particle) = view(particle, 37:39)
 get_SFS(particle) = view(particle, 40:42)
+get_static(particle) = view(particle, 43)
+
+is_static(particle) = Bool(particle[43])
+
+# This extra function computes the vorticity using the cross-product
+get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
 
 get_W1(particle) = particle[21]-particle[23]
 get_W2(particle) = particle[22]-particle[18]
@@ -274,6 +278,11 @@ get_vorticity(self::ParticleField, i::Int) = get_vorticity(get_particle(self, i)
 get_J(self::ParticleField, i::Int) = get_J(get_particle(self, i))
 get_PSE(self::ParticleField, i::Int) = get_PSE(get_particle(self, i))
 get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
+get_M(self::ParticleField, i::Int) = get_M(get_particle(self, i))
+get_C(self::ParticleField, i::Int) = get_C(get_particle(self, i))
+get_static(self::ParticleField, i::Int) = get_static(get_particle(self, i))
+
+is_static(pfield::ParticleField, i::Int) = is_static(get_particle(self, i))
 
 "Set functions for particles"
 set_X(particle, val) = get_X(particle) .= val
@@ -284,6 +293,9 @@ set_circulation(particle) = set_circulation(particle) .= val
 set_U(particle, val) = get_U(particle) .= val
 set_vorticity(particle, val) = get_vorticity(particle) .= val
 set_J(particle, val) = get_J(particle) .= val
+set_M(particle, val) = get_M(particle) .= val
+set_C(particle, val) = get_C(particle) .= val
+set_static(particle, val) = get_static(particle) .= val
 set_PSE(particle, val) = get_PSE(particle) .= val
 set_SFS(particle, val) = get_SFS(particle) .= val
 
@@ -296,6 +308,9 @@ set_circulation(self::ParticleField, i::Int, val) = set_circulation(get_particle
 set_U(self::ParticleField, i::Int, val) = set_U(get_particle(self, i), val)
 set_vorticity(self::ParticleField, i::Int, val) = set_vorticity(get_particle(self, i), val)
 set_J(self::ParticleField, i::Int, val) = set_J(get_particle(self, i), val)
+set_M(self::ParticleField, i::Int, val) = set_M(get_particle(self, i), val)
+set_C(self::ParticleField, i::Int, val) = set_C(get_particle(self, i), val)
+set_static(self::ParticleField, i::Int, val) = set_static(get_particle(self, i), val)
 set_PSE(self::ParticleField, i::Int, val) = set_PSE(get_particle(self, i), val)
 set_SFS(self::ParticleField, i::Int, val) = set_SFS(get_particle(self, i), val)
 
