@@ -247,6 +247,7 @@ get_circulation(particle) = view(particle, 9)
 get_U(particle) = view(particle, 10:12)
 get_vorticity(particle) = view(particle, 13:15)
 get_J(particle) = view(particle, 16:24)
+get_PSE(particle) = view(particle, 25:27)
 get_W(particle) = (get_W1(particle), get_W2(particle), get_W3(particle))
 get_SFS(particle) = view(particle, 40:42)
 
@@ -271,6 +272,7 @@ get_circulation(self::ParticleField, i::Int) = get_circulation(get_particle(self
 get_U(self::ParticleField, i::Int) = get_U(get_particle(self, i))
 get_vorticity(self::ParticleField, i::Int) = get_vorticity(get_particle(self, i))
 get_J(self::ParticleField, i::Int) = get_J(get_particle(self, i))
+get_PSE(self::ParticleField, i::Int) = get_PSE(get_particle(self, i))
 get_W(self::ParticleField, i::Int) = get_W(get_particle(self, i))
 
 "Set functions for particles"
@@ -282,6 +284,7 @@ set_circulation(particle) = set_circulation(particle) .= val
 set_U(particle, val) = get_U(particle) .= val
 set_vorticity(particle, val) = get_vorticity(particle) .= val
 set_J(particle, val) = get_J(particle) .= val
+set_PSE(particle, val) = get_PSE(particle) .= val
 set_SFS(particle, val) = get_SFS(particle) .= val
 
 "Set functions for particles in ParticleField"
@@ -293,6 +296,7 @@ set_circulation(self::ParticleField, i::Int, val) = set_circulation(get_particle
 set_U(self::ParticleField, i::Int, val) = set_U(get_particle(self, i), val)
 set_vorticity(self::ParticleField, i::Int, val) = set_vorticity(get_particle(self, i), val)
 set_J(self::ParticleField, i::Int, val) = set_J(get_particle(self, i), val)
+set_PSE(self::ParticleField, i::Int, val) = set_PSE(get_particle(self, i), val)
 set_SFS(self::ParticleField, i::Int, val) = set_SFS(get_particle(self, i), val)
 
 """
@@ -399,25 +403,32 @@ end
 
 
 ##### INTERNAL FUNCTIONS #######################################################
-_reset_particles(self::ParticleField) = self.particles[10:27, :] .= zero(eltype(self.particles))
+function _reset_particles(self::ParticleField)
+    for particle in iterate(self)
+        _reset_particle(particle)
+    end
+end
 
-_reset_particle(particle) = particle[10:27] .= zero(eltype(particle))
+function _reset_particle(particle)
+    zeroVal = zero(eltype(particle))
+    set_U(particle, zeroVal)
+    set_vorticity(particle, zeroVal)
+    set_J(particle, zeroVal)
+    set_PSE(particle, zeroVal)
+end
 
-_reset_particles_sfs(self::ParticleField) = self.particles[40:42, :] .= zero(eltype(self.particles))
+function _reset_particles_sfs(self::ParticleField)
+    for particle in iterate(self)
+        _reset_particle_sfs(particle)
+    end
+end
 
-_reset_particles_sfs(self::ParticleField, i::Int) = self.particles[40:42, i] .= zero(eltype(self.particles))
+function _reset_particles_sfs(self::ParticleField, i::Int)
+    _reset_particle(get_particle(self, i))
+end
 
-_reset_particle_sfs(particle) = particle[40:42] .= zero(eltype(particle))
-
-# Alternative that uses a parameteric type
-# _reset_particles(self::ParticleField) = self.particles[10:27, :] .= zero(eltype(self.particles))
-#
-# _reset_particle(particle::Vector{TF}) where {TF} = particle[10:27] .= zero(TF)
-#
-# _reset_particles_sfs(self::ParticleField) = self.particles[40:42, :] .= zero(eltype(self.particles))
-#
-# _reset_particles_sfs(self::ParticleField, i::Int) = _reset_particle_sfs(self.particles[:, i])
-#
-# _reset_particle_sfs(particle::Vector{TF}) where {TF} = particle[40:42] .= zero(TF)
+function _reset_particle_sfs(particle)
+    set_SFS(particle, zero(eltype(particle)))
+end
 
 ##### END OF PARTICLE FIELD#####################################################
