@@ -18,17 +18,17 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     # Stretching term
     if transposed
         # Transposed scheme (Γq⋅∇')(Up - Uq)
-        S1 = (target_particle[16] - source_particle[16])*source_particle[4]+(target_particle[17] - source_particle[17])*source_particle[5]+(target_particle[18] - source_particle[18])*source_particle[6]
-        S2 = (target_particle[19] - source_particle[19])*source_particle[4]+(target_particle[20] - source_particle[20])*source_particle[5]+(target_particle[21] - source_particle[21])*source_particle[6]
-        S3 = (target_particle[22] - source_particle[22])*source_particle[4]+(target_particle[23] - source_particle[23])*source_particle[5]+(target_particle[24] - source_particle[24])*source_particle[6]
+        S1 = (get_J(target_particle)[1] - get_J(source_particle)[1])*get_Gamma(source_particle)[1]+(get_J(target_particle)[2] - get_J(source_particle)[2])*get_Gamma(source_particle)[2]+(get_J(target_particle)[3] - get_J(source_particle)[3])*get_Gamma(source_particle)[3]
+        S2 = (get_J(target_particle)[4] - get_J(source_particle)[4])*get_Gamma(source_particle)[1]+(get_J(target_particle)[5] - get_J(source_particle)[5])*get_Gamma(source_particle)[2]+(get_J(target_particle)[6] - get_J(source_particle)[6])*get_Gamma(source_particle)[3]
+        S3 = (get_J(target_particle)[7] - get_J(source_particle)[7])*get_Gamma(source_particle)[1]+(get_J(target_particle)[8] - get_J(source_particle)[8])*get_Gamma(source_particle)[2]+(get_J(target_particle)[9] - get_J(source_particle)[9])*get_Gamma(source_particle)[3]
     else
         # Classic scheme (Γq⋅∇)(Up - Uq)
-        S1 = (p[16] - source_particle[16])*source_particle[4]+(p[19] - source_particle[19])*source_particle[5]+(p[22] - source_particle[22])*source_particle[6]
-        S2 = (p[17] - source_particle[17])*source_particle[4]+(p[20] - source_particle[20])*source_particle[5]+(p[23] - source_particle[23])*source_particle[6]
-        S3 = (p[18] - source_particle[18])*source_particle[4]+(p[21] - source_particle[21])*source_particle[5]+(p[24] - source_particle[24])*source_particle[6]
+        S1 = (get_J(p)[1] - get_J(source_particle)[1])*get_Gamma(source_particle)[1]+(get_J(p)[4] - get_J(source_particle)[4])*get_Gamma(source_particle)[2]+(get_J(p)[7] - get_J(source_particle)[7])*get_Gamma(source_particle)[3]
+        S2 = (get_J(p)[2] - get_J(source_particle)[2])*get_Gamma(source_particle)[1]+(get_J(p)[5] - get_J(source_particle)[5])*get_Gamma(source_particle)[2]+(get_J(p)[8] - get_J(source_particle)[8])*get_Gamma(source_particle)[3]
+        S3 = (get_J(p)[3] - get_J(source_particle)[3])*get_Gamma(source_particle)[1]+(get_J(p)[6] - get_J(source_particle)[6])*get_Gamma(source_particle)[2]+(get_J(p)[9] - get_J(source_particle)[9])*get_Gamma(source_particle)[3]
     end
 
-    zeta_sgm = (r/source_particle[7]) / source_particle[7]^3
+    zeta_sgm = (r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
     add_SFS1(target_particle, zeta_sgm*S1)

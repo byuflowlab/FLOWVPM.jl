@@ -128,7 +128,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Core spreading
         for p in iterator(pfield)
-            p[7] = sqrt(p[7]^2 + 2*scheme.nu*dt)
+            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
         end
 
         proceed = true
@@ -140,8 +140,8 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         for p in iterator(pfield)
             # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
             # Should I be solving dsigmadt = nu/sigma instead?
-            p[34] = aux1*p[34] + dt*2*scheme.nu
-            p[7] = sqrt(p[7]^2 + aux2*p[34])
+            get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
+            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
         end
 
         # Update things in the last RK inner iteration
@@ -176,10 +176,10 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
             for p in iterator(pfield)
                 # Use approximated vorticity as target vorticity (stored under P.Jexa[7:9])
                 for i in 1:3
-                    p[27+i+6] = p.Jexa[i]
+                    get_M(p)[6+i] = p.Jexa[i]
                 end
                 # Reset core sizes
-                p[7] = scheme.sgm0
+                get_sigma(p)[] = scheme.sgm0
             end
 
             # Calculate new strengths through RBF to preserve original vorticity
@@ -225,7 +225,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     # Recalculate particle volume from current particle smoothing
     if scheme.recalculate_vols
         for p in iterator(pfield)
-            p[8] = 4/3*pi*p[7]^3
+            get_vol(p)[] = 4/3*pi*get_sigma(p)[]^3
         end
     end
 
@@ -235,7 +235,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p[3+i] += dt * scheme.nu*p[24+i]
+                get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
             end
         end
 
@@ -245,8 +245,8 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p[27+3+i] += dt * scheme.nu*p[24+i]
-                p[3+i] += aux2 * dt * scheme.nu*p[24+i]
+                get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
+                get_M(p)[3+i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
             end
         end
 
@@ -298,9 +298,9 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            P[27+i] = P[27+i+6]*P[8]
+            get_M(P)[i] = get_M(P)[i+6]*get_vol(P)[]
             # Sets initial guess as Gamma for vorticity evaluation
-            P[3+i] = P[27+i]
+            get_Gamma(P)[i] = get_M(P)[i]
         end
     end
 
@@ -310,13 +310,13 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Residual of initial guess (r0=b-Ax0)
-            P[27+i+3] = P[27+i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
+            get_M(P)[i+3] = get_M(P)[i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
 
             # Update coefficients
-            P[3+i] = P[27+i+3]             # p0 = r0
+            get_Gamma(P)[i] = get_M(P)[i+3]             # p0 = r0
 
             # Initial field residual
-            cs.rr0s[i] += P[27+i+3]^2
+            cs.rr0s[i] += (get_M(P)[i+3])^2
         end
     end
 
@@ -338,7 +338,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.pAps .= 0
         for P in iterator(pfield)
             for i in 1:3
-                cs.pAps[i] += P[3+i] * P.Jexa[i]
+                cs.pAps[i] += get_Gamma(P)[i] * P.Jexa[i]
             end
         end
 
@@ -352,9 +352,9 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P[27+i] += cs.alphas[i]*P[3+i]   # x = x + alpha*p
-                P[27+i+3] -= cs.alphas[i].*P.Jexa[i] # r = r - alpha*Ap
-                cs.rrs[i] += P[27+i+3]^2             # Update field residual
+                get_M(P)[i] += cs.alphas[i]*get_Gamma(P)[i]   # x = x + alpha*p
+                get_M(P)[i+3] -= cs.alphas[i].*P.Jexa[i] # r = r - alpha*Ap
+                cs.rrs[i] += get_M(P)[i+3]^2             # Update field residual
             end
         end
 
@@ -370,7 +370,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P[3+i] = P[27+i+3] + cs.betas[i]*P[3+i]
+                get_Gamma(P)[i] = get_M(P)[i+3] + cs.betas[i]*get_Gamma(P)[i]
             end
         end
 
@@ -407,7 +407,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Save final solution
     for P in iterator(pfield)
         for i in 1:3
-            P[3+i] = P[27+i]
+            get_Gamma(P)[i] = get_M(P)[i]
         end
     end
 
@@ -423,8 +423,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                rms_ini[i] += P[27+i+6]^2
-                rms_resend[i] += (P.Jexa[i] - P[27+i+6])^2
+                rms_ini[i] += get_M(P)[i+6]^2
+                rms_resend[i] += (P.Jexa[i] - get_M(P)[i+6])^2
             end
         end
         for i in 1:3

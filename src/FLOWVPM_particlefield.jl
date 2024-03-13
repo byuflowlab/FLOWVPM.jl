@@ -175,30 +175,30 @@ function add_particle(self::ParticleField, X, Gamma, sigma;
     # Fetch the index of the next empty particle in the field
     i_next = get_np(self)+1
 
-    # Populate the empty particle
-    self.particles[1:3, i_next] .= X
-    self.particles[4:6, i_next] .= Gamma
-    self.particles[7, i_next] = sigma
-    self.particles[8, i_next] = vol
-    self.particles[9, i_next] = abs.(circulation)
-    self.particles[37:39, i_next] .= C
-    self.particles[43, i_next] = Float64(static)
-
     # Add particle to the field
     self.np += 1
+
+    # Populate the empty particle
+    set_X(self, i_next, X)
+    set_Gamma(self, i_next, Gamma)
+    set_sigma(self, i_next, sigma)
+    set_vol(self, i_next, vol)
+    set_circulation(self, i_next, circulation)
+    set_C(self, i_next, C)
+    set_static(self, i_next, Float64(static))
 
     return nothing
 end
 
 """
-  `add_particle(self::ParticleField, P::Particle)`
+  `add_particle(self::ParticleField, P)`
 
 Add a copy of Particle `P` to the field.
 """
-function add_particle(self::ParticleField, particle)
-    return add_particle(self, particle[1:3], particle[4:6], particle[7];
-                        vol=particle[8], circulation=particle[9],
-                        C=particle[37:39], static=is_static(particle))
+function add_particle(self::ParticleField, P)
+    return add_particle(self, get_X(P), get_Gamma(P), get_sigma(P)[];
+                        vol=get_vol(P)[], circulation=get_circulation(P)[],
+                        C=get_C(P), static=is_static(particle))
 end
 
 """
@@ -288,8 +288,8 @@ is_static(pfield::ParticleField, i::Int) = is_static(get_particle(self, i))
 set_X(particle, val) = get_X(particle) .= val
 set_Gamma(particle, val) = get_Gamma(particle) .= val
 set_sigma(particle, val) = get_sigma(particle) .= val
-set_vol(particle) = set_vol(particle) .= val
-set_circulation(particle) = set_circulation(particle) .= val
+set_vol(particle, val) = get_vol(particle) .= val
+set_circulation(particle, val) = get_circulation(particle) .= val
 set_U(particle, val) = get_U(particle) .= val
 set_vorticity(particle, val) = get_vorticity(particle) .= val
 set_J(particle, val) = get_J(particle) .= val

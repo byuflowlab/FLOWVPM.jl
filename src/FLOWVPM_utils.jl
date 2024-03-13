@@ -185,18 +185,18 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [P[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [P[i] for i in 4:6, P in iterate(self; include_static=true)]
-    h5["sigma"] = [P[7] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [P[9] for P in iterate(self; include_static=true)]
-    h5["vol"] = [P[8] for P in iterate(self; include_static=true)]
-    h5["static"] = Int[P[43] for P in iterate(self; include_static=true)]
+    h5["X"] = [get_X(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [get_Gamma(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["sigma"] = [get_sigma(P)[] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [get_cirulation(P)[] for P in iterate(self; include_static=true)]
+    h5["vol"] = [get_vol(P)[] for P in iterate(self; include_static=true)]
+    h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
     # h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
-    h5["velocity"] = [P[i] for i in 10:12, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [P[i] for i in 13:15, P in iterate(self; include_static=true)]
+    h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
 
     if isLES(self)
-        h5["C"] = [P[i] for i in 37:39, P in iterate(self; include_static=true)]
+        h5["C"] = [get_C(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
     end
 
     # # Connectivity information
