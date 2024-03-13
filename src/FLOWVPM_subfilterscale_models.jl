@@ -15,23 +15,29 @@
 particle-to-particle interactions. See 20210901 notebook for derivation.
 """
 @inline function Estr_direct(target_particle, source_particle, r, zeta, transposed)
+    GS = get_Gamma(source_particle)
+    JS = get_J(source_particle)
+    JT = get_J(target_particle)
+
     # Stretching term
     if transposed
         # Transposed scheme (Γq⋅∇')(Up - Uq)
-        S1 = (get_J(target_particle)[1] - get_J(source_particle)[1])*get_Gamma(source_particle)[1]+(get_J(target_particle)[2] - get_J(source_particle)[2])*get_Gamma(source_particle)[2]+(get_J(target_particle)[3] - get_J(source_particle)[3])*get_Gamma(source_particle)[3]
-        S2 = (get_J(target_particle)[4] - get_J(source_particle)[4])*get_Gamma(source_particle)[1]+(get_J(target_particle)[5] - get_J(source_particle)[5])*get_Gamma(source_particle)[2]+(get_J(target_particle)[6] - get_J(source_particle)[6])*get_Gamma(source_particle)[3]
-        S3 = (get_J(target_particle)[7] - get_J(source_particle)[7])*get_Gamma(source_particle)[1]+(get_J(target_particle)[8] - get_J(source_particle)[8])*get_Gamma(source_particle)[2]+(get_J(target_particle)[9] - get_J(source_particle)[9])*get_Gamma(source_particle)[3]
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[2] - JS[2])*GS[2]+(JT[3] - JS[3])*GS[3]
+        S2 = (JT[4] - JS[4])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[6] - JS[6])*GS[3]
+        S3 = (JT[7] - JS[7])*GS[1]+(JT[8] - JS[8])*GS[2]+(JT[9] - JS[9])*GS[3]
     else
         # Classic scheme (Γq⋅∇)(Up - Uq)
-        S1 = (get_J(p)[1] - get_J(source_particle)[1])*get_Gamma(source_particle)[1]+(get_J(p)[4] - get_J(source_particle)[4])*get_Gamma(source_particle)[2]+(get_J(p)[7] - get_J(source_particle)[7])*get_Gamma(source_particle)[3]
-        S2 = (get_J(p)[2] - get_J(source_particle)[2])*get_Gamma(source_particle)[1]+(get_J(p)[5] - get_J(source_particle)[5])*get_Gamma(source_particle)[2]+(get_J(p)[8] - get_J(source_particle)[8])*get_Gamma(source_particle)[3]
-        S3 = (get_J(p)[3] - get_J(source_particle)[3])*get_Gamma(source_particle)[1]+(get_J(p)[6] - get_J(source_particle)[6])*get_Gamma(source_particle)[2]+(get_J(p)[9] - get_J(source_particle)[9])*get_Gamma(source_particle)[3]
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[4] - JS[4])*GS[2]+(JT[7] - JS[7])*GS[3]
+        S2 = (JT[2] - JS[2])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[8] - JS[8])*GS[3]
+        S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
 
     zeta_sgm = (r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
-    get_SFS(target_particle) .+= zeta_sgm*S1, zeta_sgm*S2, zeta_sgm*S3
+    get_SFS(target_particle)[1] += zeta_sgm*S1
+    get_SFS(target_particle)[2] += zeta_sgm*S2
+    get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
 """
