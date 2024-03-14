@@ -188,10 +188,10 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["X"] = [get_X(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["Gamma"] = [get_Gamma(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["sigma"] = [get_sigma(P)[] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [get_cirulation(P)[] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [get_circulation(P)[] for P in iterate(self; include_static=true)]
     h5["vol"] = [get_vol(P)[] for P in iterate(self; include_static=true)]
     h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
-    # h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
+    # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
     h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
     h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
 
@@ -303,11 +303,11 @@ function save(self::ParticleField, file_name::String; path::String="",
 
 
               # Attribute: index
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
-                            h5fname, ":i</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
+              # print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
+              #   print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+              #               " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
+              #               h5fname, ":i</DataItem>\n")
+              # print(xmf, "\t\t\t\t</Attribute>\n")
 
               if isLES(self)
                   # Attribute: C
