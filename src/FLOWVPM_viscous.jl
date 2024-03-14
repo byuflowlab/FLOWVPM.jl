@@ -175,9 +175,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
             for p in iterator(pfield)
                 # Use approximated vorticity as target vorticity (stored under P.Jexa[7:9])
-                for i in 1:3
-                    get_M(p)[6+i] = p.Jexa[i]
-                end
+                get_M(p)[7:9] .= p.Jexa
                 # Reset core sizes
                 get_sigma(p)[] = scheme.sgm0
             end
@@ -234,9 +232,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
 
         # Update Gamma
         for p in iterator(pfield)
-            for i in 1:3
-                get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
-            end
+            get_Gamma(p) .+= dt * scheme.nu*get_PSE(p)
         end
 
     # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
@@ -244,10 +240,8 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
 
         # Update Gamma
         for p in iterator(pfield)
-            for i in 1:3
-                get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
-                get_M(p)[3+i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
-            end
+            get_M(p)[4:6] .+= dt * scheme.nu*get_PSE(p)
+            get_Gamma(p) .+= aux2 * dt * scheme.nu*get_PSE(p)
         end
 
     # ------------------ DEFAULT -----------------------------------------------
@@ -296,28 +290,24 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     cs.flags .= false
 
     for P in iterator(pfield)
-        for i in 1:3
-            # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            get_M(P)[i] = get_M(P)[i+6]*get_vol(P)[]
-            # Sets initial guess as Gamma for vorticity evaluation
-            get_Gamma(P)[i] = get_M(P)[i]
-        end
+        # Initial guess: Γ_i ≈ ω_i⋅vol_i
+        get_M(P)[1:3] .= get_M(P)[7:9]*get_vol(P)[]
+        # Sets initial guess as Gamma for vorticity evaluation
+        get_Gamma(P) .= get_M(P)[1:3]
     end
 
     # Current vorticity: Evaluate basis function storing results under P.Jexa[1:3]
     cs.zeta(pfield)
 
     for P in iterator(pfield)
-        for i in 1:3
-            # Residual of initial guess (r0=b-Ax0)
-            get_M(P)[i+3] = get_M(P)[i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
+        # Residual of initial guess (r0=b-Ax0)
+        get_M(P)[4:6] .= get_M(P)[7:9] - P.Jexa    # r = omega_targ - omega_cur
 
-            # Update coefficients
-            get_Gamma(P)[i] = get_M(P)[i+3]             # p0 = r0
+        # Update coefficients
+        get_Gamma(P) .= get_M(P)[4:6]             # p0 = r0
 
-            # Initial field residual
-            cs.rr0s[i] += (get_M(P)[i+3])^2
-        end
+        # Initial field residual
+        cs.rr0s .+= (get_M(P)[4:6]).^2
     end
 
     cs.rrs .= cs.rr0s                         # Current field residuals
@@ -337,15 +327,11 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         # Calculate pAp product on each dimension
         cs.pAps .= 0
         for P in iterator(pfield)
-            for i in 1:3
-                cs.pAps[i] += get_Gamma(P)[i] * P.Jexa[i]
-            end
+            cs.pAps .+= get_Gamma(P) .* P.Jexa
         end
 
-        for i in 1:3                          # alpha = rr./pAp
-            cs.alphas[i] = cs.rrs[i]/cs.pAps[i] * cs.flags[i]
-            # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
-        end
+        cs.alphas .= cs.rrs ./ cs.pAps .* cs.flags
+        # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
 
         cs.prev_rrs .= cs.rrs
         cs.rrs .= 0
@@ -406,9 +392,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     # Save final solution
     for P in iterator(pfield)
-        for i in 1:3
-            get_Gamma(P)[i] = get_M(P)[i]
-        end
+        get_Gamma(P) .= get_M(P)[1:3]
     end
 
     if cs.debug

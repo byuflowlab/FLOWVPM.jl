@@ -39,14 +39,18 @@ Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
 function relax_pedrizzetti(rlxf::Real, p)
 
-    nrmw = sqrt( (get_J(p)[6]-get_J(p)[8])*(get_J(p)[6]-get_J(p)[8]) +
-                    (get_J(p)[7]-get_J(p)[3])*(get_J(p)[7]-get_J(p)[3]) +
-                    (get_J(p)[2]-get_J(p)[4])*(get_J(p)[2]-get_J(p)[4]))
-    nrmGamma = sqrt(get_Gamma(p)[1]^2 + get_Gamma(p)[2]^2 + get_Gamma(p)[3]^2)
+    J = get_J(p)
+    G = get_Gamma(p)
 
-    get_Gamma(p)[1] = (1-rlxf)*get_Gamma(p)[1] + rlxf*nrmGamma*(get_J(p)[6]-get_J(p)[8])/nrmw
-    get_Gamma(p)[2] = (1-rlxf)*get_Gamma(p)[2] + rlxf*nrmGamma*(get_J(p)[7]-get_J(p)[3])/nrmw
-    get_Gamma(p)[3] = (1-rlxf)*get_Gamma(p)[3] + rlxf*nrmGamma*(get_J(p)[2]-get_J(p)[4])/nrmw
+    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
+                (J[7]-J[3])*(J[7]-J[3]) +
+                (J[2]-J[4])*(J[2]-J[4]))
+
+    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+
+    G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+    G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+    G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
 
     return nothing
 end
@@ -61,23 +65,25 @@ to continually decrease over time. See notebook 20200921 for derivation.
 """
 function relax_correctedpedrizzetti(rlxf::Real, p)
 
-    nrmw = sqrt( (get_J(p)[6]-get_J(p)[8])*(get_J(p)[6]-get_J(p)[8]) +
-                    (get_J(p)[7]-get_J(p)[3])*(get_J(p)[7]-get_J(p)[3]) +
-                    (get_J(p)[2]-get_J(p)[4])*(get_J(p)[2]-get_J(p)[4]))
-    nrmGamma = sqrt(get_Gamma(p)[1]^2 + get_Gamma(p)[2]^2 + get_Gamma(p)[3]^2)
+    J = get_J(p)
+    G = get_Gamma(p)
 
-    b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
-                                    get_Gamma(p)[1]*(get_J(p)[6]-get_J(p)[8]) +
-                                    get_Gamma(p)[2]*(get_J(p)[7]-get_J(p)[3]) +
-                                    get_Gamma(p)[3]*(get_J(p)[2]-get_J(p)[4])
-                                   ) / (nrmGamma*nrmw))
+    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
+                (J[7]-J[3])*(J[7]-J[3]) +
+                (J[2]-J[4])*(J[2]-J[4]))
 
-    get_Gamma(p)[1] = (1-rlxf)*get_Gamma(p)[1] + rlxf*nrmGamma*(get_J(p)[6]-get_J(p)[8])/nrmw
-    get_Gamma(p)[2] = (1-rlxf)*get_Gamma(p)[2] + rlxf*nrmGamma*(get_J(p)[7]-get_J(p)[3])/nrmw
-    get_Gamma(p)[3] = (1-rlxf)*get_Gamma(p)[3] + rlxf*nrmGamma*(get_J(p)[2]-get_J(p)[4])/nrmw
+    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+
+    b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
+                                    G[2]*(J[7]-J[3]) +
+                                    G[3]*(J[2]-J[4])) / (nrmGamma*nrmw))
+
+    G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+    G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+    G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
 
     # Normalize the direction of the new vector to maintain the same strength
-    get_Gamma(p) ./= sqrt(b2)
+    G ./= sqrt(b2)
 
     return nothing
 end

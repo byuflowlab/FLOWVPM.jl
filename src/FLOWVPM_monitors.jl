@@ -27,9 +27,7 @@ function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
     # Calculate enstrophy
     enstrophy = 0
     for P in iterator(pfield)
-        enstrophy += (get_Gamma(P)[1]*get_Gamma(P)[1]
-                      + get_Gamma(P)[2]*get_Gamma(P)[2] + get_Gamma(P)[3]*get_Gamma(P)[3]
-                                                              ) / get_sigma(P)[]^3
+        enstrophy += sum(abs2, get_Gamma(P)) / get_sigma(P)[]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
 
@@ -70,17 +68,18 @@ precalculated, which is true if this function is called after the relaxation
 step. DON'T USE THIS MONITOR UNLESS YOU KNOW THAT THIS CONDITION IS MET.
 """
 function monitor_enstrophy_Gammaomega(pfield, t, dt; save_path=nothing, run_name="",
-                                                    suff="enstrophy.log",
-                                                    vprintln=(args...)->nothing,
-                                                    out=[])
+        suff="enstrophy.log",
+        vprintln=(args...)->nothing,
+        out=[])
 
     if pfield.nt != 0
 
         # Calculate enstrophy
         enstrophy = 0
         for P in iterator(pfield)
-            enstrophy += ( get_Gamma(P)[1]*get_W1(P)
-                          + get_Gamma(P)[2]*get_W2(P) + get_Gamma(P)[3]*get_W3(P) )
+            enstrophy += (get_Gamma(P)[1]*get_W1(P) +
+                          get_Gamma(P)[2]*get_W2(P) +
+                          get_Gamma(P)[3]*get_W3(P))
         end
         enstrophy *= 0.5
 
