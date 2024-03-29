@@ -4,9 +4,9 @@
     passed to `run_vpm!(...)` through the `runtime_function` optional argument.
 
 # AUTHORSHIP
-  * Author    : Eduardo J Alvarez
-  * Email     : Edo.AlvarezR@gmail.com
-  * Created   : Jul 2021
+* Author    : Eduardo J Alvarez
+* Email     : Edo.AlvarezR@gmail.com
+* Created   : Jul 2021
 =###############################################################################
 
 
@@ -20,14 +20,16 @@ quick, dirty, and cheap way of getting an idea of how the enstrophy of the
 system may be evolving (see notebook 20210702).
 """
 function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
-                                                    suff="enstrophy.log",
-                                                    vprintln=(args...)->nothing,
-                                                    out=[])
+        suff="enstrophy.log",
+        vprintln=(args...)->nothing,
+        out=[])
 
     # Calculate enstrophy
     enstrophy = 0
     for P in iterator(pfield)
-        enstrophy += sum(abs2, get_Gamma(P)) / get_sigma(P)[]^3
+        enstrophy += (get_Gamma(P)[1]*get_Gamma(P)[1] +
+                      get_Gamma(P)[2]*get_Gamma(P)[2] +
+                      get_Gamma(P)[3]*get_Gamma(P)[3]) / get_sigma(P)[]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
 
