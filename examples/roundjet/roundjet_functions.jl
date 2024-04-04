@@ -151,8 +151,7 @@ function probeline_UW!(pfield, U, W, lines; Gamma=1e-10, sigma=1)
     end
 
     # Evaluate UJ
-    vpm._reset_particles(pfield)
-    pfield.UJ(pfield)
+    pfield.UJ(pfield; reset=true)
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)

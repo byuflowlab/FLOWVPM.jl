@@ -135,8 +135,7 @@ function computefluiddomain(pfield::vpm.ParticleField,
     end
 
     # Evaluate particle field
-    vpm._reset_particles(pfield)
-    t = @elapsed pfield.UJ(pfield)
+    t = @elapsed pfield.UJ(pfield; reset=true)
 
     if verbose
         println("\t"^(v_lvl)*"Evaluate UJ:\t\t$(round(t, digits=1)) s")
@@ -336,7 +335,7 @@ end
 """
     computefluiddomain(maxparticles::Int, args...;
                         UJ::Function=vpm.UJ_fmm,
-                        fmm::FLOWVPM.FMM=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                        fmm::FLOWVPM.FMM=vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
                         pfield_optargs=[]
                         optargs...)
 
@@ -350,7 +349,7 @@ field constructor.
 """
 function computefluiddomain(maxparticles::Int, args...;
                                     UJ=vpm.UJ_fmm,
-                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5),
+                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
                                     pfield_optargs=[],
                                     verbose=true, v_lvl=0,
                                     optargs...)

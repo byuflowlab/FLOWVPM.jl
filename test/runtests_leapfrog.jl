@@ -1,3 +1,9 @@
+# activate test environment
+if splitpath(Base.active_project())[end-1] == "FLOWVPM.jl"
+    import TestEnv
+    TestEnv.activate()
+end
+
 using Test
 import Printf: @printf
 import FLOWVPM
@@ -12,7 +18,7 @@ for (description, integration, UJ, nc) in (
 
     println("\n"^2*description)
 
-    @test begin
+    @testset begin
 
         verbose1 = false
         verbose2 = true
@@ -54,7 +60,7 @@ for (description, integration, UJ, nc) in (
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, phi=0.5)
+            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
         )
 
 
@@ -68,13 +74,32 @@ for (description, integration, UJ, nc) in (
                                             # ------- SIMULATION OPTIONS -----------
                                             Re=Re,
                                             nref=nref,
-                                            nsteps=nsteps,
+                                            nsteps=2,
                                             Rtot=Rtot,
                                             beta=beta,
                                             faux=faux,
                                             # ------- OUTPUT OPTIONS ---------------
                                             save_path=nothing,
                                             calc_monitors=false,
+                                            verbose=verbose1, v_lvl=1,
+                                            # verbose_nsteps=ceil(Int, nsteps/4),
+                                            verbose_nsteps=100,
+                                            pfieldargs=solver
+                                            )
+        t_elapsed = @elapsed pfield = run_vortexring_simulation(  nrings, circulations,
+                                            Rs, ARs, Rcrosss,
+                                            Nphis, ncs, extra_ncs, sigmas,
+                                            Os, Oaxiss;
+                                            # ------- SIMULATION OPTIONS -----------
+                                            Re=Re,
+                                            nref=nref,
+                                            nsteps=nsteps,
+                                            Rtot=Rtot,
+                                            beta=beta,
+                                            faux=faux,
+                                            # ------- OUTPUT OPTIONS ---------------
+                                            save_path="leapfrog/",
+                                            calc_monitors=true,
                                             verbose=verbose1, v_lvl=1,
                                             # verbose_nsteps=ceil(Int, nsteps/4),
                                             verbose_nsteps=100,
@@ -128,6 +153,7 @@ for (description, integration, UJ, nc) in (
             @printf "%s%10.10s%10.3f%10.3f%10.3f%10.3f\n"           "\t"^2 "Analytic" Z1_ana Z2_ana R1_ana R2_ana
             @printf "%s%10.10s%10.3f%10.3f%10.3f%10.3f\n"           "\t"^2 "VPM" Z1_vpm Z2_vpm R1_vpm R2_vpm
             @printf "%s%10.10s%9.3f﹪%9.3f﹪%8.3f﹪%8.3f﹪\n"         "\t"^2 "ERROR" Z1_err*100 Z2_err*100 R1_err*100 R2_err*100
+            @printf "%sTime:\t\t\t\t%1.8f s\n"                       "\t"^2 t_elapsed
         end
 
         # Test result

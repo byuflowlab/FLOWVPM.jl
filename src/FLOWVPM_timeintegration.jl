@@ -11,12 +11,18 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
-                                dt::Real; relax::Bool=false) where {R, V}
+function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+                                dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
     # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is now performed inside the SFS scheme
-    pfield.SFS(pfield)
+    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+    pfield.SFS(pfield, BeforeUJ())
+    if isnothing(custom_UJ)
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    else
+        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    end
+    pfield.SFS(pfield, AfterUJ())
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -26,31 +32,29 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
-        C::R = p.C[1]
+        C::R = get_C(p)[1]
 
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        get_X(p) .+= dt*(get_U(p) .+ Uinf)
 
         # Update vectorial circulation
         ## Vortex stretching contributions
+        J = get_J(p)
+        G = get_Gamma(p)
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            p.Gamma[1] += dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
-            p.Gamma[2] += dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
-            p.Gamma[3] += dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            G[1] += dt*(J[1]*G[1]+J[2]*G[2]+J[3]*G[3])
+            G[2] += dt*(J[4]*G[1]+J[5]*G[2]+J[6]*G[3])
+            G[3] += dt*(J[7]*G[1]+J[8]*G[2]+J[9]*G[3])
         else
             # Classic scheme (Γ⋅∇)U
-            p.Gamma[1] += dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
-            p.Gamma[2] += dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
-            p.Gamma[3] += dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            G[1] += dt*(J[1]*G[1]+J[4]*G[2]+J[7]*G[3])
+            G[2] += dt*(J[2]*G[1]+J[5]*G[2]+J[8]*G[3])
+            G[3] += dt*(J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
         end
 
         ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-        p.Gamma[1] -= dt*C*get_SFS1(p) * p.sigma[1]^3/zeta0
-        p.Gamma[2] -= dt*C*get_SFS2(p) * p.sigma[1]^3/zeta0
-        p.Gamma[3] -= dt*C*get_SFS3(p) * p.sigma[1]^3/zeta0
+        G .-= dt*C*get_SFS(p) * get_sigma(p)[]^3/zeta0
 
         # Relaxation: Align vectorial circulation to local vorticity
         if relax
@@ -77,13 +81,18 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale},
-                              dt::Real; relax::Bool=false ) where {R, V, R2}
-
+function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+                              dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
     # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is now performed inside the SFS scheme
-    pfield.SFS(pfield)
-
+    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+    pfield.SFS(pfield, BeforeUJ())
+    if isnothing(custom_UJ)
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    else
+        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    end
+    pfield.SFS(pfield, AfterUJ())
+    
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
@@ -94,38 +103,36 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
-        C::R = p.C[1]
+        C::R = get_C(p)[1]
 
         # Update position
-        p.X[1] += dt*(p.U[1] + Uinf[1])
-        p.X[2] += dt*(p.U[2] + Uinf[2])
-        p.X[3] += dt*(p.U[3] + Uinf[3])
+        get_X(p) .+= dt*(get_U(p) .+ Uinf)
 
         # Store stretching S under MM[1:3]
+        J = get_J(p)
+        G = get_Gamma(p)
         if pfield.transposed
             # Transposed scheme S = (Γ⋅∇')U
-            MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3])
-            MM[2] = (p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3])
-            MM[3] = (p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            MM[1] = (J[1]*G[1]+J[2]*G[2]+J[3]*G[3])
+            MM[2] = (J[4]*G[1]+J[5]*G[2]+J[6]*G[3])
+            MM[3] = (J[7]*G[1]+J[8]*G[2]+J[9]*G[3])
         else
             # Classic scheme S = (Γ⋅∇)U
-            MM[1] = (p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3])
-            MM[2] = (p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3])
-            MM[3] = (p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3])
+            MM[1] = (J[1]*G[1]+J[4]*G[2]+J[7]*G[3])
+            MM[2] = (J[2]*G[1]+J[5]*G[2]+J[8]*G[3])
+            MM[3] = (J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
         end
 
         # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-        MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
-        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
-        MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
+        MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
+        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
+        MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
 
         # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ - Cϵ)
-        p.Gamma[1] += dt * (MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-        p.Gamma[2] += dt * (MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-        p.Gamma[3] += dt * (MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+        G .+= dt * (MM[1:3] - 3*MM[4]*G - C*get_SFS(p)*get_sigma(p)[]^3/zeta0)
 
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
-        p.sigma[1] -= dt * ( p.sigma[1] * MM[4] )
+        get_sigma(p)[] -= dt * ( get_sigma(p)[] * MM[4] )
 
         # Relaxation: Alig vectorial circulation to local vorticity
         if relax
@@ -136,7 +143,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
 
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
-
+    
     return nothing
 end
 
@@ -155,10 +162,10 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale},
-                            dt::Real; relax::Bool=false) where {R, V}
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+                            dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
-    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -167,48 +174,55 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale}
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); get_M(p) .= zeroR; end;
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
-        # NOTE: UJ evaluation is now performed inside the SFS scheme
-        pfield.SFS(pfield; a=a, b=b)
+        # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        else
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        end
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
 
-            C::R = p.C[1]
+            C::R = get_C(p)[1]
 
             # Low-storage RK step
+            M = get_M(p); G = get_Gamma(p); J = get_J(p)
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+            M[1] = a*M[1] + dt*(get_U(p)[1] + Uinf[1])
+            M[2] = a*M[2] + dt*(get_U(p)[2] + Uinf[2])
+            M[3] = a*M[3] + dt*(get_U(p)[3] + Uinf[3])
 
             # Update position
-            p.X[1] += b*p.M[1, 1]
-            p.X[2] += b*p.M[2, 1]
-            p.X[3] += b*p.M[3, 1]
+            get_X(p)[1] += b*M[1]
+            get_X(p)[2] += b*M[2]
+            get_X(p)[3] += b*M[3]
 
             ## Stretching + SFS contributions
             if pfield.transposed
                 # Transposed scheme (Γ⋅∇')U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+                M[4] = a*M[4] + dt*(J[1]*G[1]+J[2]*G[2]+J[3]*G[3] - C*get_SFS1(p)*get_sigma(p)[]^3/zeta0)
+                M[5] = a*M[5] + dt*(J[4]*G[1]+J[5]*G[2]+J[6]*G[3] - C*get_SFS2(p)*get_sigma(p)[]^3/zeta0)
+                M[6] = a*M[6] + dt*(J[7]*G[1]+J[8]*G[2]+J[9]*G[3] - C*get_SFS3(p)*get_sigma(p)[]^3/zeta0)
             else
                 # Classic scheme (Γ⋅∇)U - Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-                p.M[1, 2] = a*p.M[1, 2] + dt*(p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-                p.M[2, 2] = a*p.M[2, 2] + dt*(p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-                p.M[3, 2] = a*p.M[3, 2] + dt*(p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+                M[4] = a*M[4] + dt*(J[1]*G[1]+J[4]*G[2]+J[7]*G[3] - C*get_SFS1(p)*get_sigma(p)[]^3/zeta0)
+                M[5] = a*M[5] + dt*(J[2]*G[1]+J[5]*G[2]+J[8]*G[3] - C*get_SFS2(p)*get_sigma(p)[]^3/zeta0)
+                M[6] = a*M[6] + dt*(J[3]*G[1]+J[6]*G[2]+J[9]*G[3] - C*get_SFS3(p)*get_sigma(p)[]^3/zeta0)
             end
 
             # Update vectorial circulation
-            p.Gamma[1] += b*p.M[1, 2]
-            p.Gamma[2] += b*p.M[2, 2]
-            p.Gamma[3] += b*p.M[3, 2]
+            G[1] += b*M[4]
+            G[2] += b*M[5]
+            G[3] += b*M[6]
 
         end
 
@@ -256,11 +270,11 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale},
-                     dt::Real; relax::Bool=false ) where {R, V, R2}
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+                     dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
 
-    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
-    #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
+    # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
+    #                      qsmg <=> get_M(p)[8], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
@@ -271,65 +285,72 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); get_M(p) .= zeroR; end;
 
     # Runge-Kutta inner steps
     for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
-        # NOTE: UJ evaluation is now performed inside the SFS scheme
-        pfield.SFS(pfield; a=a, b=b)
+        # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        else
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        end
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
 
-            C::R = p.C[1]
+            C::R = get_C(p)[1]
 
             # Low-storage RK step
             ## Velocity
-            p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
-            p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
-            p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+            M = get_M(p); G = get_Gamma(p); J = get_J(p)
+            M[1] = a*M[1] + dt*(get_U(p)[1] + Uinf[1])
+            M[2] = a*M[2] + dt*(get_U(p)[2] + Uinf[2])
+            M[3] = a*M[3] + dt*(get_U(p)[3] + Uinf[3])
 
             # Update position
-            p.X[1] += b*p.M[1, 1]
-            p.X[2] += b*p.M[2, 1]
-            p.X[3] += b*p.M[3, 1]
+            get_X(p)[1] += b*M[1]
+            get_X(p)[2] += b*M[2]
+            get_X(p)[3] += b*M[3]
 
             # Store stretching S under M[1:3]
             if pfield.transposed
                 # Transposed scheme S = (Γ⋅∇')U
-                MM[1] = p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
-                MM[2] = p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
-                MM[3] = p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+                MM[1] = J[1]*G[1]+J[2]*G[2]+J[3]*G[3]
+                MM[2] = J[4]*G[1]+J[5]*G[2]+J[6]*G[3]
+                MM[3] = J[7]*G[1]+J[8]*G[2]+J[9]*G[3]
             else
                 # Classic scheme (Γ⋅∇)U
-                MM[1] = p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
-                MM[2] = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
-                MM[3] = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+                MM[1] = J[1]*G[1]+J[4]*G[2]+J[7]*G[3]
+                MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
+                MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
             end
 
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-            MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
-            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
-            MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
+            MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
+            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
+            MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-            p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
-            p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
-            p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+            M[4] = a*M[4] + dt*(MM[1] - 3*MM[4]*G[1] - C*get_SFS1(p)*get_sigma(p)[]^3/zeta0)
+            M[5] = a*M[5] + dt*(MM[2] - 3*MM[4]*G[2] - C*get_SFS2(p)*get_sigma(p)[]^3/zeta0)
+            M[6] = a*M[6] + dt*(MM[3] - 3*MM[4]*G[3] - C*get_SFS3(p)*get_sigma(p)[]^3/zeta0)
 
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-            p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
+            M[8] = a*M[8] - dt*( get_sigma(p)[] * MM[4] )
 
             # Update vectorial circulation
-            p.Gamma[1] += b*p.M[1, 2]
-            p.Gamma[2] += b*p.M[2, 2]
-            p.Gamma[3] += b*p.M[3, 2]
+            G[1] += b*M[4]
+            G[2] += b*M[5]
+            G[3] += b*M[6]
 
             # Update cross-sectional area
-            p.sigma[1] += b*p.M[2, 3]
+            get_sigma(p)[] += b*M[8]
 
         end
 
