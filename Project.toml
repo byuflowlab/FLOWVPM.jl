@@ -5,13 +5,21 @@ version = "3.0.1"
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+CatViews = "81a5f4ea-a946-549a-aa7e-2a7f63a27d31"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+ChainRulesTestUtils = "cdddcdb0-9152-4a09-a978-84456f9df70a"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 FLOWFMM = "ce07d0d3-2b9f-49ba-89eb-12c800257c85"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+ImplicitAD = "e7cbb90b-9b31-4eb2-a8c8-45099c074ee1"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
 julia = "1.6"

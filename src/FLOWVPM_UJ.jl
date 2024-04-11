@@ -67,7 +67,6 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
             dX2 = Pi.X[2] - Pj.X[2]
             dX3 = Pi.X[3] - Pj.X[3]
             r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
-
             if !iszero(r2)
                 r = sqrt(r2) 
 
@@ -159,7 +158,7 @@ function UJ_fmm(pfield::ParticleField;
     # extract FMM options
     fmm_options = pfield.fmm
     farfield = !rbf
-
+    #@show typeof(pfield)
     # Calculate FMM of vector potential
     fmm.fmm!(pfield; expansion_order=fmm_options.p-1, n_per_branch=fmm_options.ncrit, theta=fmm_options.theta, ndivisions=100, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
 

@@ -30,23 +30,23 @@ Vortex particle data structure
 """
 struct Particle{T}
   # User inputs
-  X::MVector{3,T}                # Position (3-elem array)
-  Gamma::MVector{3,T}            # Vectorial circulation (3-elem array)
-  sigma::MVector{1,T}            # Smoothing radius (1-elem array)
-  vol::MVector{1,T}              # Volume (1-elem array)
-  circulation::MVector{1,T}      # Scalar circulation (1-elem array)
+  X::Vector{T}                # Position (3-elem array)
+  Gamma::Vector{T}            # Vectorial circulation (3-elem array)
+  sigma::Vector{T}            # Smoothing radius (1-elem array)
+  vol::Vector{T}              # Volume (1-elem array)
+  circulation::Vector{T}      # Scalar circulation (1-elem array)
   static::MVector{1,Bool}        # If true, this particle is not evolved in time
 
   # Properties
-  U::MVector{3,T}                # Velocity at particle (3-elem array)
-  W::MVector{3,T}                # Vorticity at particle (3-elem array)
-  J::MMatrix{3,3,T,9}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
-  PSE::MVector{3,T}              # Particle-strength exchange at particle (3-elem array)
+  U::Vector{T}                # Velocity at particle (3-elem array)
+  W::Vector{T}                # Vorticity at particle (3-elem array)
+  J::Matrix{T}                # Jacobian at particle J[i,j]=dUi/dxj (9-elem array)
+  PSE::Vector{T}              # Particle-strength exchange at particle (3-elem array)
 
   # Internal variables
-  M::MMatrix{3,3,T,9}                # 3x3 array of auxiliary memory
-  C::MVector{3,T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
-  S::MVector{3,T}                # Stretching term
+  M::Matrix{T}                # 3x3 array of auxiliary memory
+  C::Vector{T}                # C[1]=SFS coefficient, C[2]=numerator, C[3]=denominator
+  S::Vector{T}                # Stretching term
 
   # ExaFMM internal variables
 #   Jexa::Array{T, 2}             # Jacobian of vectorial potential (9-elem array) Jexa[i,j]=dpj/dxi
@@ -72,11 +72,11 @@ Base.eltype(::Particle{T}) where T = T
 Base.eltype(::AbstractArray{Particle{T}}) where T = T
 
 # Empty initializer
-Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros3(T),
-                                                      init_zero(T),  init_zero(T), init_zero(T),
+Base.zero(::Type{<:Particle{T}}) where {T} = Particle(zeros(T,3), zeros(T,3),
+                                                      zeros(T,1),  zeros(T,1), zeros(T,1),
                                                       init_zero(Bool),
-                                                      init_zeros3(T), init_zeros3(T), init_zeros33(T), init_zeros3(T),
-                                                      init_zeros33(T), init_zeros3(T), init_zeros3(T),
+                                                      zeros(T,3), zeros(T,3), zeros(T,3,3), zeros(T,3),
+                                                      zeros(T,3,3), zeros(T,3), zeros(T,3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                       init_zero(Int32))

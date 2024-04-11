@@ -83,7 +83,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     # RUN
     for i in 0:nsteps
-
+        
         if i%verbose_nsteps==0
             vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
         end
@@ -94,7 +94,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 i>0 && (i%pfield.relaxation.nsteps_relax == 0)
 
         org_np = get_np(pfield)
-
+        
         # Time step
         if i!=0
             # Add static particles
@@ -110,24 +110,24 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 end
             end
         end
-
+        
         # Calls user-defined runtime function
         breakflag = runtime_function(pfield, pfield.t, dt;
                                      vprintln= (str)-> i%verbose_nsteps==0 ?
                                             vprintln(str, v_lvl+2) : nothing)
 
         # Save particle field
-        if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                        overwrite_time=overwrite_time)
-        end
+        #if save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+        #    overwrite_time = save_time ? nothing : pfield.nt
+        #    save(pfield, run_name; path=save_path, add_num=true,
+        #                                overwrite_time=overwrite_time)
+        #end
 
         # User-indicated end of simulation
         if breakflag
             break
         end
-
+        
     end
 
     # Finalize verbose

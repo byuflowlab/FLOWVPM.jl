@@ -46,7 +46,7 @@ for header_name in ["kernel", "viscous", "formulation",
                     "particle", "relaxation", "subfilterscale",
                     "particlefield", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

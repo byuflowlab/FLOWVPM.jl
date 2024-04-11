@@ -160,7 +160,7 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                            dt::Real; relax::Bool=false) where {R, V}
+                            dt::R3; relax::Bool=false) where {R, V, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3]
 
@@ -263,35 +263,43 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
-                     dt::Real; relax::Bool=false ) where {R, V, R2}
-
+                     dt::R3; relax::Bool=false ) where {R, V, R2, R3}
+    #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+    #println("tape entries before time step: $l")
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> p.M[1, 3],
     #                      qsmg <=> p.M[2, 3], Z <=> MM[4], S <=> MM[1:3]
-
     # Calculate freestream
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    Uinf::Array{R, 1} = R.(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
 
-    MM::Array{<:Real, 1} = pfield.M
-    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
-    zeta0::R = pfield.kernel.zeta(0)
+    MM::Array{R, 1} = pfield.M # eltype(pfield.M) = R
+    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g # formulation floating-point type may end up as Float64 even if AD is used. (double check this)
+    #zeta0::R = pfield.kernel.zeta(0)
+    zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
 
     # Reset storage memory to zero
-    zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
-
+    zeroRP::R = zero(R) # zero of the floating-point type
+    for p in iterator(pfield); p.M .= zeroRP; end;
     # Runge-Kutta inner steps
-    for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
+    for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
 
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+        #println("tape entries before SFS 1: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
-        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+        #println("tape entries after SFS 1/before UJ: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=pfield.toggle_sfs)
+        #println("tape entries after UJ/before SFS 2: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
-
+        #println("tape entries after SFS 2/before time marching: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
         # Update the particle field: convection and stretching
-        for p in iterator(pfield)
-
-            C::R = p.C[1]
+        update_particle_states(pfield,MM,a,b,dt,Uinf,f, g, zeta0)
+        #=for p in iterator(pfield)
+            
+            C::R = p.C[1] # not sure why C::R needs to be specified. It becomes C::RP to match the particle floating point type.
 
             # Low-storage RK step
             ## Velocity
@@ -316,18 +324,18 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
                 MM[2] = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
                 MM[3] = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
             end
-
+            
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
             MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
             MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
-
+            
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
             p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
             p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
             p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
-
+            
             # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
             p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
 
@@ -335,18 +343,23 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             p.Gamma[1] += b*p.M[1, 2]
             p.Gamma[2] += b*p.M[2, 2]
             p.Gamma[3] += b*p.M[3, 2]
-
+            
             # Update cross-sectional area
             p.sigma[1] += b*p.M[2, 3]
-
-        end
-
+            
+        end=#
+        #println("tape entries after time marching/before diffusion: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+        
         # Update the particle field: viscous diffusion
         viscousdiffusion(pfield, dt; aux1=a, aux2=b)
+        #println("tape entries after diffusion: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
 
     end
 
-
+    # something here breaks ForwardDiff # will need to re-enable and make sure this works now.
+    #=
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
@@ -365,6 +378,67 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             pfield.relaxation(p)
         end
     end
-
+    =#
+    #println("tape entries after time step: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
+    #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+    #println("")
     return nothing
+end
+
+
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
+
+    for p in iterator(pfield)
+            
+        C::R = p.C[1] # not sure why C::R needs to be specified. It becomes C::RP to match the particle floating point type.
+
+        # Low-storage RK step
+        ## Velocity
+        p.M[1, 1] = a*p.M[1, 1] + dt*(p.U[1] + Uinf[1])
+        p.M[2, 1] = a*p.M[2, 1] + dt*(p.U[2] + Uinf[2])
+        p.M[3, 1] = a*p.M[3, 1] + dt*(p.U[3] + Uinf[3])
+
+        # Update position
+        p.X[1] += b*p.M[1, 1]
+        p.X[2] += b*p.M[2, 1]
+        p.X[3] += b*p.M[3, 1]
+
+        # Store stretching S under M[1:3]
+        if pfield.transposed
+            # Transposed scheme S = (Γ⋅∇')U
+            MM[1] = p.J[1,1]*p.Gamma[1]+p.J[2,1]*p.Gamma[2]+p.J[3,1]*p.Gamma[3]
+            MM[2] = p.J[1,2]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[3,2]*p.Gamma[3]
+            MM[3] = p.J[1,3]*p.Gamma[1]+p.J[2,3]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+        else
+            # Classic scheme (Γ⋅∇)U
+            MM[1] = p.J[1,1]*p.Gamma[1]+p.J[1,2]*p.Gamma[2]+p.J[1,3]*p.Gamma[3]
+            MM[2] = p.J[2,1]*p.Gamma[1]+p.J[2,2]*p.Gamma[2]+p.J[2,3]*p.Gamma[3]
+            MM[3] = p.J[3,1]*p.Gamma[1]+p.J[3,2]*p.Gamma[2]+p.J[3,3]*p.Gamma[3]
+        end
+        
+        # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
+        MM[4] = (f+g)/(1+3*f) * (MM[1]*p.Gamma[1] + MM[2]*p.Gamma[2] + MM[3]*p.Gamma[3])
+        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*p.Gamma[1] + C*get_SFS2(p)*p.Gamma[2] + C*get_SFS3(p)*p.Gamma[3]) * p.sigma[1]^3/zeta0
+        MM[4] /= p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2
+        
+        # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
+        # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
+        p.M[1, 2] = a*p.M[1, 2] + dt*(MM[1] - 3*MM[4]*p.Gamma[1] - C*get_SFS1(p)*p.sigma[1]^3/zeta0)
+        p.M[2, 2] = a*p.M[2, 2] + dt*(MM[2] - 3*MM[4]*p.Gamma[2] - C*get_SFS2(p)*p.sigma[1]^3/zeta0)
+        p.M[3, 2] = a*p.M[3, 2] + dt*(MM[3] - 3*MM[4]*p.Gamma[3] - C*get_SFS3(p)*p.sigma[1]^3/zeta0)
+        
+        # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
+        p.M[2, 3] = a*p.M[2, 3] - dt*( p.sigma[1] * MM[4] )
+
+        # Update vectorial circulation
+        p.Gamma[1] += b*p.M[1, 2]
+        p.Gamma[2] += b*p.M[2, 2]
+        p.Gamma[3] += b*p.M[3, 2]
+        
+        # Update cross-sectional area
+        p.sigma[1] += b*p.M[2, 3]
+        
+    end
+    return nothing
+        
 end

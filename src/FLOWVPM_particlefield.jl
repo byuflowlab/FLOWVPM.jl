@@ -54,7 +54,8 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
+#mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Array{Particle{R}, 1}            # Array of particles
@@ -64,7 +65,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     # Internal properties
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
-    t::R                                        # Current time
+    t::R                                        # Current time # should not have its type tied to other floating-point types
 
     # Solver setting
     kernel::Tkernel                              # Vortex particle kernel
@@ -75,11 +76,11 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     SFS::S                                      # Subfilter-scale contributions scheme
     integration::Tintegration                       # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
-    relaxation::Relaxation{R}                   # Relaxation scheme
+    relaxation::Relaxation{R}                   # Relaxation scheme # should not have its type tied to other floating-point types
     fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
-    M::Array{R, 1}
+    M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
 
     # switches for dispatch in the FMM
     toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
@@ -95,7 +96,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
                                 SFS=SFS_default,
                                 integration::Tintegration=rungekutta3,
                                 transposed=true,
-                                relaxation=relaxation_default,
+                                relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)),
                                 fmm=FMM(),
                                 M=zeros(R, 4),
                                 toggle_rbf=false, toggle_sfs=false
@@ -275,8 +276,8 @@ function get_particleiterator(args...; include_static=false, optargs...)
     end
 end
 
-function _get_particleiterator(self::ParticleField{R, F, V}; start_i::Int=1,
-                              end_i::Int=-1, reverse=false) where {R, F, V}
+function _get_particleiterator(self::ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}; start_i::Int=1,
+                              end_i::Int=-1, reverse=false) where {R, F, V, S, Tkernel, TUJ, Tintegration}
     # ERROR CASES
     if end_i > get_np(self)
         error("Requested end_i=$(end_i), but there is only $(get_np(self))"*
@@ -348,7 +349,7 @@ end
 
 
 ##### INTERNAL FUNCTIONS #######################################################
-function _reset_particles(self::ParticleField{R, F, V}) where {R, F, V}
+function _reset_particles(self::ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}) where {R, F, V, S, Tkernel, TUJ, Tintegration}
     tzero = zero(R)
     for P in iterator(self; include_static=true)
         _reset_particle(P, tzero)
@@ -378,7 +379,7 @@ function _reset_particle(P::Particle{T}, tzero::T) where {T}
 end
 _reset_particle(P::Particle{T}) where {T} = _reset_particle(P, zero(T))
 
-function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
+function _reset_particles_sfs(self::ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}) where {R, F, V, S, Tkernel, TUJ, Tintegration}
     tzero = zero(R)
     for P in iterator(self; include_static=true)
         _reset_particle_sfs(P, tzero)
@@ -386,7 +387,7 @@ function _reset_particles_sfs(self::ParticleField{R, F, V}) where {R, F, V}
 end
 
 function _reset_particle_sfs(P::Particle{T}, tzero::T) where {T}
-    getproperty(P, _SFS)::MVector{3,T} .= tzero
+    getproperty(P, _SFS)::Vector{T} .= tzero
     # P.C .= tzero
 end
 _reset_particle_sfs(P::Particle{T}) where {T} = _reset_particle_sfs(P, zero(T))
