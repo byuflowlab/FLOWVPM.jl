@@ -152,6 +152,8 @@ function fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_sourc
 
 end
 
+using ForwardDiff # for handling the second derivative of the kernel function
+
 function ChainRulesCore.rrule(::typeof(FLOWFMM.direct!), xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target,target_index_count,source_index_count,toggle_sfs)
 
     UJS = fmm.direct!(xyz_target, copy(J_target), gamma_source, xyz_source, sigma_source, kernel_source, copy(U_target), J_source, copy(S_target) ,target_index_count,source_index_count,toggle_sfs)
@@ -397,12 +399,20 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
         # unpack state_bar
         # state_bar contents: M1 (3*np) x (3*np) M2 (3*np) M23 (np) Gamma (3*np) sigma (np)
         np = length(sigma)
-        M1outbar = view(state_bar,1:3*np)
-        xoutbar = view(state_bar,3*np+1:6*np)
-        M2outbar = view(state_bar,6*np+1:9*np)
-        M23outbar = view(state_bar,9*np+1:10*np)
-        Gammaoutbar = view(state_bar,10*np+1:13*np)
-        sigmaoutbar = view(state_bar,13*np+1:14*np)
+        # views fail in 
+        #M1outbar = view(state_bar,1:3*np)
+        #xoutbar = view(state_bar,3*np+1:6*np)
+        #M2outbar = view(state_bar,6*np+1:9*np)
+        #M23outbar = view(state_bar,9*np+1:10*np)
+        #Gammaoutbar = view(state_bar,10*np+1:13*np)
+        #sigmaoutbar = view(state_bar,13*np+1:14*np)
+
+        M1outbar = state_bar[1:3*np]
+        xoutbar = state_bar[3*np+1:6*np]
+        M2outbar = state_bar[6*np+1:9*np]
+        M23outbar = state_bar[9*np+1:10*np]
+        Gammaoutbar = state_bar[10*np+1:13*np]
+        sigmaoutbar = state_bar[13*np+1:14*np]
 
         M1inbar = zeros(size(M1))
         xinbar = zeros(size(X))
@@ -417,6 +427,7 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
         Sbar = zeros(size(S))
         J_mat = zeros(3,3)
         Jbar_mat = zeros(3,3)
+        MMbar = zeros(4)
 
         xinbar .= xoutbar
         for i=1:np
@@ -434,6 +445,9 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
             end
             for η=1:3
                 MM[4] += (A*MM[η]*Gamma[iidx+η] - B2*C[i]*S[iidx+η]*Gamma[iidx+η]*sigma[i]^3)/Γ2
+                for ξ=1:3
+                    dMM4dJ[ξ,η] = 1/Γ2*A*Gamma[iidx+ξ]*Gamma[iidx+η]
+                end
             end
             dMM4dC = 0.0
             dMM4dsigma = 0.0
@@ -442,7 +456,6 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
             for η = 1:3
                 dMM4dGamma_η = -B2*C[i]*S[iidx+η]*sigma[i]^3 - 2*MM[4]*Gamma[iidx+η] + A*MM[η]
                 for ξ = 1:3
-                    dMM4dJ[ξ,η] = 1/Γ2*A*Gamma[iidx+ξ]*Gamma[iidx+η]
                     dMM4dGamma_η += A*J_mat[η,ξ]*Gamma[iidx+ξ]
                 end
                 dMM4dGamma_η /= Γ2
@@ -460,7 +473,7 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
                 M2inbar[iidx+η] = a*gammabar_term_η
 
                 for ξ=1:3
-                    Jbar_mat[ξ,η] = dt*(Gamma[iidx+ξ] - 3*Gamma[iidx+η]*dMM4dJ[ξ,η])*gammabar_term_η - dt*sigma[i]*dMM4dJ[ξ,η]*sigmabar_term
+                    Jbar[9*(i-1)+3*(η-1)+ξ] = dt*(Gamma[iidx+ξ] - 3*Gamma[iidx+η]*dMM4dJ[ξ,η])*gammabar_term_η - dt*sigma[i]*dMM4dJ[ξ,η]*sigmabar_term
                 end
                 sigmainbar[i] -= 3*dt*(Gamma[iidx+η]*dMM4dsigma + C[i]*S[iidx+η]*sigma[i]^2/zeta0)*gammabar_term_η
                 Gammainbar[iidx+η] = Gammaoutbar[iidx+η] - 3* dt*(Gamma[iidx+η]*dMM4dGamma_η + MM[4])*gammabar_term_η - dt*sigma[i]*dMM4dGamma_η*sigmabar_term
@@ -476,9 +489,11 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
                 Cbar[i] -= dt*(3*Gamma[iidx+η]*dMM4dC + S[iidx+η]*sigma[i]^3/zeta0)*gammabar_term_η
             end
         end
-        return NoTangent(), M1inbar, xinbar, Ubar, Uinfbar, M2inbar, M23inbar, Jbar, sigmainbar, Gammainbar, Cbar, Sbar, zeros(eltype(MM),4), NoTangent(), NoTangent(), NoTangent(), NoTangent(), NoTangent(), NoTangent()
+        # value does not match?
+        # not correct: Jbar, technically some of the constant inputs but these don't matter.
+        # currently zero anyway: Cbar, Sbar
+        return NoTangent(), M1inbar, xinbar, Ubar, Uinfbar, M2inbar, M23inbar, Jbar, sigmainbar, Gammainbar, Cbar, Sbar, MMbar, NoTangent(), NoTangent(), NoTangent(), NoTangent(), NoTangent(), NoTangent()
     end
-
     return states, state_pullback
 
 end
