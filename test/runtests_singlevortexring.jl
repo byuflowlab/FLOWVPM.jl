@@ -18,7 +18,7 @@ for (description, integration, UJ, nc) in (
 
     println("\n"^2*description*" test: Single vortex ring...")
 
-    @test begin
+    @testset begin
 
         verbose1 = false
         verbose2 = true

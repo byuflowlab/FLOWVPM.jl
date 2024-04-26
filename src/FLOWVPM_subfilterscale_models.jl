@@ -14,26 +14,30 @@
     Model of vortex-stretching SFS contributions evaluated with direct
 particle-to-particle interactions. See 20210901 notebook for derivation.
 """
-@inline function Estr_direct(target_particle::Particle, source_particle::Particle, r, zeta, transposed)
+@inline function Estr_direct(target_particle, source_particle, r, zeta, transposed)
+    GS = get_Gamma(source_particle)
+    JS = get_J(source_particle)
+    JT = get_J(target_particle)
+
     # Stretching term
     if transposed
         # Transposed scheme (Γq⋅∇')(Up - Uq)
-        S1 = (target_particle.J[1,1] - source_particle.J[1,1])*source_particle.Gamma[1]+(target_particle.J[2,1] - source_particle.J[2,1])*source_particle.Gamma[2]+(target_particle.J[3,1] - source_particle.J[3,1])*source_particle.Gamma[3]
-        S2 = (target_particle.J[1,2] - source_particle.J[1,2])*source_particle.Gamma[1]+(target_particle.J[2,2] - source_particle.J[2,2])*source_particle.Gamma[2]+(target_particle.J[3,2] - source_particle.J[3,2])*source_particle.Gamma[3]
-        S3 = (target_particle.J[1,3] - source_particle.J[1,3])*source_particle.Gamma[1]+(target_particle.J[2,3] - source_particle.J[2,3])*source_particle.Gamma[2]+(target_particle.J[3,3] - source_particle.J[3,3])*source_particle.Gamma[3]
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[2] - JS[2])*GS[2]+(JT[3] - JS[3])*GS[3]
+        S2 = (JT[4] - JS[4])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[6] - JS[6])*GS[3]
+        S3 = (JT[7] - JS[7])*GS[1]+(JT[8] - JS[8])*GS[2]+(JT[9] - JS[9])*GS[3]
     else
         # Classic scheme (Γq⋅∇)(Up - Uq)
-        S1 = (p.J[1,1] - source_particle.J[1,1])*source_particle.Gamma[1]+(p.J[1,2] - source_particle.J[1,2])*source_particle.Gamma[2]+(p.J[1,3] - source_particle.J[1,3])*source_particle.Gamma[3]
-        S2 = (p.J[2,1] - source_particle.J[2,1])*source_particle.Gamma[1]+(p.J[2,2] - source_particle.J[2,2])*source_particle.Gamma[2]+(p.J[2,3] - source_particle.J[2,3])*source_particle.Gamma[3]
-        S3 = (p.J[3,1] - source_particle.J[3,1])*source_particle.Gamma[1]+(p.J[3,2] - source_particle.J[3,2])*source_particle.Gamma[2]+(p.J[3,3] - source_particle.J[3,3])*source_particle.Gamma[3]
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[4] - JS[4])*GS[2]+(JT[7] - JS[7])*GS[3]
+        S2 = (JT[2] - JS[2])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[8] - JS[8])*GS[3]
+        S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
 
-    zeta_sgm = (r/source_particle.sigma[1]) / source_particle.sigma[1]^3
+    zeta_sgm = (r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
-    add_SFS1(target_particle, zeta_sgm*S1)
-    add_SFS2(target_particle, zeta_sgm*S2)
-    add_SFS3(target_particle, zeta_sgm*S3)
+    get_SFS(target_particle)[1] += zeta_sgm*S1
+    get_SFS(target_particle)[2] += zeta_sgm*S2
+    get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
 """

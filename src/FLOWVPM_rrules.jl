@@ -30,7 +30,30 @@ function fmm.direct!(target_system::ParticleField{R,F,V,S,Tkernel,TUJ,Tintegrati
     # also, for the SFS self-interactions, I need target J matrices, source J matrices, source gamma vectors, source sigma vectors, and target S vectors.
 
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
-    xyz_target = cat(map(i->target_system.particles[i].X, target_index)...;dims=1)
+
+    if source_system.toggle_rbf
+        error("vorticity_direct not yet compatible with reversediff! Please set toggle_rbf to false.")
+    end
+
+    xyz_target = reshape(view(target_system.particles, 1:3, target_index),3*length(target_index))
+    J_target = reshape(view(target_system.particles, 16:24, target_index),9*length(target_index))
+    gamma_source = reshape(view(source_system.particles, 4:6, source_index),3*length(source_index))
+    xyz_source = reshape(view(source_system.particles, 1:3, source_index),3*length(source_index))
+    sigma_source = view(source_system.particles, 7, source_index)
+    kernel_source = source_system.kernel
+    U_target = reshape(view(target_system.particles, 10:12, target_index),3*length(target_index))
+    J_source = reshape(view(source_system.particles, 16:24, source_index),9*length(source_index))
+    S_target = reshape(view(target_system.particles, 38:40, target_index),3*length(target_index))
+
+    UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index),source_system.toggle_sfs)
+
+    for i=1:length(target_index)
+        target_system.particles[10:12,target_index[i]] .= UJS[3*(i-1)+1:3*(i-1)+3] # set new U
+        target_system.particles[16:24,target_index[i]] .= UJS[3*length(target_index) + 9*(i-1)+1:3*length(target_index) + 9*(i-1)+9] # set new J
+        target_system.particles[38:40,target_index[i]] .= UJS[12*length(target_index) + 3*(i-1)+1:12*length(target_index) + 3*(i-1)+3] # set new S
+    end
+
+    #=xyz_target = cat(map(i->target_system.particles[i].X, target_index)...;dims=1)
     J_target = cat(map(i->reshape(target_system.particles[i].J,9), target_index)...;dims=1)
     gamma_source = cat(map(i->source_system.particles[i].Gamma, source_index)...;dims=1)
     xyz_source = cat(map(i->source_system.particles[i].X, source_index)...;dims=1)
@@ -39,11 +62,8 @@ function fmm.direct!(target_system::ParticleField{R,F,V,S,Tkernel,TUJ,Tintegrati
     U_target = cat(map(i->target_system.particles[i].U, target_index)...;dims=1)
 
     J_source = cat(map(i->reshape(source_system.particles[i].J,9), source_index)...;dims=1)
-    S_target = cat(map(i->target_system.particles[i].S, target_index)...;dims=1)
+    S_target = cat(map(i->target_system.particles[i].S, target_index)...;dims=1)=#
 
-    if source_system.toggle_rbf
-        error("vorticity_direct not yet compatible with reversediff! Please set toggle_rbf to false.")
-    end
 
     #UJS = CatView(U_target, J_target, S_target)
     #UJS = [U_target...,J_target...,S_target...]
@@ -54,15 +74,15 @@ function fmm.direct!(target_system::ParticleField{R,F,V,S,Tkernel,TUJ,Tintegrati
     #@show typeof(xyz_target) typeof(J_target) typeof(gamma_source) typeof(xyz_source) typeof(sigma_source) typeof(kernel_source) typeof(U_target) typeof(J_source) typeof(S_target)
     #println("preprocessing tape entries: $(length(ReverseDiff.tape(target_system.particles[1].X[1])) - l)")
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
-    UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index),source_system.toggle_sfs)
+    #UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index),source_system.toggle_sfs)
     #println("direct! tape entries: $(length(ReverseDiff.tape(target_system.particles[1].X[1])) - l)")
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
     #@show size(UJS) size(J_target) size(U_target)
-    for i=1:length(target_index)
-        target_system.particles[target_index[i]].U .= UJS[3*(i-1)+1:3*(i-1)+3]
-        target_system.particles[target_index[i]].J .= reshape(UJS[3*length(target_index) + 9*(i-1)+1:3*length(target_index) + 9*(i-1)+9],(3,3))
-        target_system.particles[target_index[i]].S .= UJS[12*length(target_index) + 3*(i-1)+1:12*length(target_index) + 3*(i-1)+3]
-    end
+    #for i=1:length(target_index)
+    #    target_system.particles[target_index[i]].U .= UJS[3*(i-1)+1:3*(i-1)+3]
+    #    target_system.particles[target_index[i]].J .= reshape(UJS[3*length(target_index) + 9*(i-1)+1:3*length(target_index) + 9*(i-1)+9],(3,3))
+    #    target_system.particles[target_index[i]].S .= UJS[12*length(target_index) + 3*(i-1)+1:12*length(target_index) + 3*(i-1)+3]
+    #end
     #println("postprocessing tape entries: $(length(ReverseDiff.tape(target_system.particles[1].X[1])) - l)")
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
     #U_target .= UJS[1:3*length(target_index)]
@@ -306,15 +326,15 @@ function ChainRulesCore.rrule(::typeof(FLOWFMM.direct!), xyz_target, J_target, g
     return UJS, UJS_pullback
 
 end
-ReverseDiff.@grad_from_chainrules fmm.direct!(xyz_target::Vector{<:ReverseDiff.TrackedReal},
-                                                  J_target::Vector{<:ReverseDiff.TrackedReal},
-                                                  gamma_source::Vector{<:ReverseDiff.TrackedReal},
-                                                  xyz_source::Vector{<:ReverseDiff.TrackedReal},
-                                                  sigma_source::Vector{<:ReverseDiff.TrackedReal},
+ReverseDiff.@grad_from_chainrules fmm.direct!(xyz_target::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  J_target::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  gamma_source::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  xyz_source::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  sigma_source::AbstractArray{<:ReverseDiff.TrackedReal},
                                                   kernel_source,
-                                                  U_target::Vector{<:ReverseDiff.TrackedReal},
-                                                  J_source::Vector{<:ReverseDiff.TrackedReal},
-                                                  S_target::Vector{<:ReverseDiff.TrackedReal},
+                                                  U_target::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  J_source::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                  S_target::AbstractArray{<:ReverseDiff.TrackedReal},
                                                   target_index_count,
                                                   source_index_count,
                                                   toggle_sfs)
@@ -325,8 +345,34 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
         error("Time step pullback for non-transposed scheme not implemented yet! Please set transposed to true.")
     end
     # reformat inputs into vectors
-    np = pfield.np
-    M1 = cat(map(i->pfield.particles[i].M[:,1], 1:np)...;dims=1)
+    np = get_np(pfield)
+
+    M1 = reshape(view(pfield.particles,28:30,:),3*np) # first column of M
+    X = reshape(view(pfield.particles,1:3,:),3*np)
+    U = reshape(view(pfield.particles,10:12,:),3*np)
+    M2 = reshape(view(pfield.particles,31:33,:),3*np) # second column of M
+    M23 = view(pfield.particles,35,:) # 8th entry/entry [2,3] of M
+    J = reshape(view(pfield.particles,16:24,:),9*np)
+    sigma = view(pfield.particles,7,:)
+    Gamma = reshape(view(pfield.particles,4:6,:),3*np)
+    C = view(pfield.particles,37,:)
+    S = reshape(view(pfield.particles,38:40,:),3*np)
+
+    states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
+
+    # this next section could be done without the loop now
+    for i=1:pfield.np
+        iidx = 3*(i-1)
+        itr = 0
+        pfield.particles[28:30,i] .= states[itr + iidx + 1:itr + iidx + 3]; itr = 3*np # set first column of M
+        pfield.particles[1:3,i] .= states[itr + iidx + 1:itr + iidx + 3]; itr = 6*np # set new position
+        pfield.particles[31:33,i] .= states[itr + iidx + 1:itr + iidx + 3]; itr = 9*np # set second column of M
+        pfield.particles[35,i] = states[itr+i]; itr = 10*np # set M[2,3]
+        pfield.particles[4:6,i] .= states[itr + iidx + 1:itr + iidx + 3]; itr = 13*np # set new gamma
+        pfield.particles[7,i] = states[itr + i] # set new sigma
+    end
+
+    #=M1 = cat(map(i->pfield.particles[i].M[:,1], 1:np)...;dims=1)
     X = cat(map(i->pfield.particles[i].X, 1:np)...;dims=1)
     U = cat(map(i->pfield.particles[i].U, 1:np)...;dims=1)
     M2 = cat(map(i->pfield.particles[i].M[:,2], 1:np)...;dims=1)
@@ -335,12 +381,12 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
     sigma = cat(map(i->pfield.particles[i].sigma, 1:np)...;dims=1)
     Gamma = cat(map(i->pfield.particles[i].Gamma, 1:np)...;dims=1)
     C = cat(map(i->pfield.particles[i].C, 1:np)...;dims=1)
-    S = cat(map(i->pfield.particles[i].S, 1:np)...;dims=1)
+    S = cat(map(i->pfield.particles[i].S, 1:np)...;dims=1)=#
     
     # get output vector
-    states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
+    #states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
     # write output vector to output states
-    for i=1:pfield.np
+    #=for i=1:pfield.np
         iidx = 3*(i-1)
         itr = 0
         pfield.particles[i].M[:,1] .= states[itr + iidx + 1:itr + iidx + 3]; itr = 3*np
@@ -349,7 +395,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
         pfield.particles[i].M[2,3] = states[itr+i]; itr = 10*np
         pfield.particles[i].Gamma .= states[itr + iidx + 1:itr + iidx + 3]; itr = 13*np
         pfield.particles[i].sigma .= states[itr + i]
-    end
+    end=#
     return nothing
 
 end
@@ -498,16 +544,16 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
 
 end
 
-ReverseDiff.ReverseDiff.@grad_from_chainrules _update_particle_states(M1::Vector{<:ReverseDiff.TrackedReal},
-                                                                      X::Vector{<:ReverseDiff.TrackedReal},
-                                                                      U::Vector{<:ReverseDiff.TrackedReal},
-                                                                      Uinf::Vector{<:ReverseDiff.TrackedReal},
-                                                                      M2::Vector{<:ReverseDiff.TrackedReal},
-                                                                      M23::ReverseDiff.TrackedArray,
-                                                                      J::Vector{<:ReverseDiff.TrackedReal},
-                                                                      sigma::Vector{<:ReverseDiff.TrackedReal},
-                                                                      Gamma::Vector{<:ReverseDiff.TrackedReal},
-                                                                      C::Vector{<:ReverseDiff.TrackedReal},
-                                                                      S::Vector{<:ReverseDiff.TrackedReal},
-                                                                      MM::Vector{<:ReverseDiff.TrackedReal},
-                                                                      a,b,dt,f,g,zeta0)
+#=ReverseDiff.ReverseDiff.@grad_from_chainrules _update_particle_states(M1::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      X::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      U::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      Uinf::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      M2::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      M23::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      J::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      sigma::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      Gamma::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      C::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      S::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      MM::AbstractArray{<:ReverseDiff.TrackedReal},
+                                                                      a,b,dt,f,g,zeta0)=#
