@@ -386,7 +386,7 @@ function remove_particle(pfield::ParticleField, i::Int)
 
     if i != get_np(pfield)
         # Overwrite target particle with last particle in the field
-        pfield.particles[:, i] = pfield.particles[:, get_np(pfield)]
+        get_particle(pfield, i) = get_particle(pfield, get_np(pfield))
     end
 
     # Remove last particle in the field
