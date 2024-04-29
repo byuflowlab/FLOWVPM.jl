@@ -8,6 +8,10 @@ import Printf: @printf
 import FLOWVPM
 vpm = FLOWVPM
 
+this_is_a_test = true
+examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples", "vortexrings")
+include(joinpath(examples_path, "vortexrings.jl"))
+
 
 for (description, integration, UJ, nc) in (
                                             ("Euler time-integration + direct UJ", vpm.euler, vpm.UJ_direct, 0),
@@ -22,10 +26,6 @@ for (description, integration, UJ, nc) in (
 
         verbose1 = false
         verbose2 = true
-        global this_is_a_test = true
-
-        examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples", "vortexrings")
-        include(joinpath(examples_path, "vortexrings.jl"))
 
         # -------------- SIMULATION PARAMETERS -------------------------------------
         nsteps    = 100                         # Number of time steps

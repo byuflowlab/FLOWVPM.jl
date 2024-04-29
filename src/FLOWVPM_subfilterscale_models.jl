@@ -48,3 +48,78 @@ function Estr_fmm(pfield::ParticleField; reset_sfs=true, optargs...)
     UJ_fmm(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs,
                             transposed_sfs=pfield.transposed, optargs...)
 end
+
+"""
+    SFS model wrapper that hides the static particles from the model in order
+to avoid potential numerical instabilities encountered at solid surfaces.
+"""
+function E_nostaticparticles(pfield, args...; E=Estr_fmm, optargs...)
+
+    @assert pfield.np < pfield.maxparticles "Sorting of particles is needed"*
+        " but all pre-allocated memory is already in use"
+
+    org_np = pfield.np
+    iaux = pfield.np + 1
+
+    # Fetch auxiliary memory
+    paux = get_particle(pfield, iaux; emptyparticle=true)
+
+    # Iterate over particles
+    for pi in pfield.np:-1:1
+
+        # Fetch target particles
+        p = get_particle(pfield, pi)
+
+        # Case that we found a static particle
+        if p.static[1]
+
+            if pi==pfield.np
+                nothing
+
+            # Swap this particle with last particle
+            else
+
+                # Fetch last particle
+                pnp = get_particle(pfield, pfield.np)
+
+                # Store static particle in auxiliary memory
+                fmm.overwriteBody(pfield.bodies, iaux-1, pi-1)
+                paux.circulation .= p.circulation
+                paux.C .= p.C
+                paux.static .= p.static
+
+                # Move last particle into the static particle's memory
+                fmm.overwriteBody(pfield.bodies, pi-1, pfield.np-1)
+                p.circulation .= pnp.circulation
+                p.C .= pnp.C
+                p.static .= pnp.static
+
+                # Move static particle into the last particle's memory
+                fmm.overwriteBody(pfield.bodies, pfield.np-1, iaux-1)
+                pnp.circulation .= paux.circulation
+                pnp.C .= paux.C
+                pnp.static .= paux.static
+
+            end
+
+            # Move "end of array" pointer to hide the static particle
+            pfield.np -= 1
+        end
+    end
+
+    # Call SFS model without the static particles
+    E(pfield, args...; optargs...)
+
+    # Restore static particles back to the field
+    # pfield.np = org_np
+
+    # NOTE: Here we add the auxiliary memory to the field and then remove it.
+    #       This is to make sure that the memory is cleaned and avoid potential
+    #       bugs
+    pfield.np = org_np + 1
+    remove_particle(pfield, pfield.np)
+
+    # # Sort particles to restore the original indexing
+    # sort!(iterator(pfield), by = p->p.index[1])
+
+end
