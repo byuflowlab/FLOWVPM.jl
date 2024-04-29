@@ -415,7 +415,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         # Evaluate current vorticity
         cs.zeta(pfield)
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1)[4:6], digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_Gamma(pfield, 1), digits=8))\n"*
                 "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_particle(pfield, 1).Jexa[1:3], digits=8))")
         println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
 
@@ -460,16 +460,16 @@ function zeta_direct(sources, targets, zeta::Function)
     for Pi in targets
         for Pj in sources
 
-            dX1 = Pi[1] - Pj[1]
-            dX2 = Pi[2] - Pj[2]
-            dX3 = Pi[3] - Pj[3]
+            dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+            dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+            dX3 = get_X(Pi)[3] - get_X(Pj)[3]
             r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
 
-            zeta_sgm = 1/Pj[7]^3*zeta(r/Pj[7])
+            zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
 
-            Pi.Jexa[1] += Pj[4]*zeta_sgm
-            Pi.Jexa[2] += Pj[5]*zeta_sgm
-            Pi.Jexa[3] += Pj[6]*zeta_sgm
+            Pi.Jexa[1] += get_Gamma(Pj)[1]*zeta_sgm
+            Pi.Jexa[2] += get_Gamma(Pj)[2]*zeta_sgm
+            Pi.Jexa[3] += get_Gamma(Pj)[3]*zeta_sgm
 
         end
     end
