@@ -23,14 +23,15 @@ import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
-# import Base: getindex, setindex! # for compatibility with FLOWFMM
+# import Base: getindex, setindex! # for compatibility with FastMultipole
+using ReverseDiff
 using StaticArrays
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
 # const fmm = FLOWExaFMM
-import FLOWFMM
-const fmm = FLOWFMM
+import FastMultipole
+const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module

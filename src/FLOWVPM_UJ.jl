@@ -18,7 +18,7 @@ particle-to-particle interaction, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_direct(pfield::ParticleField; 
+function UJ_direct(pfield::ParticleField;
         rbf::Bool=false, sfs::Bool=false,
         reset=true, reset_sfs=false,
         optargs...
@@ -31,7 +31,7 @@ function UJ_direct(pfield::ParticleField;
     if reset_sfs
         _reset_particles_sfs(pfield)
     end
-    
+
     pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
     pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
@@ -66,7 +66,7 @@ function UJ_direct(sources, targets, g_dgdr::Function, zeta, toggle_sfs, transpo
             dX3 = get_X(Pi)[3] - get_X(Pj)[3]
             r2 = dX1*dX1 + dX2*dX2 + dX3*dX3
             if !iszero(r2)
-                r = sqrt(r2) 
+                r = sqrt(r2)
 
                 # Regularizing function and deriv
                 g_sgm, dg_sgmdr = g_dgdr(r/get_sigma(Pj)[])
@@ -130,13 +130,13 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; 
+function UJ_fmm(pfield::ParticleField;
         verbose::Bool=false, # unused
-        rbf::Bool=false, 
-        sfs::Bool=false, 
+        rbf::Bool=false,
+        sfs::Bool=false,
         sfs_type::Int=-1, # unused
         transposed_sfs::Bool=true, # unused
-        reset::Bool=true, 
+        reset::Bool=true,
         reset_sfs::Bool=false,
         sort::Bool=true
     )
@@ -158,7 +158,7 @@ function UJ_fmm(pfield::ParticleField;
     farfield = !rbf
     #@show typeof(pfield)
     # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, n_per_branch=fmm_options.ncrit, theta=fmm_options.theta, ndivisions=100, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
+    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, n_per_branch=fmm_options.ncrit, multipole_acceptance_criterion=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
 
     return nothing
 end

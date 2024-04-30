@@ -7,7 +7,7 @@
 
 # probably euler and rungekutta3
 
-# run_vpm! might be covered by ImplicitAD, but we'll see what's easier to implement. 
+# run_vpm! might be covered by ImplicitAD, but we'll see what's easier to implement.
 
 # idea: use CatViews if ReverseDiff is used so that the vectors in ParticleFields can be treated like one big array
 
@@ -157,9 +157,9 @@ function fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_sourc
                 S1 = (J_target_mat[1,1] - J_source[si][1,1])*gamma_source[si][1]+(J_target_mat[2,1] - J_source[si][2,1])*gamma_source[si][2]+(J_target_mat[3,1] - J_source[si][3,1])*gamma_source[si][3]
                 S2 = (J_target_mat[1,2] - J_source[si][1,2])*gamma_source[si][1]+(J_target_mat[2,2] - J_source[si][2,2])*gamma_source[si][2]+(J_target_mat[3,2] - J_source[si][3,2])*gamma_source[si][3]
                 S3 = (J_target_mat[1,3] - J_source[si][1,3])*gamma_source[si][1]+(J_target_mat[2,3] - J_source[si][2,3])*gamma_source[si][2]+(J_target_mat[3,3] - J_source[si][3,3])*gamma_source[si][3]
-            
+
                 zeta_sgm = sqrt(r2)/sigma^4
-            
+
                 # Add ζ_σ (Γq⋅∇)(Up - Uq)
                 S_target[tidx+1] += zeta_sgm*S1
                 S_target[tidx+2] += zeta_sgm*S2
@@ -174,13 +174,13 @@ end
 
 using ForwardDiff # for handling the second derivative of the kernel function
 
-function ChainRulesCore.rrule(::typeof(FLOWFMM.direct!), xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target,target_index_count,source_index_count,toggle_sfs)
+function ChainRulesCore.rrule(::typeof(FastMultipole.direct!), xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target,target_index_count,source_index_count,toggle_sfs)
 
     UJS = fmm.direct!(xyz_target, copy(J_target), gamma_source, xyz_source, sigma_source, kernel_source, copy(U_target), J_source, copy(S_target) ,target_index_count,source_index_count,toggle_sfs)
 
     function UJS_pullback(UJSbar) # three sets of cotagents mashed together. Not pretty, but doing them separately is really inefficient. #note: S part currently disabled
         # split UJSbar into parts (using views to avoid allocations) TODO: figure out a nice scheme to pack and unpack these values
-        
+
         #Ū = view(UJSbar,1:3*target_index_count)
         #J̄ = view(UJSbar,3*target_index_count+1:12*target_index_count)
         Ū = UJSbar[1:3*target_index_count] # inefficient allocations, but avoids some errors for now. It might be breaking because of tests that run in ChainRulesTestUtils?
@@ -235,7 +235,7 @@ function ChainRulesCore.rrule(::typeof(FLOWFMM.direct!), xyz_target, J_target, g
                         sigma_source_bar[j] += c4*dg/(rij^2*sigma_source[j]^2)*ϵ(a,dx,gamma_source[jidx+1:jidx+3])*Ū[iidx+a] # passes tests... but I think it's just going to zero.
                         gamma_source_bar[jidx+a] += c4*g/rij^3*ϵ(a,dx,Ū[iidx+1:iidx+3]) # actually passes tests.
                     end
-                    
+
                 end
             end
         end
@@ -382,7 +382,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
     Gamma = cat(map(i->pfield.particles[i].Gamma, 1:np)...;dims=1)
     C = cat(map(i->pfield.particles[i].C, 1:np)...;dims=1)
     S = cat(map(i->pfield.particles[i].S, 1:np)...;dims=1)=#
-    
+
     # get output vector
     #states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
     # write output vector to output states
@@ -435,7 +435,7 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
 
     states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
 
-    # Properly documenting the mathematics of this pullback requires markdown or Latex (due to a profusion of super/subscripts, special symbols, and implied summations). 
+    # Properly documenting the mathematics of this pullback requires markdown or Latex (due to a profusion of super/subscripts, special symbols, and implied summations).
     function state_pullback(state_bar)
         A = (f+g)/(1+3*f)
         B = f/(1+3*f)
@@ -445,7 +445,7 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
         # unpack state_bar
         # state_bar contents: M1 (3*np) x (3*np) M2 (3*np) M23 (np) Gamma (3*np) sigma (np)
         np = length(sigma)
-        # views fail in 
+        # views fail in
         #M1outbar = view(state_bar,1:3*np)
         #xoutbar = view(state_bar,3*np+1:6*np)
         #M2outbar = view(state_bar,6*np+1:9*np)
