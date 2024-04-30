@@ -1,5 +1,6 @@
 Manifest.toml
 .ipynb_checkpoints
 *.mem
+*.swp
 temps
 fmm.so
