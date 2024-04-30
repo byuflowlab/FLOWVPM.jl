@@ -386,8 +386,8 @@ function calc_elliptic_radius(outRm, outRp, Z, pfield, nrings, intervals;
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            weightx = dot(P[4:6], unity)
-            weighty = dot(P[4:6], unitx)
+            weightx = dot(vpm.get_Gamma(P), unity)
+            weighty = dot(vpm.get_Gamma(P), unitx)
 
             if vpm.get_X(P)[1]-Z[ri][1] < 0
                 outRm[ri][1] -= abs(weightx*vpm.get_X(P)[1])
@@ -555,7 +555,7 @@ function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
             ws[1, pi, ri] = vpm.get_W1(P)
             ws[2, pi, ri] = vpm.get_W2(P)
             ws[3, pi, ri] = vpm.get_W3(P)
-            Xs[:, pi, ri] .= P[1:3]
+            Xs[:, pi, ri] .= vpm.get_X(P)
         end
     end
 
