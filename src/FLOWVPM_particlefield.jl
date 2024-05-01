@@ -55,8 +55,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-#mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterScale, Tkernel, TUJ, Tintegration}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -73,11 +72,11 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
     UJ::TUJ                                     # Particle-to-particle calculation
 
     # Optional inputs
-    Uinf::Function                              # Uniform freestream function Uinf(t)
+    Uinf::TUinf # Uniform freestream function Uinf(t)
     SFS::S                                      # Subfilter-scale contributions scheme
     integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
-    relaxation::Relaxation{R}                   # Relaxation scheme # should not have its type tied to other floating-point types
+    relaxation::TR                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
@@ -86,51 +85,21 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, S<:SubFilterSc
     # switches for dispatch in the FMM
     toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
-
-    # ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(
-    #                             maxparticles,
-    #                             particles, formulation, viscous;
-    #                             np=0, nt=0, t=R(0.0),
-    #                             kernel::Tkernel=kernel_default,
-    #                             UJ::TUJ=UJ_fmm,
-    #                             Uinf::Function=Uinf_default,
-    #                             SFS=SFS_default,
-    #                             integration::Tintegration=rungekutta3,
-    #                             transposed=true,
-    #                             relaxation=relaxation_default,
-    #                             fmm=FMM(),
-    #                             M=zeros(R, 4),
-    #                             toggle_rbf=false, toggle_sfs=false
-    #                      ) where {R, F, V, S, Tkernel, TUJ, Tintegration} = new(
-    #                             maxparticles,
-    #                             particles, formulation, viscous,
-    #                             np, nt, t,
-    #                             kernel,
-    #                             UJ,
-    #                             Uinf,
-    #                             SFS,
-    #                             integration,
-    #                             transposed,
-    #                             relaxation,
-    #                             fmm,
-    #                             M,
-    #                             toggle_rbf, toggle_sfs
-    #                       )
 end
 
 function ParticleField(maxparticles::Int;R=FLOAT_TYPE,
-                                    formulation::F=formulation_default,
-                                    viscous::V=Inviscid(), 
-                                    np=0, nt=0, t=R(0.0),
-                                    transposed=true,
-                                    fmm=FMM(),
-                                    M=zeros(R, 4),
-                                    toggle_rbf=false, toggle_sfs=false,    
-                                    SFS::S=SFS_default, kernel::Tkernel=kernel_default,
-                                    UJ::TUJ=UJ_fmm, Uinf::Function=Uinf_default,
-                                    relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)), # default relaxation has no type input, which is a problem for AD.
-                                    integration::Tintegration=rungekutta3,
-                            ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration}
+        formulation::F=formulation_default,
+        viscous::V=Inviscid(),
+        np=0, nt=0, t=R(0.0),
+        transposed=true,
+        fmm=FMM(),
+        M=zeros(R, 4),
+        toggle_rbf=false, toggle_sfs=false,
+        SFS::S=SFS_default, kernel::Tkernel=kernel_default,
+        UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
+        relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
+        integration::Tintegration=rungekutta3,
+    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
     # particles = [zero(Particle{R}) for _ in 1:maxparticles]
@@ -141,7 +110,7 @@ function ParticleField(maxparticles::Int;R=FLOAT_TYPE,
     #     P.index[1] = i
     # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm,
@@ -365,7 +334,7 @@ function _get_particleiterator(pfield::ParticleField; start_i::Int=1, end_i::Int
         i_particles = start_i : last_i
     end
 
-    return eachcol(view(pfield.particles, :, i_particles))
+    return (view(pfield.particles, :, i) for i in i_particles)
 end
 
 """

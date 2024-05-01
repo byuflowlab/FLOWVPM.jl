@@ -25,7 +25,8 @@ using CatViews
 ϵ(a,x::TM) where {TM <: AbstractArray} = (a == 1) ? (x[2,3] - x[3,2]) : (a == 2) ? (x[3,1]-x[1,3]) : (a == 3) ? (x[1,2]-x[2,1]) : error("attempted to evaluate Levi-Civita symbol at out-of-bounds index $(a)!")
 ϵ(a,b::Number, c::Number) = (a == b || b == c || c == a) ? 0 : (mod(b-a,3) == 1 ? 1 : -1) # no error checks in this implementation, since that would significantly increase the cost of it
 
-function fmm.direct!(target_system::ParticleField{R,F,V,S,Tkernel,TUJ,Tintegration}, target_index, source_system::ParticleField{R,F,V,S,Tkernel,TUJ,Tintegration}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,S,Tkernel,TUJ,Tintegration}
+# @eric what if target_system is not the same as source_system- would that break anything with ReverseDiff?
+function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}
     # need: target xyz vectors, target J matrices, source gamma vectors, source xyz vectors, source sigma vectors, source kernel, target U vectors
     # also, for the SFS self-interactions, I need target J matrices, source J matrices, source gamma vectors, source sigma vectors, and target S vectors.
 
@@ -339,7 +340,7 @@ ReverseDiff.@grad_from_chainrules fmm.direct!(xyz_target::AbstractArray{<:Revers
                                                   source_index_count,
                                                   toggle_sfs)
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
 
     if pfield.transposed == false
         error("Time step pullback for non-transposed scheme not implemented yet! Please set transposed to true.")

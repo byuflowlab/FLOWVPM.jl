@@ -11,7 +11,7 @@
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
                                 dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
 
     # Evaluate UJ, SFS, and C
@@ -81,7 +81,7 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
                               dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
@@ -92,11 +92,14 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
         custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
     end
     pfield.SFS(pfield, AfterUJ())
-    
-    # Calculate freestream
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
 
-    MM::Array{<:Real, 1} = pfield.M
+    # Calculate freestream
+    Uinf = pfield.Uinf(pfield.t) # can I get rid of this annotation without breaking ReverseDiff? @Eric
+    # Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+
+    MM = pfield.M # @Eric
+    # MM::Array{<:Real, 1} = pfield.M
+
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
 
@@ -106,7 +109,12 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
         C::R = get_C(p)[1]
 
         # Update position
-        get_X(p) .+= dt*(get_U(p) .+ Uinf)
+        X = get_X(p)
+        U = get_U(p)
+        for i in 1:3
+            X[i] += dt*(U[i] + Uinf[i])
+        end
+        # get_X(p) .+= dt*(get_U(p) .+ Uinf)
 
         # Store stretching S under MM[1:3]
         J = get_J(p)
@@ -129,7 +137,12 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
         MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
 
         # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ - Cϵ)
-        G .+= dt * (MM[1:3] - 3*MM[4]*G - C*get_SFS(p)*get_sigma(p)[]^3/zeta0)
+        SFS = get_SFS(p)
+        sigma3 = get_sigma(p)[]^3
+        for i in 1:3
+            G[i] += dt * (MM[i] - 3*MM[4]*G[i] - C*SFS[i]*sigma3/zeta0)
+        end
+        # G .+= dt * (MM[1:3] - 3*MM[4]*G - C*get_SFS(p)*get_sigma(p)[]^3/zeta0)
 
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
         get_sigma(p)[] -= dt * ( get_sigma(p)[] * MM[4] )
@@ -143,7 +156,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterSca
 
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
-    
+
     return nothing
 end
 
@@ -162,13 +175,13 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
                             dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
 
     # Calculate freestream
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    Uinf = pfield.Uinf(pfield.t)
 
     zeta0::R = pfield.kernel.zeta(0)
 
@@ -270,16 +283,18 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
                      dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R2, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
     #                      qsmg <=> get_M(p)[8], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
-    Uinf::Array{R, 1} = R.(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
+    # Uinf::Array{R, 1} = R.(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
+    Uinf = SVector{3,R}(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
 
-    MM::Array{R, 1} = pfield.M # eltype(pfield.M) = R
+    MM = pfield.M # eltype(pfield.M) = R
+    # MM::Array{R, 1} = pfield.M # eltype(pfield.M) = R
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g # formulation floating-point type may end up as Float64 even if AD is used. (double check this)
     #zeta0::R = pfield.kernel.zeta(0)
     zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
@@ -334,7 +349,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
                 MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
                 MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
             end
-            
+
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
             MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
@@ -366,8 +381,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 
     end
 
-    # something here breaks ForwardDiff # will need to re-enable and make sure this works now.
-    #=
+    # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
@@ -386,7 +400,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
             pfield.relaxation(p)
         end
     end
-    =#
+
     #println("tape entries after time step: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
     #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
     #println("")
@@ -394,10 +408,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFil
 end
 
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:SubFilterScale, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     #error("needs to be updated to match new memory format.")
     for p in iterator(pfield)
-            
+
         C::R = get_C(p)[1]
 
             # Low-storage RK step
@@ -424,7 +438,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
                 MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
                 MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
             end
-            
+
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
             MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
             MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
@@ -446,8 +460,8 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 
             # Update cross-sectional area
             get_sigma(p)[] += b*M[8]
-        
+
     end
     return nothing
-        
+
 end

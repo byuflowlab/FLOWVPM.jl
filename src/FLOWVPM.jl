@@ -127,7 +127,7 @@ const standard_SFSs = (
                         )
 
 # ------------ Other default functions
-const nofreestream(t) = zeros(3)
+const nofreestream(t) = SVector{3,Float64}(0,0,0)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
