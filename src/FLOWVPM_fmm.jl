@@ -67,13 +67,14 @@ end
 
 function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
     if source_system.toggle_rbf
+
         vorticity_direct(target_system, target_index, source_system, source_index)
     else
         r = zero(eltype(source_system))
-        # for target_particle in eachcol(view(target_system.particles, :, target_index))
+
         for j_target in target_index
-            # target_x, target_y, target_z = get_X(target_particle)
             target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
+
             for source_particle in eachcol(view(source_system.particles, :, source_index))
                 gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
                 source_x, source_y, source_z = get_X(source_particle)
@@ -136,7 +137,6 @@ function fmm.direct!(target_system, target_index, derivatives_switch::fmm.Deriva
                 # include self-induced contribution to SFS
                 if source_system.toggle_sfs
                     Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
-                    # Estr_direct(target_particle, source_particle, r, source_system.kernel.zeta, source_system.transposed)
                 end
             end
         end

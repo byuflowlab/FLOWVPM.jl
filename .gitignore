@@ -4,3 +4,5 @@ Manifest.toml
 *.swp
 temps
 fmm.so
+*.xmf
+*.h5
