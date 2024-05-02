@@ -58,7 +58,7 @@ end
 end
 
 @inline function Estr_direct(target_system::ParticleField, j_target, source_particle, r, zeta, transposed)
-    Estr_direct(target_system[j_target, fmm.BODY], source_particle, r, source_system.kernel.zeta, source_system.transposed)
+    Estr_direct(target_system[j_target, fmm.BODY], source_particle, r, zeta, transposed)
 end
 
 @inline function Estr_direct(target_system, j_target, source_particle, r, zeta, transposed)
@@ -142,4 +142,3 @@ function fmm.direct!(target_system, target_index, derivatives_switch::fmm.Deriva
         end
     end
 end
-

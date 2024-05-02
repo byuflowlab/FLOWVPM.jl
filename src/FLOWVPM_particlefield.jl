@@ -216,11 +216,11 @@ get_vorticity(P) = view(P, 13:15)
 get_J(P) = view(P, 16:24)
 get_PSE(P) = view(P, 25:27)
 get_M(P) = view(P, 28:36)
-get_C(P) = view(P, 37) # C is a scalar, not a 3-element vector.
-get_SFS(P) = view(P, 38:40)
-get_static(P) = view(P, 41)
+get_C(P) = view(P, 37:39)
+get_SFS(P) = view(P, 40:42)
+get_static(P) = view(P, 43)
 
-is_static(P) = Bool(P[41])
+is_static(P) = Bool(P[43])
 
 # This extra function computes the vorticity using the cross-product
 get_W(P) = (get_W1(P), get_W2(P), get_W3(P))

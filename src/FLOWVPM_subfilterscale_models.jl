@@ -9,7 +9,6 @@
   * Created   : Sep 2021
 =###############################################################################
 
-
 """
     Model of vortex-stretching SFS contributions evaluated with direct
 particle-to-particle interactions. See 20210901 notebook for derivation.
@@ -32,7 +31,7 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
         S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
 
-    zeta_sgm = (r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
+    zeta_sgm = zeta(r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
     get_SFS(target_particle)[1] += zeta_sgm*S1

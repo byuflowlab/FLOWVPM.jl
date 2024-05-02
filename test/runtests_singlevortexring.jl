@@ -18,13 +18,17 @@ Nphi = 100
 sgm0 = 2*pi*R/100/2*(1+overlap)
 nu = 1.48e-5
 
-for (description, integration, UJ, nc, formulation, viscous) in (
-                                            ("Euler time-integration + direct UJ", vpm.euler, vpm.UJ_direct, 0, vpm.cVPM, vpm.Inviscid()),
-                                            ("Runge-Kutta time-integration + direct UJ", vpm.rungekutta3, vpm.UJ_direct, 0, vpm.cVPM, vpm.Inviscid()),
-                                            ("FMM UJ", vpm.euler, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid()),
-                                            ("Full inviscid scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid()),
-                                            ("Reformulation", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.rVPM, vpm.Inviscid()),
-                                            ("Viscous scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.CoreSpreading(nu, sgm0, vpm.zeta_fmm)),
+for (description, integration, UJ, nc, formulation, viscous, SFS, steps) in (
+                                            ("Euler time-integration + direct UJ", vpm.euler, vpm.UJ_direct, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, 100),
+                                            ("Runge-Kutta time-integration + direct UJ", vpm.rungekutta3, vpm.UJ_direct, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, 100),
+                                            ("FMM UJ", vpm.euler, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, 100),
+                                            ("Full inviscid scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, 100),
+                                            ("Reformulation", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.rVPM, vpm.Inviscid(), vpm.noSFS, 100),
+                                            ("Viscous scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.CoreSpreading(nu, sgm0, vpm.zeta_fmm), vpm.noSFS, 100),
+                                            ("Constant SFS + Euler", vpm.euler, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.ConstantSFS(vpm.Estr_fmm), 10000),
+                                            ("Constant SFS + RK3", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.ConstantSFS(vpm.Estr_fmm), 100),
+                                            ("Dynamic SFS + Euler", vpm.euler, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), 10000),
+                                            ("Dynamic SFS + RK3", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), 100),
                                           )
 
     println("\n"^2*description*" test: Single vortex ring...")
@@ -35,7 +39,7 @@ for (description, integration, UJ, nc, formulation, viscous) in (
         verbose2 = true
 
         # -------------- SIMULATION PARAMETERS -------------------------------------
-        nsteps    = 100                         # Number of time steps
+        nsteps    = steps                         # Number of time steps
         Rtot      = 2.0                         # (m) run simulation for equivalent
                                                 #     time to this many radii
         nrings    = 1                           # Number of rings
@@ -58,7 +62,7 @@ for (description, integration, UJ, nc, formulation, viscous) in (
         # -------------- SOLVER SETTINGS -------------------------------------------
         solver = (
             formulation   = formulation,
-            SFS           = vpm.noSFS,
+            SFS           = SFS,
             relaxation    = vpm.pedrizzetti,
             kernel        = viscous == vpm.Inviscid() ? vpm.winckelmans : vpm.gaussianerf,
             viscous       = viscous,

@@ -37,7 +37,7 @@ this_sfs_model(pfield::ParticleField, afterUJ::AfterUJ)
 
 (See implementation of `ConstantSFS` as an example.)
 
-NOTE1: The UJ_fmm requires <:SubFilterScale objects to contain a `sfs.model` field, 
+NOTE1: The UJ_fmm requires <:SubFilterScale objects to contain a `sfs.model` field,
 which is a function that computes the SFS contribution to the stretching term.
 
 NOTE2: Any control strategy is implemented as a function that returns `true`
@@ -60,7 +60,7 @@ end
 ################################################################################
 # NO SFS SCHEME
 ################################################################################
-struct NoSFS{R,TM} <: SubFilterScale{R} 
+struct NoSFS{R,TM} <: SubFilterScale{R}
     model::TM
 end
 
@@ -170,7 +170,7 @@ struct DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings} <: SubFilterScale{R}
     minC::R                         # Minimum value for model coefficient
     maxC::R                         # Maximum value for model coefficient
 
-    function DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ;
+    function DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ=dynamicprocedure_pseudo3level_beforeUJ, procedure_afterUJ=dynamicprocedure_pseudo3level_afterUJ;
                             controls=(), clippings=(),
                             alpha=0.667, rlxf=0.005, minC=0, maxC=1) where {R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}
 
@@ -180,10 +180,10 @@ struct DynamicSFS{R,Tmodel,Tpb,Tpa,Tcontrols,Tclippings} <: SubFilterScale{R}
     end
 end
 
-DynamicSFS(model::Tmodel, procedure_beforeUJ::Tpb, procedure_afterUJ::Tpa; 
+DynamicSFS(model::Tmodel, procedure_beforeUJ::Tpb=dynamicprocedure_pseudo3level_beforeUJ, procedure_afterUJ::Tpa=dynamicprocedure_pseudo3level_afterUJ;
         controls::Tcontrols=(), clippings::Tclippings=(), optargs...
-    ) where {Tmodel,Tpb,Tpa,Tcontrols,Tclippings} = 
-        DynamicSFS{FLOAT_TYPE,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ; 
+    ) where {Tmodel,Tpb,Tpa,Tcontrols,Tclippings} =
+        DynamicSFS{FLOAT_TYPE,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ;
             controls=controls, clippings=clippings, optargs...)
 
 function (SFS::DynamicSFS)(pfield, ::BeforeUJ; a=1, b=1)
@@ -194,7 +194,7 @@ function (SFS::DynamicSFS)(pfield, ::BeforeUJ; a=1, b=1)
         # Calculate model coefficient through dynamic procedure
         # NOTE: The procedure also calculates UJ and SFS model
         SFS.procedure_beforeUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
-        
+
     end
 end
 
@@ -202,7 +202,7 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
     # Recognize Euler step or Runge-Kutta's first substep
     if a==1 || a==0
-        
+
         # finish dynamic procedure
         SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
 
@@ -280,10 +280,10 @@ function control_magnitude(P, pfield)
         # error("Logic error: It was not possible to estimate time step.")
         nothing
     elseif get_C(P)[1] != 0
-        deltat::R = pfield.t / pfield.nt
+        deltat::Real = pfield.t / pfield.nt
 
-        f::R = pfield.formulation.f
-        zeta0::R = pfield.kernel.zeta(0)
+        f::Real = pfield.formulation.f
+        zeta0::Real = pfield.kernel.zeta(0)
 
         aux = get_SFS1(P)*get_Gamma(P)[1] + get_SFS2(P)*get_Gamma(P)[2] + get_SFS3(P)*get_Gamma(P)[3]
         aux /= get_Gamma(P)[1]*get_Gamma(P)[1] + get_Gamma(P)[2]*get_Gamma(P)[2] + get_Gamma(P)[3]*get_Gamma(P)[3]
@@ -373,7 +373,7 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # Empty temporal memory
     zeroR::R = zero(R)
-    for p in iterator(pfield); p.M .= zeroR; end;
+    for p in iterator(pfield); set_M(p,zeroR); end;
 
     # Calculate stretching and SFS
     for p in iterator(pfield)
@@ -463,6 +463,9 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # Initialize denominator to something other than zero
         if get_C(p)[3] == 0
             get_C(p)[3] = deno
+            if get_C(p)[3] == 0
+                get_C(p)[3] = eps()
+            end
         end
 
         # Lagrangian average of numerator and denominator
@@ -496,12 +499,21 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         # Store model coefficient
         get_C(p)[1] = get_C(p)[2] / get_C(p)[3]
 
+        if isnan(get_C(p)[1])
+            println("nume: ", nume)
+            println("deno: ", deno)
+            println("M: ", get_M(p))
+            println("Gamma: ", get_Gamma(p))
+            println("J: ", get_J(p))
+            error("NaN in dynamicprocedure_pseudo3level_afterUJ")
+        end
+
         # Force the coefficient to be positive
         get_C(p)[1] *= sign(get_C(p)[1])^force_positive
     end
 
     # Flush temporal memory
-    for p in iterator(pfield); p.M .= zero(R); end;
+    for p in iterator(pfield); set_M(p,zero(R)); end;
 
     return nothing
 end
