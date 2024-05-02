@@ -21,7 +21,9 @@ nu = 1.48e-5
 
 for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in (
                                             ("Vortex stretching + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
-                                            ("Vortex stretching + Dynamic SFS + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), true),
+                                            ("Reformulated VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.noSFS, true),
+                                            ("Dynamic SFS: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), true),
+                                            ("Viscosity: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.CoreSpreading(nu, sgm0, vpm.zeta_fmm), vpm.DynamicSFS(vpm.Estr_fmm), false),
                                             # ("Vortex stretching + Classic VPM test: Thick Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                           )
 
@@ -34,7 +36,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
 
         # -------------- SIMULATION PARAMETERS -------------------------------------
         nsteps    = 350                         # Number of time steps
-        Rtot      = nsteps/100                  # (m) run simulation for equivalent
+        Rtot      = nsteps/1000                  # (m) run simulation for equivalent
                                                 #     time to this many radii
         nrings    = 2                           # Number of rings
         dZ        = 0.7906                      # (m) spacing between rings
@@ -60,7 +62,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
             formulation   = formulation,
             SFS           = SFS,
             relaxation    = vpm.correctedpedrizzetti,
-            kernel        = vpm.winckelmans,
+            kernel        = viscous == vpm.Inviscid() ? vpm.winckelmans : vpm.gaussianerf,
             viscous       = viscous,
             transposed    = true,
             integration   = integration,
@@ -128,11 +130,11 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
         # Solve analytic system of ODEs
         Zs = [Os[ri][3] for ri in 1:nrings]
 
-        if solver[:kernel] == vpm.winckelmans
+        # if solver[:kernel] == vpm.winckelmans
             Deltas = 0*ones(nrings)
-        else
-            error("Unknown kernel Delta!")
-        end
+        # else
+        #     error("Unknown kernel Delta!")
+        # end
 
         println("\n"*"\t"^1*"Computing analytic solution...")
 
