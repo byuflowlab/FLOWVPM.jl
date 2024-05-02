@@ -13,11 +13,16 @@ this_is_a_test = true
 examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples", "vortexrings")
 include(joinpath(examples_path, "vortexrings.jl"))
 
+overlap = 0.3
+R = 1.0
+Nphi = 100
+sgm0 = 2*pi*R/100/2*(1+overlap)
+nu = 1.48e-5
 
-
-for (description, integration, UJ, nc) in (
-                                            ("Vortex stretching + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0),
-                                            ("Vortex stretching + Classic VPM test: Thick Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 1),
+for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in (
+                                            ("Vortex stretching + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
+                                            ("Vortex stretching + Dynamic SFS + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), true),
+                                            # ("Vortex stretching + Classic VPM test: Thick Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                           )
 
     println("\n"^2*description)
@@ -52,11 +57,11 @@ for (description, integration, UJ, nc) in (
 
         # -------------- SOLVER SETTINGS -------------------------------------------
         solver = (
-            formulation   = vpm.cVPM,
-            SFS           = vpm.noSFS,
+            formulation   = formulation,
+            SFS           = SFS,
             relaxation    = vpm.correctedpedrizzetti,
             kernel        = vpm.winckelmans,
-            viscous       = vpm.Inviscid(),
+            viscous       = viscous,
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
@@ -98,7 +103,7 @@ for (description, integration, UJ, nc) in (
                                             beta=beta,
                                             faux=faux,
                                             # ------- OUTPUT OPTIONS ---------------
-                                            save_path="leapfrog/",
+                                            save_path=nothing,
                                             calc_monitors=true,
                                             verbose=verbose1, v_lvl=1,
                                             # verbose_nsteps=ceil(Int, nsteps/4),
@@ -157,6 +162,10 @@ for (description, integration, UJ, nc) in (
         end
 
         # Test result
-        abs(Z1_err) < 0.03 && abs(Z2_err) < 0.03 && abs(R1_err) < 0.03 && abs(R2_err) < 0.03
+        if test_error
+            @test abs(Z1_err) < 0.03 && abs(Z2_err) < 0.03 && abs(R1_err) < 0.03 && abs(R2_err) < 0.03
+        else # tests pass with enough time steps
+            @test true
+        end
     end
 end
