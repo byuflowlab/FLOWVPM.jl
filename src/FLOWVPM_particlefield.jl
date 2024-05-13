@@ -87,7 +87,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 end
 
-function ParticleField(maxparticles::Int;R=FLOAT_TYPE,
+function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
         np=0, nt=0, t=R(0.0),
