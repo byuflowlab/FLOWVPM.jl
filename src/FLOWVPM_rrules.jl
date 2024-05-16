@@ -44,7 +44,7 @@ function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tint
     kernel_source = source_system.kernel
     U_target = reshape(view(target_system.particles, 10:12, target_index),3*length(target_index))
     J_source = reshape(view(source_system.particles, 16:24, source_index),9*length(source_index))
-    S_target = reshape(view(target_system.particles, 38:40, target_index),3*length(target_index))
+    S_target = reshape(view(target_system.particles, 40:42, target_index),3*length(target_index))
 
     UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index),source_system.toggle_sfs)
 
@@ -356,8 +356,8 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
     J = reshape(view(pfield.particles,16:24,:),9*np)
     sigma = view(pfield.particles,7,:)
     Gamma = reshape(view(pfield.particles,4:6,:),3*np)
-    C = view(pfield.particles,37,:)
-    S = reshape(view(pfield.particles,38:40,:),3*np)
+    C = view(pfield.particles,37,:) # the second and third C fields aren't used here
+    S = reshape(view(pfield.particles,40:42,:),3*np)
 
     states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
 
