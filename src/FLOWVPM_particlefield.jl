@@ -55,7 +55,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -76,7 +76,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     SFS::S                                      # Subfilter-scale contributions scheme
     integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
-    relaxation::TR                              # Relaxation scheme
+    relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
 
     # Internal memory for computation
