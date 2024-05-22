@@ -193,6 +193,9 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
     # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
     h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_x"] = [get_J(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_y"] = [get_J(P)[i] for i in 4:6, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_z"] = [get_J(P)[i] for i in 7:9, P in iterate(self; include_static=true)]
     h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
 
     if isLES(self)
@@ -264,6 +267,27 @@ function save(self::ParticleField, file_name::String; path::String="",
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
                             " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":velocity</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient x
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient x\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_x</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient y
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient y\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_y</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient z
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient z\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_z</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: vorticity
