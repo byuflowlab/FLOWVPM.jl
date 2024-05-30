@@ -152,6 +152,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
         get_sigma(p)[] -= dt * ( get_sigma(p)[] * MM[4] )
 
         # Relaxation: Align vectorial circulation to local vorticity
+
         if relax
             pfield.relaxation(p)
         end

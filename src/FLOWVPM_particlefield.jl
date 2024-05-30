@@ -49,7 +49,7 @@ mutable struct FMM
   theta::FLOAT_TYPE                  # Neighborhood criterion
   nonzero_sigma::Bool
 
-  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=false) = new(p, ncrit, theta, nonzero_sigma)
+  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true) = new(p, ncrit, theta, nonzero_sigma)
 end
 
 ################################################################################
