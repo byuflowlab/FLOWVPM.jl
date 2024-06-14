@@ -237,7 +237,7 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            outZ[ri] .+= P.X
+            outZ[ri] .+= vpm.get_X(P)
 
         end
         outZ[ri] ./= Np
@@ -248,8 +248,8 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
 
             P = vpm.get_particle(pfield, pi)
 
-            outR[ri] += sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
-            outsgm[ri] += P.sigma[1]
+            outR[ri] += sqrt((vpm.get_X(P)[1] - outZ[ri][1])^2 + (vpm.get_X(P)[2] - outZ[ri][2])^2 + (vpm.get_X(P)[3] - outZ[ri][3])^2)
+            outsgm[ri] += P[7]
 
         end
         outR[ri] /= Np
@@ -276,11 +276,11 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.Gamma)
+            normGamma = norm(vpm.get_Gamma(P))
             magGammatot += normGamma
 
             for i in 1:3
-                outZ[ri][i] += normGamma*P.X[i]
+                outZ[ri][i] += normGamma*vpm.get_X(P)[i]
             end
 
         end
@@ -291,10 +291,10 @@ function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            normGamma = norm(P.Gamma)
+            normGamma = norm(vpm.get_Gamma(P))
 
-            outR[ri] += normGamma*sqrt((P.X[1] - outZ[ri][1])^2 + (P.X[2] - outZ[ri][2])^2 + (P.X[3] - outZ[ri][3])^2)
-            outsgm[ri] += normGamma*P.sigma[1]
+            outR[ri] += normGamma*sqrt((vpm.get_X(P)[1] - outZ[ri][1])^2 + (vpm.get_X(P)[2] - outZ[ri][2])^2 + (vpm.get_X(P)[3] - outZ[ri][3])^2)
+            outsgm[ri] += normGamma*vpm.get_sigma(P)[]
 
         end
         outR[ri] /= magGammatot
@@ -325,7 +325,7 @@ function calc_rings_weightedW2!(outZ, outR, outsgm, pfield, nrings, intervals; z
             magW2tot += W2
 
             for i in 1:3
-                outZ[ri][i] += W2*P.X[i]
+                outZ[ri][i] += W2*vpm.get_X(P)[i]
             end
 
         end
@@ -341,12 +341,12 @@ function calc_rings_weightedW2!(outZ, outR, outsgm, pfield, nrings, intervals; z
             P = vpm.get_particle(pfield, pi)
 
             r = 0
-            for i in 1:3; r += (i!=zdir)*(P.X[i] - outZ[ri][i])^2; end;
+            for i in 1:3; r += (i!=zdir)*(vpm.get_X(P)[i] - outZ[ri][i])^2; end;
             r = sqrt(r)
 
-            tht = zdir==1 ? atan(P.X[3], P.X[2]) :
-                  zdir==2 ? atan(P.X[1], P.X[3]) :
-                            atan(P.X[2], P.X[1])
+            tht = zdir==1 ? atan(vpm.get_X(P)[3], vpm.get_X(P)[2]) :
+                  zdir==2 ? atan(vpm.get_X(P)[1], vpm.get_X(P)[3]) :
+                            atan(vpm.get_X(P)[2], vpm.get_X(P)[1])
 
             Wtht = zdir==1 ? vpm.get_W2(P)*cos(tht) + vpm.get_W3(P)*sin(tht) :
                    zdir==2 ? vpm.get_W3(P)*cos(tht) + vpm.get_W1(P)*sin(tht) :
@@ -386,22 +386,22 @@ function calc_elliptic_radius(outRm, outRp, Z, pfield, nrings, intervals;
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
-            weightx = dot(P.Gamma, unity)
-            weighty = dot(P.Gamma, unitx)
+            weightx = dot(vpm.get_Gamma(P), unity)
+            weighty = dot(vpm.get_Gamma(P), unitx)
 
-            if P.X[1]-Z[ri][1] < 0
-                outRm[ri][1] -= abs(weightx*P.X[1])
+            if vpm.get_X(P)[1]-Z[ri][1] < 0
+                outRm[ri][1] -= abs(weightx*vpm.get_X(P)[1])
                 weightxmtot += abs(weightx)
             else
-                outRp[ri][1] += abs(weightx*P.X[1])
+                outRp[ri][1] += abs(weightx*vpm.get_X(P)[1])
                 weightxptot += abs(weightx)
             end
 
-            if P.X[2]-Z[ri][2] < 0
-                outRm[ri][2] -= abs(weighty*P.X[2])
+            if vpm.get_X(P)[2]-Z[ri][2] < 0
+                outRm[ri][2] -= abs(weighty*vpm.get_X(P)[2])
                 weightymtot += abs(weighty)
             else
-                outRp[ri][2] += abs(weighty*P.X[2])
+                outRp[ri][2] += abs(weighty*vpm.get_X(P)[2])
                 weightyptot += abs(weighty)
             end
 
@@ -545,8 +545,7 @@ function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
     end
 
     # Evaluate UJ
-    vpm._reset_particles(pfield)
-    pfield.UJ(pfield)
+    pfield.UJ(pfield; reset=true)
 
     # Save vorticity at probes
     for ri in 1:nrings
@@ -556,7 +555,7 @@ function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
             ws[1, pi, ri] = vpm.get_W1(P)
             ws[2, pi, ri] = vpm.get_W2(P)
             ws[3, pi, ri] = vpm.get_W3(P)
-            Xs[:, pi, ri] .= P.X
+            Xs[:, pi, ri] .= vpm.get_X(P)
         end
     end
 
