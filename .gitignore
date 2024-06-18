@@ -6,3 +6,4 @@ temps
 fmm.so
 *.xmf
 *.h5
+*.julia_history
