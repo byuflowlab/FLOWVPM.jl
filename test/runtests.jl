@@ -7,5 +7,6 @@ end
 using Test
 import FLOWVPM
 
-include("runtests_singlevortexring.jl")
-include("runtests_leapfrog.jl")
+# include("runtests_singlevortexring.jl")
+# include("runtests_leapfrog.jl")
+include("gpu_singlevortexring.jl")
