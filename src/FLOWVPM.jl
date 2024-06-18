@@ -26,6 +26,8 @@ import DataStructures: OrderedDict
 # import Base: getindex, setindex! # for compatibility with FastMultipole
 using ReverseDiff
 using StaticArrays
+using CUDA
+using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
@@ -45,7 +47,7 @@ const FLOAT_TYPE = Float64
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
-                    "particlefield", "fmm",
+                    "particlefield", "gpu_erf", "gpu", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils", "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
