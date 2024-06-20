@@ -68,6 +68,7 @@ end
 if ("useGPU" in keys(ENV)) && (lowercase(ENV["useGPU"]) == "true")
     # GPU kernel
     function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+        println("GPU Kernel")
         if source_system.toggle_rbf
             vorticity_direct(target_system, target_index, source_system, source_index)
         else
@@ -88,18 +89,20 @@ if ("useGPU" in keys(ENV)) && (lowercase(ENV["useGPU"]) == "true")
             shmem = sizeof(T) * 7 * p
 
             # Compute interactions using GPU
-            # @cuda threads=threads blocks=blocks shmem=shmem gpu_direct!(s_d, t_d, q)
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_direct!(s_d, t_d, q)
 
             # Copy back data from GPU to CPU
             view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
             view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
         end
+        return nothing
     end
 
 else
 
     # CPU kernel
     function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+        println("CPU Kernel")
         if source_system.toggle_rbf
             vorticity_direct(target_system, target_index, source_system, source_index)
         else
@@ -174,6 +177,7 @@ else
                 end
             end
         end
+        return nothing
     end
 
 end
