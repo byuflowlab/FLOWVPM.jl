@@ -65,6 +65,23 @@ end
     return nothing
 end
 
+function useGPU(flag::Bool)
+    # This does not work reliably and a better way has to be found!
+
+    # Remove cached package
+    for ipath in Base.find_all_in_cache_path(Base.identify_package("FLOWVPM"))
+        rm(ipath)
+    end
+
+    # Set flag
+    ENV["useGPU"] = flag ? "true" : "false"
+
+    # Recompile package
+    _ = Base.compilecache(Base.identify_package("FLOWVPM"))
+
+    return nothing
+end
+
 if ("useGPU" in keys(ENV)) && (lowercase(ENV["useGPU"]) == "true")
     # GPU kernel
     function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
