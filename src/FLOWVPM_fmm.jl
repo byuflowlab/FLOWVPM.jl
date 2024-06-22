@@ -84,7 +84,7 @@ end
 
 if ("useGPU" in keys(ENV)) && (lowercase(ENV["useGPU"]) == "true")
     # GPU kernel
-    function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+    function fmm.direct!(target_system::ParticleField, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index, ::fmm.GPU) where {PS,VPS,VS,GS}
         println("GPU Kernel")
         if source_system.toggle_rbf
             vorticity_direct(target_system, target_index, source_system, source_index)
