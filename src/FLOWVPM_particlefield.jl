@@ -55,7 +55,7 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -78,6 +78,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
+    useGPU::Bool                                # run on GPU if true, CPU if false
 
     # Internal memory for computation
     M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
@@ -99,6 +100,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
+        useGPU=false
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
@@ -110,10 +112,10 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     #     P.index[1] = i
     # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR}(maxparticles, particles,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm,
+                                            transposed, relaxation, fmm, useGPU,
                                             M, toggle_rbf, toggle_sfs)
 end
 

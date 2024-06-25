@@ -466,7 +466,7 @@ end
 
 Reads an HDF5 file containing a particle field created with `save(pfield)`.
 """
-function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
+function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
                                         path::String="",
                                         overwrite::Bool=true,
                                         load_time::Bool=true) where{R<:Real, F, V}
