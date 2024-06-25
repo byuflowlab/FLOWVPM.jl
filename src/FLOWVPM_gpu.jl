@@ -56,7 +56,7 @@ end
 
 const eps2 = 1e-6
 const const4 = 0.25/pi
-@inline function gpu_interaction(tx, ty, tz, s, j)
+@inline function gpu_interaction(tx, ty, tz, s, j, kernel)
     T = eltype(s)
     @inbounds dX1 = tx - s[1, j]
     @inbounds dX2 = ty - s[2, j]
@@ -77,7 +77,7 @@ const const4 = 0.25/pi
         # Regularizing function and deriv
         # g_sgm = g_val(r/sigma)
         # dg_sgmdr = dg_val(r/sigma)
-        g_sgm, dg_sgmdr = gpu_g_dgdr(r/sigma)
+        g_sgm, dg_sgmdr = kernel(r/sigma)
 
         # K × Γp
         crss1 = -T(const4) / r3 * ( dX2*gam3 - dX3*gam2 )
@@ -114,7 +114,7 @@ end
 
 # Each thread handles a single target and uses local GPU memory
 # Sources divided into multiple columns and influence is computed by multiple threads
-function gpu_direct!(s, t, num_cols)
+function gpu_direct!(s, t, num_cols, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -168,7 +168,7 @@ function gpu_direct!(s, t, num_cols)
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1)
             if isource <= s_size
-                out = gpu_interaction(tx, ty, tz, sh_mem, isource)
+                out = gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
 
                 # Sum up influences for each source in a tile
                 idim = 1
