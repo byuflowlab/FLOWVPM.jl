@@ -19,7 +19,6 @@ module FLOWVPM
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
 import BSON
-import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
