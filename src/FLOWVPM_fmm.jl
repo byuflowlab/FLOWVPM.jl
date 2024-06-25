@@ -76,6 +76,7 @@ function fmm.direct!(
     if source_system.toggle_rbf
         vorticity_direct(target_system, target_index, source_system, source_index)
     else
+        # Sets precision for computations on GPU
         T = Float64
 
         # Copy data from CPU to GPU
@@ -85,7 +86,8 @@ function fmm.direct!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(length(target_index))
+        p, q = get_launch_config(length(target_index); T=T)
+        # @show p, q, size(t_d)
 
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
@@ -98,7 +100,21 @@ function fmm.direct!(
         # Copy back data from GPU to CPU
         view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
         view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
+
+        # SFS contribution
+        r = zero(eltype(source_system))
+        for j_target in target_index
+            target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
+            for source_particle in eachcol(view(source_system.particles, :, source_index))
+                # include self-induced contribution to SFS
+                if source_system.toggle_sfs
+                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+                end
+            end
+        end
     end
+
+
     return nothing
 end
 
