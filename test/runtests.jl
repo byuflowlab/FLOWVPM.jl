@@ -6,7 +6,14 @@ end
 
 using Test
 import FLOWVPM
+using FLOWVPM.CUDA
 
+const test_using_GPU = fill(false)
 # include("runtests_singlevortexring.jl")
 # include("runtests_leapfrog.jl")
-include("gpu_singlevortexring.jl")
+
+if CUDA.functional()
+    test_using_GPU[] = true
+    # include("runtests_singlevortexring.jl")
+    include("runtests_leapfrog.jl")
+end
