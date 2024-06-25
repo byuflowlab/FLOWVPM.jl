@@ -188,6 +188,10 @@ function my_erf(x::Float64)
     return val
 end
 
+# CUDA erf function
+@inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
+@inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)
+
 @inline function gpu_g_dgdr(r)
     aux = const2*r*exp(-r^2/2)
     return my_erf(r/sqr2)-aux, r*aux
