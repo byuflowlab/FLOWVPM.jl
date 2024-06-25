@@ -120,7 +120,7 @@ const sb5 = 2.55305040643316442583e+03
 const sb6 = 4.74528541206955367215e+02
 const sb7 = -2.24409524465858183362e+01
 
-function my_erf(x::Float32)
+function custom_erf(x::Float32)
     xabs = abs(x)
     sgn = sign(x)
     oneval = one(x)
@@ -154,7 +154,7 @@ function my_erf(x::Float32)
     return val
 end
 
-function my_erf(x::Float64)
+function custom_erf(x::Float64)
     xabs = abs(x)
     sgn = sign(x)
     oneval = one(x)
@@ -192,7 +192,7 @@ end
 @inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
 @inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)
 
-@inline function gpu_g_dgdr(r)
-    aux = const2*r*exp(-r^2/2)
-    return my_erf(r/sqr2)-aux, r*aux
-end
+# @inline function gpu_g_dgdr(r)
+#     aux = const2*r*exp(-r^2/2)
+#     return custom_erf(r/sqr2)-aux, r*aux
+# end
