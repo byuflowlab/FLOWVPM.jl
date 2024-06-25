@@ -95,7 +95,8 @@ function fmm.direct!(
         shmem = sizeof(T) * 7 * p
 
         # Compute interactions using GPU
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_direct!(s_d, t_d, q)
+        kernel = source_system.kernel.g_dgdr
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_direct!(s_d, t_d, q, kernel)
 
         # Copy back data from GPU to CPU
         view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
