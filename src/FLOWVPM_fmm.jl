@@ -104,7 +104,6 @@ function fmm.direct!(
         # SFS contribution
         r = zero(eltype(source_system))
         for j_target in target_index
-            target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
             for source_particle in eachcol(view(source_system.particles, :, source_index))
                 # include self-induced contribution to SFS
                 if source_system.toggle_sfs
