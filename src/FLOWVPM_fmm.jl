@@ -81,7 +81,7 @@ function fmm.direct!(
 
         # Copy data from CPU to GPU
         s_d = CuArray(T.(view(source_system.particles, 1:7, source_index)))
-        t_d = CuArray(T.(view(target_system.particles, :, target_index)))
+        t_d = CuArray(T.(view(target_system.particles, 1:24, target_index)))
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
