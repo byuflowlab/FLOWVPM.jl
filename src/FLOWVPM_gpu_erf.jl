@@ -120,7 +120,8 @@ const sb5 = 2.55305040643316442583e+03
 const sb6 = 4.74528541206955367215e+02
 const sb7 = -2.24409524465858183362e+01
 
-function custom_erf(x::Float32)
+# Single precision erf()
+function custom_erf32(x)
     xabs = abs(x)
     sgn = sign(x)
     oneval = one(x)
@@ -154,7 +155,8 @@ function custom_erf(x::Float32)
     return val
 end
 
-function custom_erf(x::Float64)
+# Double precision erf()
+function custom_erf64(x)
     xabs = abs(x)
     sgn = sign(x)
     oneval = one(x)
@@ -188,6 +190,13 @@ function custom_erf(x::Float64)
     return val
 end
 
-# CUDA erf function
+custom_erf(x::Float64) = custom_erf64(x)
+custom_erf(x::Float32) = custom_erf32(x)
+
+# For ForwardDiff compatibility
+custom_erf(x::ForwardDiff.Dual{<:Any, Float64, <:Any}) = custom_erf64(x)
+custom_erf(x::ForwardDiff.Dual{<:Any, Float32, <:Any}) = custom_erf32(x)
+
+# NVIDIA CUDA variants of erf()
 @inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
 @inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)
