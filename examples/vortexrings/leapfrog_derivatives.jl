@@ -9,6 +9,8 @@ Run the simulation of a leapfrogging ring.
 * Copyright : Eduardo J. Alvarez. All rights reserved.
 =###############################################################################
 
+this_is_a_test = false
+
 include("vortexrings.jl")
 
 function run_leapfrog(x::Vector{T}) where T
