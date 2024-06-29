@@ -282,8 +282,8 @@ function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
     return t, solRs, solZs, solas
 end
 
-K(k) = Elliptic.K(k^2)
-E(k) = Elliptic.E(k^2)
+K(k) = JacobiElliptic.K(k^2)
+E(k) = JacobiElliptic.E(k^2)
 
 k(z, r, zt, rt) = sqrt( 4*r*rt / ( (z-zt)^2 + (r+rt)^2 ) )
 
