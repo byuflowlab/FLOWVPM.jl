@@ -86,7 +86,8 @@ function fmm.direct!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(length(target_index); T=T)
+        # q_max is set to 1 until ForwardDiff incompatibility with @atomic is resolved
+        p, q = get_launch_config(length(target_index); T=T; q_max=1)
         # @show p, q, size(t_d)
 
         # Compute no. of threads, no. of blocks and shared memory

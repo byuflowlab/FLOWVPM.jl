@@ -194,11 +194,19 @@ function gpu_direct!(s, t, num_cols, kernel)
     end
 
     # Sum up accelerations for each target/thread
-    for idx = 1:3
-        @inbounds CUDA.@atomic t[9+idx, itarget] += U[idx]
+    # !! WARNING: q has to be forced to 1 until
+    # !! CUDA.@atomic incompatibility with ForwardDiff is resolved
+    idx = 1
+    while idx <= 3
+        # @inbounds CUDA.@atomic t[9+idx, itarget] += U[idx]
+        @inbounds t[9+idx, itarget] += U[idx]
+        idx += 1
     end
-    for idx = 1:9
-        @inbounds CUDA.@atomic t[15+idx, itarget] += J[idx]
+    idx = 1
+    while idx <= 9
+        # @inbounds CUDA.@atomic t[15+idx, itarget] += J[idx]
+        @inbounds t[15+idx, itarget] += J[idx]
+        idx += 1
     end
     return
 end
