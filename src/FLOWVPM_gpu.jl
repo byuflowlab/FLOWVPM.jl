@@ -13,11 +13,16 @@ function check_launch(n, p, q; T=Float32, throw_error=true)
     return isgood
 end
 
-function get_launch_config(nt; T=Float32, p_max=256)
+function get_launch_config(nt; T=Float32, p_max=0, q_max=0)
+    max_threads_per_block = T==Float32 ? 1024 : 256
+    p_max = (p_max == 0) ? max_threads_per_block : p_max
+    q_max = (p_max == 0) ? p_max : q_max
+
     divs_n = divisors(nt)
     p = 1
     q = 1
     ip = 1
+    iq = 1
     for (i, div) in enumerate(divs_n)
         if div <= p_max
             p = div
@@ -31,7 +36,7 @@ function get_launch_config(nt; T=Float32, p_max=256)
     i_weight = 0
     j_weight = 1-i_weight
 
-    max_ij = i_weight*ip + j_weight*1
+    max_ij = i_weight*ip + j_weight*iq
     if nt <= 2^13
         divs_p = divs_n
         for i in 1:length(divs_n)
@@ -41,7 +46,7 @@ function get_launch_config(nt; T=Float32, p_max=256)
                     # Check if this is the max achievable ij value
                     # in the p, q choice matrix
                     obj_val = i_weight*i+j_weight*j
-                    if obj_val >= max_ij
+                    if (obj_val >= max_ij) && (divs_p[j] <= q_max)
                         max_ij = obj_val
                         p = divs_n[i]
                         q = divs_p[j]
