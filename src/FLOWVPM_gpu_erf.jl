@@ -194,6 +194,7 @@ custom_erf(x::Float64) = custom_erf64(x)
 custom_erf(x::Float32) = custom_erf32(x)
 
 # For ForwardDiff compatibility
+using ForwardDiff
 custom_erf(x::ForwardDiff.Dual{<:Any, Float64, <:Any}) = custom_erf64(x)
 custom_erf(x::ForwardDiff.Dual{<:Any, Float32, <:Any}) = custom_erf32(x)
 
