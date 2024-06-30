@@ -145,13 +145,15 @@ Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-function save(self::ParticleField, file_name::String; path::String="",
+function save(
+        self::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
+        file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing)
+                overwrite_time=nothing) where TF
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, eltype(self.particles); nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1, R=TF; nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
                                             relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.particles)(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)

@@ -70,12 +70,14 @@ The ring is placed in space at the position `O` and orientation `Oaxis`,
 where `Oaxis[:, 1]` is the major axis, `Oaxis[:, 2]` is the minor axis, and
 `Oaxis[:, 3]` is the line of symmetry.
 """
-function addvortexring(pfield::vpm.ParticleField, circulation::Real,
+function addvortexring(
+        pfield::vpm.ParticleField{TF,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any},
+        circulation::Real,
                             R::Real, AR::Real, Rcross::Real,
                             Nphi::Int, nc::Int, sigma::Real; extra_nc::Int=0,
                             O::Vector{<:Real}=zeros(3), Oaxis=I,
                             verbose=true, v_lvl=0
-                            )
+    ) where TF
 
     # ERROR CASE
     if AR < 1
@@ -85,7 +87,7 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
     a = R*sqrt(AR)                      # Semi-major axis
     b = R/sqrt(AR)                      # Semi-minor axis
 
-    fun_S(phi, a, b) = a * JacobiElliptic.E(phi, 1-(b/a)^2) # Arc length from 0 to a given angle
+    fun_S(phi, a, b) = a * EllipticFunctions.ellipticE(phi, 1-(b/a)^2) # Arc length from 0 to a given angle
     Stot = fun_S(2*pi, a, b)            # Total perimeter length of centerline
 
                                         # Non-dimensional arc length from 0 to a given value <=1
@@ -164,14 +166,16 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
 
             if n==0           # Particle in the center
 
-                r1, r2 = 0, rl              # Lower and upper radius
-                tht1, tht2 = 0, 2*pi        # Left and right angle
+                r1, r2 = zero(TF), rl              # Lower and upper radius
+                tht1, tht2 = zero(TF), 2*pi*one(TF)        # Left and right angle
                 vol = fun_vol(dvol_wrap, r1, tht1, r2, tht2) # Volume
                 X = Xc                      # Position
                 Gamma = omega*vol*T         # Vortex strength
-                                            # Filament length
-                length = fun_length(0, 0, a, b, phi1, phi2)
-                                            # Circulation
+
+                # Filament length
+                length = fun_length(zero(TF), zero(TF), a, b, phi1, phi2)
+
+                # Circulation
                 crcltn = norm(Gamma) / length
 
                 addparticle(pfield, X, Gamma, sigma, vol, crcltn)
@@ -236,7 +240,7 @@ function calc_rings_unweighted!(outZ, outR, outsgm, pfield, nrings, intervals)
         Np = intervals[ri+1] - intervals[ri]
 
         # Calculate centroid
-        outZ[ri] .= 0
+        outZ[ri] .= zero(eltype(outZ[1]))
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
@@ -268,29 +272,31 @@ end
 Calculate centroid, radius, and cross-section radius of all rings from the
 position of particles weighted by vortex strength.
 """
-function calc_rings_weighted!(outZ, outR, outsgm, pfield, nrings, intervals)
+function calc_rings_weighted!(outZ, outR, outsgm,
+        pfield::vpm.ParticleField{TF,<:Any, <:Any, <:Any,<:Any, <:Any, <:Any,<:Any, <:Any, <:Any},
+        nrings, intervals) where TF
 
     # Iterate over each ring
     for ri in 1:nrings
 
         # Calculate centroid
-        outZ[ri] .= 0
-        magGammatot = 0
+        outZ[ri] .= zero(eltype(outZ[1]))
+        magGammatot = zero(TF)
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
             normGamma = norm(vpm.get_Gamma(P))
             magGammatot += normGamma
 
-            for i in 1:3
-                outZ[ri][i] += normGamma*vpm.get_X(P)[i]
-            end
-
+            outZ[ri][1] += vpm.get_X(P)[1] * normGamma
+            outZ[ri][2] += vpm.get_X(P)[2] * normGamma
+            outZ[ri][3] += vpm.get_X(P)[3] * normGamma
         end
         outZ[ri] ./= magGammatot
 
         # Calculate ring radius and cross-section radius
-        outR[ri], outsgm[ri] = 0, 0
+        outR[ri] = zero(eltype(outR[1]))
+        outsgm[ri] = zero(eltype(outsgm[1]))
         for pi in (intervals[ri]+1):(intervals[ri+1])
 
             P = vpm.get_particle(pfield, pi)
@@ -427,6 +433,7 @@ strength of every particles, and (3) weighted by the strength in each
 transversal direction.
 """
 function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
+                                        TF=Float64,
                                         save_path=nothing,
                                         fname_pref="vortexring",
                                         unitx=(1,0,0), unity=(0,1,0),
@@ -439,11 +446,11 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
                                       for fi in 1:(save_path!=nothing ? 4 : -1))
 
     # Pre-allocate memory
-    Z1, Z2, Z4 = ([zeros(3) for ri in 1:nrings] for i in 1:3)
-    R1, R2, R4 = (zeros(nrings) for i in 1:3)
-    sgm1, sgm2, sgm4 = (zeros(nrings) for i in 1:3)
-    R3p = [zeros(2) for ri in 1:nrings]
-    R3m = [zeros(2) for ri in 1:nrings]
+    Z1, Z2, Z4 = ([zeros(TF, 3) for ri in 1:nrings] for i in 1:3)
+    R1, R2, R4 = (zeros(TF, nrings) for i in 1:3)
+    sgm1, sgm2, sgm4 = (zeros(TF, nrings) for i in 1:3)
+    R3p = [zeros(TF, 2) for ri in 1:nrings]
+    R3m = [zeros(TF, 2) for ri in 1:nrings]
     outs = (out1, out2, out3, out4)
 
     intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
@@ -529,12 +536,14 @@ function generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs;
 end
 
 
-function calc_vorticity!(pfield, ws, Xs, xoRs, nrings, Z, R, probedir;
-                                    Gamma=1e-10, sigma=1, zdir=3)
+function calc_vorticity!(
+        pfield::vpm.ParticleField{TF,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any},
+        ws, Xs, xoRs, nrings, Z, R, probedir;
+        Gamma=TF(1e-10), sigma=one(TF), zdir=3) where TF
 
     org_np = vpm.get_np(pfield)        # Original number of particles
     nprobes = length(xoRs)
-    X = zeros(3)
+    X = zeros(TF, 3)
 
     # Add probes
     for ri in 1:nrings
@@ -573,7 +582,7 @@ end
     Generate a runtime function for monitoring vorticity distribution along
 lines of probes centered around each ring.
 """
-function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
+function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs, TF=Float64;
                                             nprobes=100,
                                             linefactor=1.5, probedir=[1,0,0],
                                             save_path=nothing, fname_pref="vortexring",
@@ -588,11 +597,11 @@ function generate_monitor_ringvorticity(nrings, Nphis, ncs, extra_ncs;
     xoRs = linefactor*range(-1, 1, length=nprobes)
 
     # Pre-allocate memory
-    Z = [zeros(3) for ri in 1:nrings]            # Centroid of each ring
-    R = zeros(nrings)                            # Radius of each ring
-    sgm = zeros(nrings)                          # Average smoothing of each ring
-    ws = zeros(3, nprobes, nrings)               # Probed vorticity on each ring
-    Xs = zeros(3, nprobes, nrings)               # Probe position on each ring
+    Z = [zeros(TF,3) for ri in 1:nrings]            # Centroid of each ring
+    R = zeros(TF,nrings)                            # Radius of each ring
+    sgm = zeros(TF,nrings)                          # Average smoothing of each ring
+    ws = zeros(TF, 3, nprobes, nrings)               # Probed vorticity on each ring
+    Xs = zeros(TF, 3, nprobes, nrings)               # Probe position on each ring
 
     # VTK-related memory
     points = [[view(Xs, 1:3, pi, ri) for pi in 1:nprobes] for ri in 1:nrings]

@@ -65,7 +65,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     # Internal properties
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
-    t::R                                        # Current time # should not have its type tied to other floating-point types
+    t::Real                                     # Current time
 
     # Solver setting
     kernel::Tkernel                             # Vortex particle kernel
@@ -91,7 +91,7 @@ end
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
-        np=0, nt=0, t=R(0.0),
+        np=0, nt=0, t=zero(R),
         transposed=true,
         fmm=FMM(),
         M=zeros(R, 4),

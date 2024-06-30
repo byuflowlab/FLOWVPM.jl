@@ -60,9 +60,9 @@ function run_vortexring_grid_simulation(pfield::vpm.ParticleField,
 
         Nphi = addvortexring(pfield, circulations[ri],
                                 Rs[ri], ARs[ri], faux*Rcrosss[ri],
-                                dxoRcrosss[ri], sigmas[ri], minmagGamma,
+                                dxoRcrosss[ri], sigmas[ri]; minmagGamma=minmagGamma,
                                 O=Os[ri],
-                                Oaxis=Oaxiss[ri];
+                                Oaxis=Oaxiss[ri],
                                 zeta=zeta,
                                 verbose=verbose, v_lvl=v_lvl,
                                 addringoptargs...

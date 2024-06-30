@@ -13,7 +13,7 @@ this_is_a_test = false
 
 include("vortexrings.jl")
 
-function run_leapfrog(x::Vector{TF}) where TF
+function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
     radius = x[1]
     z = x[2]
 
@@ -22,7 +22,7 @@ function run_leapfrog(x::Vector{TF}) where TF
     verbose1  = true
 
     # -------------- SIMULATION PARAMETERS -------------------------------------
-    nsteps    = 7                           # Number of time steps
+    nsteps    = 700                         # Number of time steps
     Rtot      = nsteps/100                  # (m) run simulation for equivalent
     #     time to this many radii
     nrings    = 2                           # Number of rings
@@ -55,7 +55,7 @@ function run_leapfrog(x::Vector{TF}) where TF
               integration   = vpm.rungekutta3,
               UJ            = vpm.UJ_fmm,
               fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
-              useGPU        = true
+              useGPU        = useGPU
              )
 
 
@@ -67,6 +67,7 @@ function run_leapfrog(x::Vector{TF}) where TF
                                        Nphis, ncs, extra_ncs, sigmas,
                                        Os, Oaxiss;
                                        # ------- SIMULATION OPTIONS -----------
+                                       R=TF,
                                        Re=Re,
                                        nref=nref,
                                        nsteps=nsteps,
@@ -85,13 +86,18 @@ function run_leapfrog(x::Vector{TF}) where TF
 
     # Calculate end state of simulated leapfrog
     tend = pfield.t                               # (s) simulation end time
-    Z_vpm = [zeros(3) for ri in 1:nrings]         # Centroid position
-    R_vpm, sgm_vpm = zeros(nrings), zeros(nrings) # Ring and cross section radii
+    Z_vpm = [zeros(TF, 3) for ri in 1:nrings]         # Centroid position
+    R_vpm, sgm_vpm = zeros(TF, nrings), zeros(TF, nrings) # Ring and cross section radii
     intervals = calc_ring_invervals(nrings, Nphis, ncs, extra_ncs)
     calc_rings_weighted!(Z_vpm, R_vpm, sgm_vpm, pfield, nrings, intervals)
 
     Z1_vpm, Z2_vpm = Z_vpm[1][3], Z_vpm[2][3]     # Centroid of rings
     R1_vpm, R2_vpm = R_vpm[1], R_vpm[2]           # Radius of rings
 
-    return [Z1_vpm, Z2_vpm, R1_vpm, R2_vpm]
+    # return [Z1_vpm, Z2_vpm, R1_vpm, R2_vpm]
+    return Z1_vpm
 end
+
+using ForwardDiff
+x = [0.7906, 0.7906]
+df = ForwardDiff.gradient(run_leapfrog, x)
