@@ -11,12 +11,12 @@
 
 dot(A, B) = A[1]*B[1] + A[2]*B[2] + A[3]*B[3]
 norm(X) = sqrt(dot(X, X))
-function cross(A,B)
-    out = zeros(3)
+function cross(A::AbstractVector{TF},B::AbstractVector{TF}) where TF
+    out = zeros(TF, 3)
     cross!(out, A, B)
     return out
 end
-function cross!(out, A, B)
+function cross!(out::AbstractVector{TF}, A::AbstractVector{TF}, B::AbstractVector{TF}) where TF
     out[1] = A[2]*B[3] - A[3]*B[2]
     out[2] = A[3]*B[1] - A[1]*B[3]
     out[3] = A[1]*B[2] - A[2]*B[1]
@@ -150,7 +150,10 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
         T ./= norm(T)
         T .*= -1                            # Flip to make +circulation travel +Z
                                         # Local coordinate system of section
-        Naxis = hcat(T, cross([0,0,1], T), [0,0,1])
+
+        zvec = zeros(eltype(T), 3)
+        zvec[3] = one(eltype(T))
+        Naxis = hcat(T, cross(zvec, T), zvec)
 
                                         # Volume of each cell in the cross section
         dvol_wrap(X) = fun_dvol(X[1], X[2], a, b, phi1, phi2)

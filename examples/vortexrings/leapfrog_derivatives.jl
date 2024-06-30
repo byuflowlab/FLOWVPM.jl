@@ -13,7 +13,7 @@ this_is_a_test = false
 
 include("vortexrings.jl")
 
-function run_leapfrog(x::Vector{T}) where T
+function run_leapfrog(x::Vector{TF}) where TF
     radius = x[1]
     z = x[2]
 
