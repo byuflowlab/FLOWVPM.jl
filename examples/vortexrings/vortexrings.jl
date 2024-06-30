@@ -15,7 +15,7 @@ vpm = FLOWVPM
 import Printf: @printf
 import Roots
 import HCubature
-import JacobiElliptic
+import EllipticFunctions
 import LinearAlgebra: I
 
 try
