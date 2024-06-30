@@ -67,21 +67,22 @@ end
 
 # GPU kernel
 function fmm.direct!(
-        target_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        target_system::ParticleField{TFT,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
         target_index,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-        source_index) where {PS,VPS,VS,GS}
+        source_system::ParticleField{TFS,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        source_index) where {TFT,TFS,PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
         vorticity_direct(target_system, target_index, source_system, source_index)
     else
         # Sets precision for computations on GPU
+        # This is currently not being used for compatibility with Duals while Broadcasting
         T = Float64
 
         # Copy data from CPU to GPU
-        s_d = CuArray(T.(view(source_system.particles, 1:7, source_index)))
-        t_d = CuArray(T.(view(target_system.particles, 1:24, target_index)))
+        s_d = CuArray{TFS}(view(source_system.particles, 1:7, source_index))
+        t_d = CuArray{TFT}(view(target_system.particles, 1:24, target_index))
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
@@ -93,7 +94,7 @@ function fmm.direct!(
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
         blocks::Int32 = cld(length(target_index), p)
-        shmem = sizeof(T) * 7 * p
+        shmem = sizeof(TFT) * 7 * p
 
         # Compute interactions using GPU
         kernel = source_system.kernel.g_dgdr

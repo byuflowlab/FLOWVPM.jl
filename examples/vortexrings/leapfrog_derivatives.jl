@@ -13,7 +13,7 @@ this_is_a_test = false
 
 include("vortexrings.jl")
 
-function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
+function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     radius = x[1]
     z = x[2]
 
@@ -22,7 +22,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
     verbose1  = true
 
     # -------------- SIMULATION PARAMETERS -------------------------------------
-    nsteps    = 700                         # Number of time steps
+    nsteps    = 10                          # Number of time steps
     Rtot      = nsteps/100                  # (m) run simulation for equivalent
     #     time to this many radii
     nrings    = 2                           # Number of rings
@@ -45,6 +45,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
     Re        = 3000                        # Reynolds number Re = Gamma/nu
 
     # -------------- SOLVER SETTINGS -------------------------------------------
+    ncrit = useGPU ? 50 : 416
     solver = (
               formulation   = vpm.cVPM,
               SFS           = vpm.noSFS,
@@ -54,7 +55,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
               transposed    = true,
               integration   = vpm.rungekutta3,
               UJ            = vpm.UJ_fmm,
-              fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
+              fmm           = vpm.FMM(; p=4, ncrit=ncrit, theta=0.4, nonzero_sigma=true),
               useGPU        = useGPU
              )
 
@@ -78,11 +79,9 @@ function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
                                        save_path=save_path,
                                        calc_monitors=true,
                                        verbose=verbose1, v_lvl=1,
-                                       verbose_nsteps=100,
+                                       verbose_nsteps=1,
                                        pfieldargs=solver
                                       )
-
-    # --------------- COMPARE TO ANALYTIC SOLUTION -----------------------------
 
     # Calculate end state of simulated leapfrog
     tend = pfield.t                               # (s) simulation end time
@@ -95,9 +94,11 @@ function run_leapfrog(x::Vector{TF}; useGPU=false) where TF
     R1_vpm, R2_vpm = R_vpm[1], R_vpm[2]           # Radius of rings
 
     # return [Z1_vpm, Z2_vpm, R1_vpm, R2_vpm]
+    @show [Z1_vpm, Z2_vpm, R1_vpm, R2_vpm]
     return Z1_vpm
 end
 
 using ForwardDiff
 x = [0.7906, 0.7906]
 df = ForwardDiff.gradient(run_leapfrog, x)
+# run_leapfrog(x)
