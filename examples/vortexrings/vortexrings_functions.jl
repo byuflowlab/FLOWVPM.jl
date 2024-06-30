@@ -110,8 +110,8 @@ function addvortexring(pfield::vpm.ParticleField, circulation::Real,
     end
                                         # Integrate cell volume
     function fun_vol(dvol_wrap, r1, tht1, r2, tht2)
-        (val, err) = Cubature.hcubature(dvol_wrap,  [r1, tht1], [r2, tht2];
-                                           reltol=1e-8, abstol=0, maxevals=1000)
+        (val, err) = HCubature.hcubature(dvol_wrap,  [r1, tht1], [r2, tht2];
+                                           rtol=1e-8, atol=0, maxevals=1000)
         return val
     end
 

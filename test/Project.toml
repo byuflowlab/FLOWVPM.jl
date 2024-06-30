@@ -1,5 +1,5 @@
 [deps]
-Cubature = "667455a9-e2ce-5579-9412-b964f529a492"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
 JacobiElliptic = "2a8b799e-c098-4961-872a-356c768d184c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"

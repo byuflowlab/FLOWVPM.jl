@@ -14,7 +14,7 @@ vpm = FLOWVPM
 
 import Printf: @printf
 import Roots
-import Cubature
+import HCubature
 import JacobiElliptic
 import LinearAlgebra: I
 
