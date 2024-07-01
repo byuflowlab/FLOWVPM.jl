@@ -400,6 +400,8 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
+_reset_particle(pfield::ParticleField, i::Int) = _reset_particle(get_particle(pfield, i))
+
 function _reset_particles_sfs(pfield::ParticleField)
     for particle in iterate(pfield)
         _reset_particle_sfs(particle)
