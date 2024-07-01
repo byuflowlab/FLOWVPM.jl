@@ -1,3 +1,9 @@
+Manifest.toml
 .ipynb_checkpoints
+*.mem
+*.swp
 temps
 fmm.so
+*.xmf
+*.h5
+*.julia_history

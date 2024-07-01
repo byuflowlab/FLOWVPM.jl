@@ -1,5 +1,4 @@
-#=##############################################################################
-# DESCRIPTION
+#=############################################################################## # DESCRIPTIO
     Driver of round jet simulations.
 
 # AUTHORSHIP
@@ -101,7 +100,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
 
         # Integrate vorticity radially over annulus segment
         # NOTE: This line implicitely assumes AR=1.0
-        Wint, err = Cubature.hquadrature(W, rlo, rup; reltol=1e-8, abstol=0, maxevals=1000)
+        Wint, err = HCubature.hquadrature(W, rlo, rup; rtol=1e-8, atol=0, maxevals=1000)
 
         circulation = Wint*dz + 1e-12       # Annulus circulation
         Wmean = Wint / (rup-rlo)            # Mean vorticity
@@ -252,7 +251,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
 
         if restart_sigma != nothing
 
-            # Evaluate current vorticity field (gets stored under P.Jexa[1:3])
+            # Evaluate current vorticity field (gets stored under get_J(P)[1:3])
             vpm.zeta_fmm(pfield)
 
             # Resize particle cores and store target vorticity under P.M[7:9]
@@ -261,7 +260,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                 P.sigma[1] = restart_sigma
 
                 for i in 1:3
-                    P.M[i+6] = P.Jexa[i]
+                    P.M[i+6] = get_J(P)[i]
                 end
             end
 

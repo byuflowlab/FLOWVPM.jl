@@ -184,7 +184,7 @@ function computefluiddomain(pfield::vpm.ParticleField,
 
             if add_Wapprox
                 Wapprox = grid.field["Wapprox"]["field_data"]
-                Wapprox .= (P.Jexa[i] for i in 1:3, P in particles)
+                Wapprox .= (get_J(P)[i] for i in 1:3, P in particles)
             end
 
             # Save fluid domain as VTK file
