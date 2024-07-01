@@ -155,7 +155,7 @@ function save(
     if get_np(self)==0
         dummy_pfield = ParticleField(1, R=TF; nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
-                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.particles)(0.3)))
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, TF(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
