@@ -116,7 +116,7 @@ mutable struct ParticleField{R<:Real, F<:Formulation, V<:ViscousScheme, S<:SubFi
     #                       )
 end
 
-function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
+function ParticleField(maxparticles::Int; R=FLOAT_TYPE,
                                     formulation::F=formulation_default,
                                     viscous::V=Inviscid(), 
                                     np=0, nt=0, t=R(0.0),
@@ -143,6 +143,40 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm,
                                             M, toggle_rbf, toggle_sfs)
+end
+
+function ParticleField(maxparticles::Int, p_field; R=FLOAT_TYPE,
+                                    formulation::F=formulation_default,
+                                    viscous::V=Inviscid(), 
+                                    np=0, nt=0, t=R(0.0),
+                                    transposed=true,
+                                    fmm=FMM(),
+                                    M=zeros(R, 4),
+                                    toggle_rbf=false, toggle_sfs=false,    
+                                    SFS::S=SFS_default, kernel::Tkernel=kernel_default,
+                                    UJ::TUJ=UJ_fmm, Uinf::Function=Uinf_default,
+                                    relaxation=Relaxation(relax_pedrizzetti, 1, R(0.3)), 
+                                    integration::Tintegration=rungekutta3,
+                                ) where {F, V<:ViscousScheme, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration}
+
+    # create particle field
+    particles = [zero(Particle{R}) for _ in 1:maxparticles]
+
+    # fill in particles
+    for (i,P) in enumerate(p_field.particles)
+        particles[i] = Particle(P, R)
+    end
+
+    # Set index of each particle
+    for (i, P) in enumerate(particles)
+        P.index[1] = i
+    end
+    # Generate and return ParticleField
+    return ParticleField{R, F, V, S, Tkernel, TUJ, Tintegration}(maxparticles, particles,
+                p_field.formulation, p_field.viscous, p_field.np, 0, R.(0.0),
+                p_field.kernel, p_field.UJ, p_field.Uinf, p_field.SFS, p_field.integration,
+                p_field.transposed, relaxation, p_field.fmm,
+                R.(p_field.M), p_field.toggle_rbf, p_field.toggle_sfs)
 end
 
 """
@@ -289,7 +323,6 @@ function _get_particleiterator(self::ParticleField{R, F, V}; start_i::Int=1,
     strt = reverse ? (end_i==-1 ? get_np(self) : end_i) : start_i
     stp = reverse ? -1 : 1
     nd = reverse ? start_i : (end_i==-1 ? get_np(self) : end_i)
-
     return view( self.particles, strt:stp:nd
                 )::SubArray{Particle{R}, 1, Array{Particle{R}, 1}, Tuple{StepRange{Int64,Int64}}, true}
 end

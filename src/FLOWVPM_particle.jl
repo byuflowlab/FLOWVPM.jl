@@ -81,7 +81,11 @@ Base.zero(::Type{<:Particle{T}}) where {T} = Particle(init_zeros3(T), init_zeros
                                                     #   zeros(T, 3, 3), zeros(T, 3, 3),
                                                       init_zero(Int32))
 
-
+function Particle(P, T)
+    return Particle(T.(P.X), T.(P.Gamma), T.(P.sigma), T.(P.vol), T.(P.circulation),
+                    P.static, T.(P.U), T.(P.W), T.(P.J), T.(P.PSE), T.(P.M), T.(P.C),
+                    T.(P.S), P.index)
+end
 
 ##### FUNCTIONS ################################################################
 get_U(P::Particle) = P.U
