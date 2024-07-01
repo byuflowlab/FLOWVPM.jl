@@ -1,6 +1,6 @@
 [deps]
-Cubature = "667455a9-e2ce-5579-9412-b964f529a492"
-Elliptic = "b305315f-e792-5b7a-8f41-49f472929428"
+EllipticFunctions = "6a4e32cb-b31a-4929-85af-fb29d9a80738"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
