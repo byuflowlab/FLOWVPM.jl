@@ -9,6 +9,9 @@
 =###############################################################################
 
 const nfields = 43
+const useGPU_default = true
+const ncrit_default = 640
+
 ################################################################################
 # FMM STRUCT
 ################################################################################
@@ -49,7 +52,7 @@ mutable struct FMM
   theta::FLOAT_TYPE                  # Neighborhood criterion
   nonzero_sigma::Bool
 
-  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true) = new(p, ncrit, theta, nonzero_sigma)
+  FMM(; p=4, ncrit=ncrit_default, theta=0.4, nonzero_sigma=true) = new(p, ncrit, theta, nonzero_sigma)
 end
 
 ################################################################################
@@ -100,7 +103,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
-        useGPU=false
+        useGPU=useGPU_default
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
