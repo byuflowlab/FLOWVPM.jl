@@ -19,18 +19,20 @@ module FLOWVPM
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
 import BSON
-import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
-# import Base: getindex, setindex! # for compatibility with FLOWFMM
+# import Base: getindex, setindex! # for compatibility with FastMultipole
+using ReverseDiff
 using StaticArrays
+using CUDA
+using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
 # const fmm = FLOWExaFMM
-import FLOWFMM
-const fmm = FLOWFMM
+import FastMultipole
+const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
@@ -43,10 +45,10 @@ const FLOAT_TYPE = Float64
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
-                    "particle", "relaxation", "subfilterscale",
-                    "particlefield", "fmm",
+                    "relaxation", "subfilterscale",
+                    "particlefield", "gpu_erf", "gpu", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
@@ -126,7 +128,7 @@ const standard_SFSs = (
                         )
 
 # ------------ Other default functions
-const nofreestream(t) = zeros(3)
+const nofreestream(t) = SVector{3,Float64}(0,0,0)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
@@ -155,7 +157,7 @@ end
 
 # Field inside the Particle type where the SFS contribution is stored (make sure
 # this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
-const _SFS = :S
+# const _SFS = :S
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
