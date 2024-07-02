@@ -95,6 +95,16 @@ function fmm.direct!(
         threads::Int32 = p*q
         blocks::Int32 = cld(length(target_index), p)
         shmem = sizeof(TFT) * 7 * p
+        # shmem = sizeof(TFT) * (12*p) * p
+
+        # Check if GPU shared memory is sufficient
+        dev = CUDA.device()
+        dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+        if shmem > dev_shmem
+            error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                  Try using more GPUs or reduce Chunk size if using ForwardDiff.")
+        end
+
 
         # Compute interactions using GPU
         kernel = source_system.kernel.g_dgdr

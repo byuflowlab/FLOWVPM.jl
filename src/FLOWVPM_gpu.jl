@@ -124,25 +124,26 @@ function gpu_direct!(s, t, num_cols, kernel)
     s_size::Int32 = size(s, 2)
 
     ithread::Int32 = threadIdx().x
-    tile_dim::Int32 = t_size/gridDim().x
+    p::Int32 = t_size/gridDim().x
 
     # Row and column indices of threads in a block
-    row = (ithread-1) % tile_dim + 1
-    col = floor(Int32, (ithread-1)/tile_dim) + 1
+    row = (ithread-1) % p + 1
+    col = floor(Int32, (ithread-1)/p) + 1
 
-    itarget::Int32 = row + (blockIdx().x-1)*tile_dim
+    itarget::Int32 = row + (blockIdx().x-1)*p
     @inbounds tx = t[1, itarget]
     @inbounds ty = t[2, itarget]
     @inbounds tz = t[3, itarget]
 
-    n_tiles::Int32 = CUDA.ceil(Int32, s_size / tile_dim)
-    bodies_per_col::Int32 = CUDA.ceil(Int32, tile_dim / num_cols)
+    n_tiles::Int32 = CUDA.ceil(Int32, s_size / p)
+    bodies_per_col::Int32 = CUDA.ceil(Int32, p / num_cols)
 
-    sh_mem = CuDynamicSharedArray(eltype(t), (7, tile_dim))
+    # 12 for UJ variables that have to be reduced at the end
+    sh_mem = CuDynamicSharedArray(eltype(t), (7, p))
+    # sh_mem = CuDynamicSharedArray(eltype(t), (12*p, p))
 
     # Variable initialization
-    U = @MVector zeros(eltype(t), 3)
-    J = @MVector zeros(eltype(t), 9)
+    UJ = @MVector zeros(eltype(t), 12)
     idim::Int32 = 0
     idx::Int32 = 0
     i::Int32 = 0
@@ -152,7 +153,7 @@ function gpu_direct!(s, t, num_cols, kernel)
     while itile <= n_tiles
         # Each thread will copy source coordinates corresponding to its index into shared memory. This will be done for each tile.
         if (col == 1)
-            idx = row + (itile-1)*tile_dim
+            idx = row + (itile-1)*p
             idim = 1
             if idx <= s_size
                 while idim <= 7
@@ -177,13 +178,8 @@ function gpu_direct!(s, t, num_cols, kernel)
 
                 # Sum up influences for each source in a tile
                 idim = 1
-                while idim <= 3
-                    @inbounds U[idim] += out[idim]
-                    idim += 1
-                end
-                idim = 1
-                while idim <= 9
-                    @inbounds J[idim] += out[idim+3]
+                while idim <= 12
+                    @inbounds UJ[idim] += out[idim]
                     idim += 1
                 end
             end
@@ -194,19 +190,47 @@ function gpu_direct!(s, t, num_cols, kernel)
     end
 
     # Sum up accelerations for each target/thread
-    # !! WARNING: q has to be forced to 1 until
-    # !! CUDA.@atomic incompatibility with ForwardDiff is resolved
-    idx = 1
-    while idx <= 3
-        # @inbounds CUDA.@atomic t[9+idx, itarget] += U[idx]
-        @inbounds t[9+idx, itarget] += U[idx]
-        idx += 1
-    end
-    idx = 1
-    while idx <= 9
-        # @inbounds CUDA.@atomic t[15+idx, itarget] += J[idx]
-        @inbounds t[15+idx, itarget] += J[idx]
-        idx += 1
+    # Each target will be accessed by q no. of threads
+    if num_cols != 1
+        # Perform write to shared memory
+        # Columns correspond to each of the q threads
+        # sh_mem[1:12, 1] is the first target, sh_mem[13:24, 1] is the second target and so on.
+        idim = 1
+        while idim <= 12
+            @inbounds sh_mem[idim + 12*(itarget-1), col] = UJ[idim]
+            idim += 1
+        end
+
+        sync_threads()
+
+        # Write data from shared mem to global mem (sum using single thread for now)
+        if col == 1
+            isource = 1
+            while isource <= num_cols
+                idim = 1
+                while idim <= 3
+                    @inbounds t[9+idim, itarget] += sh_mem[idim+12*(itarget-1), isource]
+                    idim += 1
+                end
+                idim = 4
+                while idim <= 12
+                    @inbounds t[12+idim, itarget] += sh_mem[idim+12*(itarget-1), isource]
+                    idim += 1
+                end
+                isource += 1
+            end
+        end
+    else
+        idim = 1
+        while idim <= 3
+            @inbounds t[9+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+        idim = 4
+        while idim <= 12
+            @inbounds t[12+idim, itarget] += UJ[idim]
+            idim += 1
+        end
     end
     return
 end
