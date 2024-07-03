@@ -234,3 +234,23 @@ function gpu_direct!(s, t, num_cols, kernel)
     end
     return
 end
+
+# Convenience function to compile the GPU kernel
+# so compilation doesn't take time later
+function init_GPU(verbose=false)
+    n = 100
+    # Create particle field
+    pfield = ParticleField(n; useGPU=true)
+
+    # Set no. of dummy particles
+    pfield.np = 100
+
+    # Run direct computation on particles
+    d_switch = FastMultipole.DerivativesSwitch()
+    fmm.direct!(pfield, 1:n, d_switch, pfield, 1:n)
+
+    if verbose
+        @info("CUDA kernel compiled successfully")
+    end
+    return
+end
