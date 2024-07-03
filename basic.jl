@@ -21,10 +21,10 @@ for i in 1:n
     FLOWVPM.add_particle(t_gpu, mat[:, i])
 end
 
-derivatives_switch = FLOWVPM.FastMultipole.DerivativesSwitch(true, true, true, true)
+d_switch = FLOWVPM.FastMultipole.DerivativesSwitch()
 
-@time FLOWVPM.fmm.direct!(t_cpu, 1:n, derivatives_switch, s_cpu, 1:n)
-@time FLOWVPM.fmm.direct!(t_gpu, 1:n, derivatives_switch, s_gpu, 1:n)
+@time FLOWVPM.fmm.direct!(t_cpu, 1:n, d_switch, s_cpu, 1:n)
+@time FLOWVPM.fmm.direct!(t_gpu, 1:n, d_switch, s_gpu, 1:n)
 
 println("Write out CPU file")
 bson("t_cpu.bson", tmat=t_cpu.particles)
