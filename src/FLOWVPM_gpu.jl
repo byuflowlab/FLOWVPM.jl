@@ -237,7 +237,7 @@ end
 
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
-function init_GPU(verbose=false)
+function warmup_gpu(verbose=false)
     n = 100
     # Create particle field
     pfield = ParticleField(n; useGPU=true)
