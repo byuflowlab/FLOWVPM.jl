@@ -168,7 +168,7 @@ Add a copy of Particle `P` to the field.
 function add_particle(pfield::ParticleField, P)
     return add_particle(pfield, get_X(P), get_Gamma(P), get_sigma(P)[];
                         vol=get_vol(P)[], circulation=get_circulation(P)[],
-                        C=get_C(P), static=is_static(particle))
+                        C=get_C(P), static=is_static(P))
 end
 
 """
