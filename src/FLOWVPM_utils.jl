@@ -153,7 +153,7 @@ function save(
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, R=TF; nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1, TF; nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
                                             relaxation=Relaxation(relax_pedrizzetti, 1, TF(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
