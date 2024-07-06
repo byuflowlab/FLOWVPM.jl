@@ -119,7 +119,7 @@ end
 
 # Each thread handles a single target and uses local GPU memory
 # Sources divided into multiple columns and influence is computed by multiple threads
-function gpu_direct!(s, t, num_cols, kernel)
+function gpu_atomic_direct!(s, t, num_cols, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -232,6 +232,158 @@ function gpu_direct!(s, t, num_cols, kernel)
             idim += 1
         end
     end
+    return
+end
+
+# Each thread handles a single target and uses local GPU memory
+# Sources divided into multiple columns and influence is computed by multiple threads
+# Final summation through parallel reduction instead of atomic reduction
+# Low-storage parallel reduction
+# - p is no. of targets per block. Typically same as no. of sources per block.
+# - q is no. of columns per tile
+function gpu_reduction_direct!(s, t, num_cols, kernel)
+    t_size::Int32 = size(t, 2)
+    s_size::Int32 = size(s, 2)
+
+    ithread::Int32 = threadIdx().x
+    p::Int32 = t_size/gridDim().x
+
+    # Row and column indices of threads in a block
+    row = (ithread-1) % p + 1
+    col = floor(Int32, (ithread-1)/p) + 1
+
+    itarget::Int32 = row + (blockIdx().x-1)*p
+    @inbounds tx = t[1, itarget]
+    @inbounds ty = t[2, itarget]
+    @inbounds tz = t[3, itarget]
+
+    n_tiles::Int32 = CUDA.ceil(Int32, s_size / p)
+    bodies_per_col::Int32 = CUDA.ceil(Int32, p / num_cols)
+
+    sh_mem = CuDynamicSharedArray(eltype(t), (12, p))
+
+    # Variable initialization
+    UJ = @MVector zeros(eltype(t), 12)
+    idim::Int32 = 0
+    idx::Int32 = 0
+    i::Int32 = 0
+    isource::Int32 = 0
+
+    itile::Int32 = 1
+    while itile <= n_tiles
+        # Each thread will copy source coordinates corresponding to its index into shared memory. This will be done for each tile.
+        if (col == 1)
+            idx = row + (itile-1)*p
+            idim = 1
+            if idx <= s_size
+                while idim <= 7
+                    @inbounds sh_mem[idim, row] = s[idim, idx]
+                    idim += 1
+                end
+            else
+                while idim <= 7
+                    @inbounds sh_mem[idim, row] = zero(eltype(s))
+                    idim += 1
+                end
+            end
+        end
+        sync_threads()
+
+        # Each thread will compute the influence of all the sources in the shared memory on the target corresponding to its index
+        i = 1
+        while i <= bodies_per_col
+            isource = i + bodies_per_col*(col-1)
+            if isource <= s_size
+                out = gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
+
+                # Sum up influences for each source in a column in the tile
+                # This UJ resides in the local memory of the thread corresponding
+                # to each column, so we haven't summed up over the tile yet.
+                idim = 1
+                while idim <= 12
+                    @inbounds UJ[idim] += out[idim]
+                    idim += 1
+                end
+            end
+            i += 1
+        end
+        itile += 1
+        sync_threads()
+    end
+
+    # Sum up accelerations for each target/thread
+    # Each target will be accessed by q no. of threads
+    if num_cols != 1
+        # Perform write to shared memory
+        # Columns correspond to each of the q threads
+        # Iterate over targets and do reduction
+        it::Int32 = 1
+        while it <= p
+            # Threads corresponding to itarget will copy their data to shared mem
+            if itarget == it+p*(blockIdx().x-1)
+                idim = 1
+                while idim <= 12
+                    @inbounds sh_mem[idim, col] = UJ[idim]
+                    idim += 1
+                end
+            end
+            sync_threads()
+
+            # All p*q threads do parallel reduction on data
+            stride::Int32 = 1
+            while stride < num_cols
+                i = (threadIdx().x-1)*stride*2+1
+                if i <= num_cols
+                    idim = 1
+                    while idim <= 12  # This can be parallelized too
+                        @inbounds sh_mem[idim, i] += sh_mem[idim, i+stride]
+                        idim += 1
+                    end
+                end
+                stride *= 2
+                sync_threads()
+            end
+
+            # col 1 of the threads that handle it target
+            # writes reduced data to its own local memory
+            if itarget == it+p*(blockIdx().x-1) && col == 1
+                idim = 1
+                while idim <= 12
+                    @inbounds UJ[idim] = sh_mem[idim, 1]
+                    idim += 1
+                end
+            end
+
+            it += 1
+        end
+    else
+        idim = 1
+        while idim <= 3
+            @inbounds t[9+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+        idim = 4
+        while idim <= 12
+            @inbounds t[12+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+    end
+
+    # Now, each col 1 has the net influence of all sources on its target
+    # Write all data back to global memory
+    if col == 1
+        idim = 1
+        while idim <= 3
+            @inbounds t[9+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+        idim = 4
+        while idim<= 12
+            @inbounds t[12+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+    end
+
     return
 end
 
