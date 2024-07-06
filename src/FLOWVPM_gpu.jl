@@ -191,46 +191,15 @@ function gpu_atomic_direct!(s, t, num_cols, kernel)
 
     # Sum up accelerations for each target/thread
     # Each target will be accessed by q no. of threads
-    if num_cols != 1
-        # Perform write to shared memory
-        # Columns correspond to each of the q threads
-        # sh_mem[1:12, 1] is the first target, sh_mem[13:24, 1] is the second target and so on.
-        idim = 1
-        while idim <= 12
-            @inbounds sh_mem[idim + 12*(itarget-1), col] = UJ[idim]
-            idim += 1
-        end
-
-        sync_threads()
-
-        # Write data from shared mem to global mem (sum using single thread for now)
-        if col == 1
-            isource = 1
-            while isource <= num_cols
-                idim = 1
-                while idim <= 3
-                    @inbounds t[9+idim, itarget] += sh_mem[idim+12*(itarget-1), isource]
-                    idim += 1
-                end
-                idim = 4
-                while idim <= 12
-                    @inbounds t[12+idim, itarget] += sh_mem[idim+12*(itarget-1), isource]
-                    idim += 1
-                end
-                isource += 1
-            end
-        end
-    else
-        idim = 1
-        while idim <= 3
-            @inbounds t[9+idim, itarget] += UJ[idim]
-            idim += 1
-        end
-        idim = 4
-        while idim <= 12
-            @inbounds t[12+idim, itarget] += UJ[idim]
-            idim += 1
-        end
+    idim = 1
+    while idim <= 3
+        @inbounds CUDA.@atomic t[9+idim, itarget] += UJ[idim]
+        idim += 1
+    end
+    idim = 4
+    while idim <= 12
+        @inbounds CUDA.@atomic t[12+idim, itarget] += UJ[idim]
+        idim += 1
     end
     return
 end
