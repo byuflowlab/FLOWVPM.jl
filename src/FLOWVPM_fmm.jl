@@ -99,7 +99,7 @@ function fmm.direct!(
         dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
         if shmem > dev_shmem
             error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-                  Try using more GPUs or reduce Chunk size if using ForwardDiff.")
+                  Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
         end
 
 
