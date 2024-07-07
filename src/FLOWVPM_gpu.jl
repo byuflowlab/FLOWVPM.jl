@@ -144,6 +144,7 @@ function gpu_atomic_direct!(s, t, num_cols, kernel)
 
     # Variable initialization
     UJ = @MVector zeros(eltype(t), 12)
+    out = @MVector zeros(eltype(t), 12)
     idim::Int32 = 0
     idx::Int32 = 0
     i::Int32 = 0
@@ -174,7 +175,7 @@ function gpu_atomic_direct!(s, t, num_cols, kernel)
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1)
             if isource <= s_size
-                out = gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
+                out .= gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
 
                 # Sum up influences for each source in a tile
                 idim = 1
@@ -233,6 +234,7 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
 
     # Variable initialization
     UJ = @MVector zeros(eltype(t), 12)
+    out = @MVector zeros(eltype(t), 12)
     idim::Int32 = 0
     idx::Int32 = 0
     i::Int32 = 0
@@ -263,7 +265,7 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1)
             if isource <= s_size
-                out = gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
+                out .= gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
 
                 # Sum up influences for each source in a column in the tile
                 # This UJ resides in the local memory of the thread corresponding
@@ -302,7 +304,7 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
             stride::Int32 = 1
             while stride < num_cols
                 i = (threadIdx().x-1)*stride*2+1
-                if i <= num_cols
+                if i+stride <= num_cols
                     idim = 1
                     while idim <= 12  # This can be parallelized too
                         @inbounds sh_mem[idim, i] += sh_mem[idim, i+stride]
@@ -324,17 +326,6 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
             end
 
             it += 1
-        end
-    else
-        idim = 1
-        while idim <= 3
-            @inbounds t[9+idim, itarget] += UJ[idim]
-            idim += 1
-        end
-        idim = 4
-        while idim <= 12
-            @inbounds t[12+idim, itarget] += UJ[idim]
-            idim += 1
         end
     end
 
