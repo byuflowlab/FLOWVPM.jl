@@ -45,7 +45,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     Re        = 3000                        # Reynolds number Re = Gamma/nu
 
     # -------------- SOLVER SETTINGS -------------------------------------------
-    ncrit = useGPU ? 50 : 416
+    ncrit = useGPU ? 416 : 50
     solver = (
               formulation   = vpm.cVPM,
               SFS           = vpm.noSFS,
