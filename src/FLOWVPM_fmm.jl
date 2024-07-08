@@ -4,8 +4,8 @@
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)[]
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
+Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
+Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Strength) = get_Gamma(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
@@ -21,7 +21,7 @@ Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = 
 fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
 Base.length(particle_field::ParticleField) = get_np(particle_field) # currently called internally by the version of the FMM I'm using. this will need to be changed to work with ImplicitAD, which probably just means getting the latest FMM version. that's on hold because there are a bunch of other breaking changes I'll need to deal with to get correct derivative again.
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
 fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
 
@@ -65,7 +65,137 @@ end
     return nothing
 end
 
-function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+# GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
+function fmm.direct!(
+        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        target_index,
+        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        source_index) where {PS,VPS,VS,GS}
+
+    if source_system.toggle_rbf
+        vorticity_direct(target_system, target_index, source_system, source_index)
+    else
+        # Sets precision for computations on GPU
+        # This is currently not being used for compatibility with Duals while Broadcasting
+        T = Float64
+
+        # Copy data from CPU to GPU
+        s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
+        t_d = CuArray{T}(view(target_system.particles, 1:24, target_index))
+
+        # Get p, q for optimal GPU kernel launch configuration
+        # p is no. of targets in a block
+        # q is no. of columns per block
+        p, q = get_launch_config(length(target_index); T=T)
+
+        # Compute no. of threads, no. of blocks and shared memory
+        threads::Int32 = p*q
+        blocks::Int32 = cld(length(target_index), p)
+        shmem = sizeof(T) * 7 * p
+
+        # Check if GPU shared memory is sufficient
+        dev = CUDA.device()
+        dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+        if shmem > dev_shmem
+            error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                  Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
+        end
+
+
+        # Compute interactions using GPU
+        kernel = source_system.kernel.g_dgdr
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, q, kernel)
+
+        # Copy back data from GPU to CPU
+        view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
+        view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
+
+        # SFS contribution
+        r = zero(eltype(source_system))
+        for j_target in target_index
+            for source_particle in eachcol(view(source_system.particles, :, source_index))
+                # include self-induced contribution to SFS
+                if source_system.toggle_sfs
+                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+                end
+            end
+        end
+    end
+
+
+    return nothing
+end
+
+# GPU kernel for ForwardDiff.Duals that uses parallel reduction
+# function fmm.direct!(
+#         target_system::ParticleField{TFT,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+#         target_index,
+#         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+#         source_system::ParticleField{TFS,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+#         source_index) where {TFT,TFS,PS,VPS,VS,GS}
+#
+#     if source_system.toggle_rbf
+#         vorticity_direct(target_system, target_index, source_system, source_index)
+#     else
+#         # Sets precision for computations on GPU
+#         # This is currently not being used for compatibility with Duals while Broadcasting
+#         T = Float64
+#
+#         # Copy data from CPU to GPU
+#         s_d = CuArray{TFS}(view(source_system.particles, 1:7, source_index))
+#         t_d = CuArray{TFT}(view(target_system.particles, 1:24, target_index))
+#
+#         # Get p, q for optimal GPU kernel launch configuration
+#         # p is no. of targets in a block
+#         # q is no. of columns per block
+#         p, q = get_launch_config(length(target_index); T=T)
+#
+#         # Compute no. of threads, no. of blocks and shared memory
+#         threads::Int32 = p*q
+#         blocks::Int32 = cld(length(target_index), p)
+#         shmem = sizeof(TFT) * 12 * p # XYZ + Γ123 + σ = 7 variables but (12*p) to handle UJ summation for each target
+#
+#         # Check if GPU shared memory is sufficient
+#         dev = CUDA.device()
+#         dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+#         if shmem > dev_shmem
+#             error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+#                   Try using more GPUs or reduce Chunk size if using ForwardDiff.")
+#         end
+#
+#         # Compute interactions using GPU
+#         kernel = source_system.kernel.g_dgdr
+#         @cuda threads=threads blocks=blocks shmem=shmem gpu_reduction_direct!(s_d, t_d, q, kernel)
+#
+#         # Copy back data from GPU to CPU
+#         view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
+#         view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
+#
+#         # SFS contribution
+#         r = zero(eltype(source_system))
+#         for j_target in target_index
+#             for source_particle in eachcol(view(source_system.particles, :, source_index))
+#                 # include self-induced contribution to SFS
+#                 if source_system.toggle_sfs
+#                     Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+#                 end
+#             end
+#         end
+#     end
+#
+#
+#     return nothing
+# end
+
+# CPU kernel
+function fmm.direct!(
+        target_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,false},
+        target_index,
+        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        source_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,false},
+        source_index) where {PS,VPS,VS,GS}
+
     if source_system.toggle_rbf
         vorticity_direct(target_system, target_index, source_system, source_index)
     else
@@ -121,16 +251,16 @@ function fmm.direct!(target_system, target_index, derivatives_switch::fmm.Deriva
 
                     du1x10, du2x10, du3x10, du1x20, du2x20, du3x20, du1x30, du2x30, du3x30 = target_system[j_target, fmm.VELOCITY_GRADIENT]
                     target_system[j_target, fmm.VELOCITY_GRADIENT] = SMatrix{3,3}(
-                        du1x10 + du1x1,
-                        du2x10 + du2x1,
-                        du3x10 + du3x1,
-                        du1x20 + du1x2,
-                        du2x20 + du2x2,
-                        du3x20 + du3x2,
-                        du1x30 + du1x3,
-                        du2x30 + du2x3,
-                        du3x30 + du3x3
-                    )
+                                                                                  du1x10 + du1x1,
+                                                                                  du2x10 + du2x1,
+                                                                                  du3x10 + du3x1,
+                                                                                  du1x20 + du1x2,
+                                                                                  du2x20 + du2x2,
+                                                                                  du3x20 + du3x2,
+                                                                                  du1x30 + du1x3,
+                                                                                  du2x30 + du2x3,
+                                                                                  du3x30 + du3x3
+                                                                                 )
                 end
 
                 # include self-induced contribution to SFS
@@ -140,4 +270,5 @@ function fmm.direct!(target_system, target_index, derivatives_switch::fmm.Deriva
             end
         end
     end
+    return nothing
 end

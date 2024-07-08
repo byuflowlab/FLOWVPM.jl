@@ -6,6 +6,16 @@ end
 
 using Test
 import FLOWVPM
+using FLOWVPM.CUDA
 
+# Run tests on CPU
+const test_using_GPU = fill(false)
 include("runtests_singlevortexring.jl")
 include("runtests_leapfrog.jl")
+
+# Run tests on GPU if device is functional
+if CUDA.functional()
+    test_using_GPU[] = true
+    include("runtests_singlevortexring.jl")
+    include("runtests_leapfrog.jl")
+end
