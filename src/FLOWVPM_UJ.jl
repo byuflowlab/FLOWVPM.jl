@@ -90,7 +90,10 @@ function UJ_fmm(pfield::ParticleField;
     farfield = !rbf
     #@show typeof(pfield)
     # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, concurrent_direct=pfield.useGPU)
+    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, concurrent_direct=true)
+    # This should be concurrent_direct=pfield.useGPU
+    # But until multithread_direct!() works for the target_indices argument,
+    # we'll leave it true
 
     return nothing
 end
