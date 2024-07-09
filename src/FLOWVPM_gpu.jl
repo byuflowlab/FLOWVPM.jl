@@ -1,6 +1,8 @@
 # Contains utilities for handling gpu kernel
-function check_launch(n, p, q; T=Float32, throw_error=true)
-    max_threads_per_block = T==Float32 ? 1024 : 256
+function check_launch(n, p, q; T=Float32, max_threads_per_block=0, throw_error=true)
+    if max_threads_per_block == 0
+        max_threads_per_block = T==Float32 ? 784 : 256
+    end
 
     isgood = true
 
@@ -13,8 +15,10 @@ function check_launch(n, p, q; T=Float32, throw_error=true)
     return isgood
 end
 
-function get_launch_config(nt; T=Float32, p_max=0, q_max=0)
-    max_threads_per_block = T==Float32 ? 1024 : 256
+function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_block=0)
+    if max_threads_per_block == 0
+        max_threads_per_block = T==Float32 ? 784 : 256
+    end
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 

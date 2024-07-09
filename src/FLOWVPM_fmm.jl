@@ -102,14 +102,13 @@ function fmm.direct!(
                   Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
         end
 
-
         # Compute interactions using GPU
         kernel = source_system.kernel.g_dgdr
         @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, q, kernel)
 
         # Copy back data from GPU to CPU
-        view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
-        view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
+        target_system.particles[10:12, target_index] .= Array(t_d[10:12, :])
+        target_system.particles[16:24, target_index] .= Array(t_d[16:24, :])
 
         # SFS contribution
         r = zero(eltype(source_system))
@@ -122,8 +121,6 @@ function fmm.direct!(
             end
         end
     end
-
-
     return nothing
 end
 
