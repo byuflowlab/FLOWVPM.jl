@@ -102,5 +102,5 @@ using ForwardDiff
 x = [0.7906, 0.7906]
 # cfg = ForwardDiff.GradientConfig(run_leapfrog, x, ForwardDiff.Chunk{1}())
 # df = ForwardDiff.gradient(run_leapfrog, x, cfg)
-df = ForwardDiff.gradient(run_leapfrog, x)
-# run_leapfrog(x)
+# df = ForwardDiff.gradient(run_leapfrog, x)
+run_leapfrog(x; useGPU=false)
