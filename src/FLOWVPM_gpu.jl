@@ -45,7 +45,7 @@ function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_bloc
         divs_p = divs_n
         for i in 1:length(divs_n)
             for j in 1:length(divs_n)
-                isgood = check_launch(nt, divs_n[i], divs_p[j]; T=T, throw_error=false)
+                isgood = check_launch(nt, divs_n[i], divs_p[j]; max_threads_per_block=max_threads_per_block, T=T, throw_error=false)
                 if isgood && (divs_n[i] <= p_max)
                     # Check if this is the max achievable ij value
                     # in the p, q choice matrix
