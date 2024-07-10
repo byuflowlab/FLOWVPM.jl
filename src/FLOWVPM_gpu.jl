@@ -367,7 +367,7 @@ function warmup_gpu(verbose=false; n=100)
 
         # Run direct computation on particles
         d_switch = FastMultipole.DerivativesSwitch()
-        fmm.direct!(pfield, 1:n, d_switch, pfield, 1:n)
+        fmm.direct!(pfield, [1:n], d_switch, pfield, 1:n)
 
         if verbose
             @info("CUDA kernel compiled successfully")
