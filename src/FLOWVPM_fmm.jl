@@ -68,30 +68,47 @@ end
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
 function fmm.direct!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-        target_index,
+        target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
         source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
-        vorticity_direct(target_system, target_index, source_system, source_index)
+        for target_index in target_indices
+            vorticity_direct(target_system, target_index, source_system, source_index)
+        end
     else
+        # Compute number of targets
+        nt = 0
+        for target_index in target_indices
+            nt += length(target_index)
+        end
+
         # Sets precision for computations on GPU
         # This is currently not being used for compatibility with Duals while Broadcasting
         T = Float64
 
-        # Copy data from CPU to GPU
+        # Copy source particles from CPU to GPU
         s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
-        t_d = CuArray{T}(view(target_system.particles, 1:24, target_index))
+
+        # Copy target particles from CPU to GPU
+        t_d = CuArray{T}(undef, 24, nt)
+        istart = 1
+        iend = 0
+        for target_index in target_indices
+            iend += length(target_index)
+            copyto!(view(t_d, 1:24, istart:iend), target_system.particles[1:24, target_index])
+            istart = iend + 1
+        end
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(length(target_index); T=T)
+        p, q = get_launch_config(nt; T=T)
 
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
-        blocks::Int32 = cld(length(target_index), p)
+        blocks::Int32 = cld(nt, p)
         shmem = sizeof(T) * 7 * p
 
         # Check if GPU shared memory is sufficient
@@ -106,17 +123,25 @@ function fmm.direct!(
         kernel = source_system.kernel.g_dgdr
         @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, q, kernel)
 
-        # Copy back data from GPU to CPU
-        target_system.particles[10:12, target_index] .= Array(t_d[10:12, :])
-        target_system.particles[16:24, target_index] .= Array(t_d[16:24, :])
+        # Copy back from GPU to CPU
+        istart = 1
+        iend = 0
+        for target_index in target_indices
+            iend += length(target_index)
+            target_system.particles[10:12, target_index] .= Array(t_d[10:12, istart:iend])
+            target_system.particles[16:24, target_index] .= Array(t_d[16:24, istart:iend])
+            istart = iend + 1
+        end
 
         # SFS contribution
         r = zero(eltype(source_system))
-        for j_target in target_index
-            for source_particle in eachcol(view(source_system.particles, :, source_index))
-                # include self-induced contribution to SFS
-                if source_system.toggle_sfs
-                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+        for target_index in target_indices
+            for j_target in target_index
+                for source_particle in eachcol(view(source_system.particles, :, source_index))
+                    # include self-induced contribution to SFS
+                    if source_system.toggle_sfs
+                        Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+                    end
                 end
             end
         end
