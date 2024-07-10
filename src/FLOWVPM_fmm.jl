@@ -66,6 +66,7 @@ end
 end
 
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
+# Uses 1 GPU
 function fmm.direct!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,1},
         target_indices,
@@ -150,12 +151,12 @@ function fmm.direct!(
 end
 
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
+# Uses 2 GPUs
 function fmm.direct!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
-
         source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
@@ -163,6 +164,9 @@ function fmm.direct!(
             vorticity_direct(target_system, target_index, source_system, source_index)
         end
     else
+        # Get CUDA devices
+        devs = CUDA.devices()
+
         # Compute no. of target indices to split into 2
         n_indices = length(target_indices)
         n_indices_mid = cld(n_indicies, 2)
@@ -170,6 +174,14 @@ function fmm.direct!(
         # Sets precision for computations on GPU
         # This is currently not being used for compatibility with Duals while Broadcasting
         T = Float64
+
+        # Raise warnings and errors
+        if Threads.nthreads() < 2
+            @warn "Launch atleast 2 CPU threads for better efficieny"
+        end
+        if length(devs) < 2
+            @error "You set useGPU=2, but only $(length(devs)) GPU/s were available"
+        end
 
         @sync begin
             Threads.@spawn begin
