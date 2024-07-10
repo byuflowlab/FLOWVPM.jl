@@ -353,20 +353,26 @@ end
 
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
-function warmup_gpu(verbose=false)
-    n = 100
-    # Create particle field
-    pfield = ParticleField(n; useGPU=1)
+function warmup_gpu(verbose=false; n=100)
+    ngpu = length(CUDA.devices())
+    if ngpu == 0
+        @warn("No CUDA devices found")
 
-    # Set no. of dummy particles
-    pfield.np = 100
+    elseif ngpu <= 2
+        # Create particle field
+        pfield = ParticleField(n; useGPU=ngpu)
 
-    # Run direct computation on particles
-    d_switch = FastMultipole.DerivativesSwitch()
-    fmm.direct!(pfield, 1:n, d_switch, pfield, 1:n)
+        # Set no. of dummy particles
+        pfield.np = n
 
-    if verbose
-        @info("CUDA kernel compiled successfully")
+        # Run direct computation on particles
+        d_switch = FastMultipole.DerivativesSwitch()
+        fmm.direct!(pfield, 1:n, d_switch, pfield, 1:n)
+
+        if verbose
+            @info("CUDA kernel compiled successfully")
+        end
     end
+
     return
 end
