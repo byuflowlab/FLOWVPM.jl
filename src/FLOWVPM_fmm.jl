@@ -67,10 +67,10 @@ end
 
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
 function fmm.direct!(
-        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,1},
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
+        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,1},
         source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
@@ -131,6 +131,157 @@ function fmm.direct!(
             target_system.particles[10:12, target_index] .= Array(t_d[10:12, istart:iend])
             target_system.particles[16:24, target_index] .= Array(t_d[16:24, istart:iend])
             istart = iend + 1
+        end
+
+        # SFS contribution
+        r = zero(eltype(source_system))
+        for target_index in target_indices
+            for j_target in target_index
+                for source_particle in eachcol(view(source_system.particles, :, source_index))
+                    # include self-induced contribution to SFS
+                    if source_system.toggle_sfs
+                        Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
+function fmm.direct!(
+        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
+        target_indices,
+        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
+
+        source_index) where {PS,VPS,VS,GS}
+
+    if source_system.toggle_rbf
+        for target_index in target_indices
+            vorticity_direct(target_system, target_index, source_system, source_index)
+        end
+    else
+        # Compute no. of target indices to split into 2
+        n_indices = length(target_indices)
+        n_indices_mid = cld(n_indicies, 2)
+
+        # Sets precision for computations on GPU
+        # This is currently not being used for compatibility with Duals while Broadcasting
+        T = Float64
+
+        @sync begin
+            Threads.@spawn begin
+                # Device 1
+                dev = device!(0)
+
+                # Compute number of targets
+                nt1 = 0
+                for target_index in target_indices[1:n_indices_mid]
+                    nt1 += length(target_index)
+                end
+
+                # Copy source particles from CPU to GPU
+                s_d1 = CuArray{T}(view(source_system.particles, 1:7, source_index))
+
+                # Copy target particles from CPU to GPU
+                t_d1 = CuArray{T}(undef, 24, nt1)
+                istart = 1
+                iend = 0
+                for target_index in target_indices[1:n_indices_mid]
+                    iend += length(target_index)
+                    copyto!(view(t_d1, 1:24, istart:iend), target_system.particles[1:24, target_index])
+                    istart = iend + 1
+                end
+
+                # Get p, q for optimal GPU kernel launch configuration
+                # p is no. of targets in a block
+                # q is no. of columns per block
+                p, q = get_launch_config(nt1; T=T)
+
+                # Compute no. of threads, no. of blocks and shared memory
+                threads::Int32 = p*q
+                blocks::Int32 = cld(nt2, p)
+                shmem = sizeof(T) * 7 * p
+
+                # Check if GPU shared memory is sufficient
+                dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+                if shmem > dev_shmem
+                    error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                          Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
+                end
+
+                # Compute interactions using GPU
+                kernel = source_system.kernel.g_dgdr
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, q, kernel)
+
+                # Copy back from GPU to CPU
+                istart = 1
+                iend = 0
+                for target_index in target_indices[1:n_indices_mid]
+                    iend += length(target_index)
+                    target_system.particles[10:12, target_index] .= Array(t_d1[10:12, istart:iend])
+                    target_system.particles[16:24, target_index] .= Array(t_d1[16:24, istart:iend])
+                    istart = iend + 1
+                end
+
+            end
+
+            Threads.@spawn begin
+                # Device 2
+                dev = device!(1)
+
+                # Compute number of targets
+                nt2 = 0
+                for target_index in target_indices[n_indices_mid+1:end]
+                    nt2 += length(target_index)
+                end
+
+                # Copy source particles from CPU to GPU
+                s_d2 = CuArray{T}(view(source_system.particles, 1:7, source_index))
+
+                # Copy target particles from CPU to GPU
+                t_d2 = CuArray{T}(undef, 24, nt2)
+                istart = 1
+                iend = 0
+                for target_index in target_indices[n_indices_mid+1:end]
+                    iend += length(target_index)
+                    copyto!(view(t_d2, 1:24, istart:iend), target_system.particles[1:24, target_index])
+                    istart = iend + 1
+                end
+
+                # Get p, q for optimal GPU kernel launch configuration
+                # p is no. of targets in a block
+                # q is no. of columns per block
+                p, q = get_launch_config(nt2; T=T)
+
+                # Compute no. of threads, no. of blocks and shared memory
+                threads::Int32 = p*q
+                blocks::Int32 = cld(nt1, p)
+                shmem = sizeof(T) * 7 * p
+
+                # Check if GPU shared memory is sufficient
+                dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+                if shmem > dev_shmem
+                    error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                          Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
+                end
+
+                # Compute interactions using GPU
+                kernel = source_system.kernel.g_dgdr
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, q, kernel)
+
+                # Copy back from GPU to CPU
+                istart = 1
+                iend = 0
+                for target_index in target_indices[n_indices_mid+1:end]
+                    iend += length(target_index)
+                    target_system.particles[10:12, target_index] .= Array(t_d2[10:12, istart:iend])
+                    target_system.particles[16:24, target_index] .= Array(t_d2[16:24, istart:iend])
+                    istart = iend + 1
+                end
+            end
         end
 
         # SFS contribution
@@ -212,10 +363,10 @@ end
 
 # CPU kernel
 function fmm.direct!(
-        target_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,false},
+        target_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,0},
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,false},
+        source_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,0},
         source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf

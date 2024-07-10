@@ -356,7 +356,7 @@ end
 function warmup_gpu(verbose=false)
     n = 100
     # Create particle field
-    pfield = ParticleField(n; useGPU=true)
+    pfield = ParticleField(n; useGPU=1)
 
     # Set no. of dummy particles
     pfield.np = 100
