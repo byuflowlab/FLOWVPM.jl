@@ -270,7 +270,7 @@ function fmm.direct!(
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
-                blocks::Int32 = cld(nt1, p)
+                blocks::Int32 = cld(nt2, p)
                 shmem = sizeof(T) * 7 * p
 
                 # Check if GPU shared memory is sufficient
