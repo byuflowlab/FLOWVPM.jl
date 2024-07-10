@@ -196,7 +196,7 @@ function fmm.direct!(
                 s_d1 = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
                 # Copy target particles from CPU to GPU
-                t_d1 = CuArray{T}(view(target_system.particles, 1:24, expand_indices[1:nt_mid]))
+                t_d1 = CuArray{T}(view(target_system.particles, 1:24, expanded_indices[1:nt_mid]))
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
@@ -232,7 +232,7 @@ function fmm.direct!(
                 s_d2 = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
                 # Copy target particles from CPU to GPU
-                t_d2 = CuArray{T}(view(target_system.particles, 1:24, expand_indices[nt_mid+1:nt]))
+                t_d2 = CuArray{T}(view(target_system.particles, 1:24, expanded_indices[nt_mid+1:nt]))
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
