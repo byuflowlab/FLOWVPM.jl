@@ -166,8 +166,8 @@ function fmm.direct!(
 
         # Compute expanded indices and split no. of targets
         nt = 0
-        for index in target_indices
-            nt += length(target_indices)
+        for target_index in target_indices
+            nt += length(target_index)
         end
         expanded_indices = Vector{Int}(undef, nt)
         expand_indices!(expanded_indices, target_indices)
@@ -220,8 +220,8 @@ function fmm.direct!(
                 @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, q, kernel)
 
                 # Copy back from GPU to CPU
-                view(target_system.particles, 10:12, expanded_indices[1:nt_mid]) .= Array(view(t_d, 10:12, :))
-                view(target_system.particles, 16:24, expanded_indices[1:nt_mid]) .= Array(view(t_d, 16:24, :))
+                view(target_system.particles, 10:12, expanded_indices[1:nt_mid]) .= Array(view(t_d1, 10:12, :))
+                view(target_system.particles, 16:24, expanded_indices[1:nt_mid]) .= Array(view(t_d1, 16:24, :))
             end
 
             Threads.@spawn begin
@@ -256,8 +256,8 @@ function fmm.direct!(
                 @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, q, kernel)
 
                 # Copy back from GPU to CPU
-                view(target_system.particles, 10:12, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d, 10:12, :))
-                view(target_system.particles, 16:24, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d, 16:24, :))
+                view(target_system.particles, 10:12, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d2, 10:12, :))
+                view(target_system.particles, 16:24, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d2, 16:24, :))
             end
         end
 
