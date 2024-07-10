@@ -13,7 +13,7 @@ this_is_a_test = false
 
 include("vortexrings.jl")
 
-function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
+function run_leapfrog(x::Vector{TF}; useGPU=1) where TF
     radius = x[1]
     z = x[2]
 
@@ -45,7 +45,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     Re        = 3000                        # Reynolds number Re = Gamma/nu
 
     # -------------- SOLVER SETTINGS -------------------------------------------
-    ncrit = useGPU ? 192 : 50
+    ncrit = (useGPU>0) ? 192 : 50
     solver = (
               formulation   = vpm.cVPM,
               SFS           = vpm.noSFS,
@@ -103,4 +103,4 @@ x = [0.7906, 0.7906]
 # cfg = ForwardDiff.GradientConfig(run_leapfrog, x, ForwardDiff.Chunk{1}())
 # df = ForwardDiff.gradient(run_leapfrog, x, cfg)
 # df = ForwardDiff.gradient(run_leapfrog, x)
-run_leapfrog(x; useGPU=false)
+run_leapfrog(x; useGPU=1)
