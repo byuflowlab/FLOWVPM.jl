@@ -65,6 +65,10 @@ end
     return nothing
 end
 
+function hcatview(a, row_index, indices)
+    return hcat((view(a, row_index, index) for index in indices)...)
+end
+
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
 # Uses 1 GPU
 function fmm.direct!(
@@ -93,14 +97,15 @@ function fmm.direct!(
         s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
         # Copy target particles from CPU to GPU
-        t_d = CuArray{T}(undef, 24, nt)
-        istart = 1
-        iend = 0
-        for target_index in target_indices
-            iend += length(target_index)
-            copyto!(view(t_d, 1:24, istart:iend), target_system.particles[1:24, target_index])
-            istart = iend + 1
-        end
+        t_d = CuArray{T}(hcatview(target_system.particles, 1:24, target_index))
+        # t_d = CuArray{T}(undef, 24, nt)
+        # istart = 1
+        # iend = 0
+        # for target_index in target_indices
+        #     iend += length(target_index)
+        #     copyto!(view(t_d, 1:24, istart:iend), target_system.particles[1:24, target_index])
+        #     istart = iend + 1
+        # end
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
