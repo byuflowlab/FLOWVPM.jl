@@ -65,8 +65,13 @@ end
     return nothing
 end
 
-function hcatview(a, row_index, indices)
-    return hcat((view(a, row_index, index) for index in indices)...)
+function expand_indices!(expanded_indices, target_indices)
+    i = 1
+    for index in target_indices
+        expanded_indices[i:i+length(index)-1] .= index
+        i += length(index)
+    end
+    return
 end
 
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
@@ -88,24 +93,17 @@ function fmm.direct!(
         for target_index in target_indices
             nt += length(target_index)
         end
+        expanded_indices = Vector{Int}(undef, nt)
+        expand_indices!(expanded_indices, target_indices)
 
         # Sets precision for computations on GPU
-        # This is currently not being used for compatibility with Duals while Broadcasting
         T = Float64
 
         # Copy source particles from CPU to GPU
         s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
         # Copy target particles from CPU to GPU
-        t_d = CuArray{T}(hcatview(target_system.particles, 1:24, target_index))
-        # t_d = CuArray{T}(undef, 24, nt)
-        # istart = 1
-        # iend = 0
-        # for target_index in target_indices
-        #     iend += length(target_index)
-        #     copyto!(view(t_d, 1:24, istart:iend), target_system.particles[1:24, target_index])
-        #     istart = iend + 1
-        # end
+        t_d = CuArray{T}(view(target_system.particles, 1:24, expanded_indices))
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
@@ -130,14 +128,8 @@ function fmm.direct!(
         @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, q, kernel)
 
         # Copy back from GPU to CPU
-        istart = 1
-        iend = 0
-        for target_index in target_indices
-            iend += length(target_index)
-            target_system.particles[10:12, target_index] .= Array(t_d[10:12, istart:iend])
-            target_system.particles[16:24, target_index] .= Array(t_d[16:24, istart:iend])
-            istart = iend + 1
-        end
+        view(target_system.particles, 10:12, expanded_indices) .= Array(view(t_d, 10:12, :))
+        view(target_system.particles, 16:24, expanded_indices) .= Array(view(t_d, 16:24, :))
 
         # SFS contribution
         r = zero(eltype(source_system))
@@ -172,9 +164,16 @@ function fmm.direct!(
         # Get CUDA devices
         devs = CUDA.devices()
 
-        # Compute no. of target indices to split into 2
-        n_indices = length(target_indices)
-        n_indices_mid = cld(n_indices, 2)
+        # Compute expanded indices and split no. of targets
+        nt = 0
+        for index in target_indices
+            nt += length(target_indices)
+        end
+        expanded_indices = Vector{Int}(undef, nt)
+        expand_indices!(expanded_indices, target_indices)
+        nt_mid = cld(nt, 2)
+        nt1 = nt_mid
+        nt2 = nt - nt_mid
 
         # Sets precision for computations on GPU
         # This is currently not being used for compatibility with Duals while Broadcasting
@@ -193,24 +192,11 @@ function fmm.direct!(
                 # Device 1
                 dev = device!(0)
 
-                # Compute number of targets
-                nt1 = 0
-                for target_index in target_indices[1:n_indices_mid]
-                    nt1 += length(target_index)
-                end
-
                 # Copy source particles from CPU to GPU
                 s_d1 = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
                 # Copy target particles from CPU to GPU
-                t_d1 = CuArray{T}(undef, 24, nt1)
-                istart = 1
-                iend = 0
-                for target_index in target_indices[1:n_indices_mid]
-                    iend += length(target_index)
-                    copyto!(view(t_d1, 1:24, istart:iend), target_system.particles[1:24, target_index])
-                    istart = iend + 1
-                end
+                t_d1 = CuArray{T}(view(target_system.particles, 1:24, expand_indices[1:nt_mid]))
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
@@ -234,39 +220,19 @@ function fmm.direct!(
                 @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, q, kernel)
 
                 # Copy back from GPU to CPU
-                istart = 1
-                iend = 0
-                for target_index in target_indices[1:n_indices_mid]
-                    iend += length(target_index)
-                    target_system.particles[10:12, target_index] .= Array(t_d1[10:12, istart:iend])
-                    target_system.particles[16:24, target_index] .= Array(t_d1[16:24, istart:iend])
-                    istart = iend + 1
-                end
-
+                view(target_system.particles, 10:12, expanded_indices[1:nt_mid]) .= Array(view(t_d, 10:12, :))
+                view(target_system.particles, 16:24, expanded_indices[1:nt_mid]) .= Array(view(t_d, 16:24, :))
             end
 
             Threads.@spawn begin
                 # Device 2
                 dev = device!(1)
 
-                # Compute number of targets
-                nt2 = 0
-                for target_index in target_indices[n_indices_mid+1:end]
-                    nt2 += length(target_index)
-                end
-
                 # Copy source particles from CPU to GPU
                 s_d2 = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
                 # Copy target particles from CPU to GPU
-                t_d2 = CuArray{T}(undef, 24, nt2)
-                istart = 1
-                iend = 0
-                for target_index in target_indices[n_indices_mid+1:end]
-                    iend += length(target_index)
-                    copyto!(view(t_d2, 1:24, istart:iend), target_system.particles[1:24, target_index])
-                    istart = iend + 1
-                end
+                t_d2 = CuArray{T}(view(target_system.particles, 1:24, expand_indices[nt_mid+1:nt]))
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
@@ -290,14 +256,8 @@ function fmm.direct!(
                 @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, q, kernel)
 
                 # Copy back from GPU to CPU
-                istart = 1
-                iend = 0
-                for target_index in target_indices[n_indices_mid+1:end]
-                    iend += length(target_index)
-                    target_system.particles[10:12, target_index] .= Array(t_d2[10:12, istart:iend])
-                    target_system.particles[16:24, target_index] .= Array(t_d2[16:24, istart:iend])
-                    istart = iend + 1
-                end
+                view(target_system.particles, 10:12, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d, 10:12, :))
+                view(target_system.particles, 16:24, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d, 16:24, :))
             end
         end
 
