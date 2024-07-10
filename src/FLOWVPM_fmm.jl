@@ -169,7 +169,7 @@ function fmm.direct!(
 
         # Compute no. of target indices to split into 2
         n_indices = length(target_indices)
-        n_indices_mid = cld(n_indicies, 2)
+        n_indices_mid = cld(n_indices, 2)
 
         # Sets precision for computations on GPU
         # This is currently not being used for compatibility with Duals while Broadcasting
@@ -214,7 +214,7 @@ function fmm.direct!(
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
-                blocks::Int32 = cld(nt2, p)
+                blocks::Int32 = cld(nt1, p)
                 shmem = sizeof(T) * 7 * p
 
                 # Check if GPU shared memory is sufficient
