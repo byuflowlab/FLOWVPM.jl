@@ -354,7 +354,7 @@ end
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
 function warmup_gpu(verbose=false; n=100)
-    ngpu = length(CUDA.devices())
+    ngpu::Int = length(CUDA.devices())
     if ngpu == 0
         @warn("No CUDA devices found")
 
