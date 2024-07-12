@@ -108,6 +108,8 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 const pseudo3level_beforeUJ = dynamicprocedure_pseudo3level_beforeUJ
 const pseudo3level_afterUJ = dynamicprocedure_pseudo3level_afterUJ
 const pseudo3level_positive_afterUJ(args...; optargs...) = pseudo3level_afterUJ(args...; force_positive=true, optargs...)
+const pseudo3level = (pseudo3level_beforeUJ, pseudo3level_afterUJ)
+const pseudo3level_positive = (pseudo3level_beforeUJ, pseudo3level_positive_afterUJ)
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
