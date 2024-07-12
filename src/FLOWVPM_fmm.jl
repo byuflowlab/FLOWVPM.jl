@@ -102,17 +102,25 @@ function fmm.direct!(
         # Copy source particles from CPU to GPU
         s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
+        # Pad target array to nearest multiple of 10
+        # for efficient p, q launch config
+        t_padding = 0
+        if mod(nt, 10) > 10
+            t_padding = nt + (10 - mod(nt, 10))
+        end
+
         # Copy target particles from CPU to GPU
         t_d = CuArray{T}(view(target_system.particles, 1:24, expanded_indices))
+        t_size = nt + t_padding
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(nt; T=T)
+        p, q = get_launch_config(t_size; T=T)
 
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
-        blocks::Int32 = cld(nt, p)
+        blocks::Int32 = cld(t_size, p)
         shmem = sizeof(T) * 7 * p
 
         # Check if GPU shared memory is sufficient
@@ -125,7 +133,7 @@ function fmm.direct!(
 
         # Compute interactions using GPU
         kernel = source_system.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, q, kernel)
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
 
         # Copy back from GPU to CPU
         view(target_system.particles, 10:12, expanded_indices) .= Array(view(t_d, 10:12, :))
@@ -217,7 +225,7 @@ function fmm.direct!(
 
                 # Compute interactions using GPU
                 kernel = source_system.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, q, kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, p, q, kernel)
 
                 # Copy back from GPU to CPU
                 view(target_system.particles, 10:12, expanded_indices[1:nt_mid]) .= Array(view(t_d1, 10:12, :))
@@ -253,7 +261,7 @@ function fmm.direct!(
 
                 # Compute interactions using GPU
                 kernel = source_system.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, q, kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, p, q, kernel)
 
                 # Copy back from GPU to CPU
                 view(target_system.particles, 10:12, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d2, 10:12, :))

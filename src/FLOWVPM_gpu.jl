@@ -123,21 +123,22 @@ end
 
 # Each thread handles a single target and uses local GPU memory
 # Sources divided into multiple columns and influence is computed by multiple threads
-function gpu_atomic_direct!(s, t, num_cols, kernel)
+function gpu_atomic_direct!(s, t, p, num_cols, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
     ithread::Int32 = threadIdx().x
-    p::Int32 = t_size/gridDim().x
 
     # Row and column indices of threads in a block
     row = (ithread-1) % p + 1
     col = floor(Int32, (ithread-1)/p) + 1
 
     itarget::Int32 = row + (blockIdx().x-1)*p
-    @inbounds tx = t[1, itarget]
-    @inbounds ty = t[2, itarget]
-    @inbounds tz = t[3, itarget]
+    if itarget <= t_size
+        @inbounds tx = t[1, itarget]
+        @inbounds ty = t[2, itarget]
+        @inbounds tz = t[3, itarget]
+    end
 
     n_tiles::Int32 = CUDA.ceil(Int32, s_size / p)
     bodies_per_col::Int32 = CUDA.ceil(Int32, p / num_cols)
@@ -179,7 +180,9 @@ function gpu_atomic_direct!(s, t, num_cols, kernel)
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1)
             if isource <= s_size
-                out .= gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
+                if itarget <= t_size
+                    out .= gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
+                end
 
                 # Sum up influences for each source in a tile
                 idim = 1
@@ -197,14 +200,16 @@ function gpu_atomic_direct!(s, t, num_cols, kernel)
     # Sum up accelerations for each target/thread
     # Each target will be accessed by q no. of threads
     idim = 1
-    while idim <= 3
-        @inbounds CUDA.@atomic t[9+idim, itarget] += UJ[idim]
-        idim += 1
-    end
-    idim = 4
-    while idim <= 12
-        @inbounds CUDA.@atomic t[12+idim, itarget] += UJ[idim]
-        idim += 1
+    if itarget <= t_size
+        while idim <= 3
+            @inbounds CUDA.@atomic t[9+idim, itarget] += UJ[idim]
+            idim += 1
+        end
+        idim = 4
+        while idim <= 12
+            @inbounds CUDA.@atomic t[12+idim, itarget] += UJ[idim]
+            idim += 1
+        end
     end
     return
 end
