@@ -22,7 +22,7 @@ function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_bloc
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 
-    divs_n = divisors(nt)
+    divs_n = sort(divisors(nt))
     p = 1
     q = 1
     ip = 1
