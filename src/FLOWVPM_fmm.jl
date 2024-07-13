@@ -102,11 +102,11 @@ function fmm.direct!(
         # Copy source particles from CPU to GPU
         s_d = CuArray{T}(view(source_system.particles, 1:7, source_index))
 
-        # Pad target array to nearest multiple of 10
+        # Pad target array to nearest multiple of 32 (warp size)
         # for efficient p, q launch config
         t_padding = 0
-        if mod(nt, 10) > 10
-            t_padding = nt + (10 - mod(nt, 10))
+        if mod(nt, 32) != 0
+            t_padding = 32*cld(nt, 32) - nt
         end
 
         # Copy target particles from CPU to GPU
@@ -116,7 +116,9 @@ function fmm.direct!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(t_size; T=T, max_threads_per_block=512)
+        p, q = get_launch_config(t_size; T=T, max_threads_per_block=384)
+        ns = length(source_index)
+        # @show nt, ns, p, q
 
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
@@ -209,7 +211,7 @@ function fmm.direct!(
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q = get_launch_config(nt1; T=T, max_threads_per_block=512)
+                p, q = get_launch_config(nt1; T=T, max_threads_per_block=384)
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
@@ -245,7 +247,7 @@ function fmm.direct!(
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q = get_launch_config(nt2; T=T, max_threads_per_block=512)
+                p, q = get_launch_config(nt2; T=T, max_threads_per_block=384)
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
