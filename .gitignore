@@ -8,3 +8,6 @@ fmm.so
 *.xmf
 *.h5
 *.julia_history
+jobscript.sh
+runcase.jl
+*.log
