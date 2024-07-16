@@ -363,7 +363,7 @@ function warmup_gpu(verbose=false; n=100)
     if ngpu == 0
         @warn("No CUDA devices found")
 
-    elseif ngpu <= 2
+    else
         # Create particle field
         pfield = ParticleField(n; useGPU=ngpu)
 
@@ -372,7 +372,7 @@ function warmup_gpu(verbose=false; n=100)
 
         # Run direct computation on particles
         d_switch = FastMultipole.DerivativesSwitch()
-        fmm.direct!(pfield, [1:n], d_switch, pfield, 1:n)
+        fmm.direct_gpu!(pfield, 1:n, d_switch, pfield, 1:n)
 
         if verbose
             @info("CUDA kernel compiled successfully")

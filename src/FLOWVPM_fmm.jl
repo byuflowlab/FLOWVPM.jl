@@ -148,7 +148,7 @@ function fmm.direct_gpu!(
 
         # SFS contribution
         r = zero(eltype(source_system))
-        for target_index in target_indices
+        for (target_index, source_index) in zip(target_indices, source_indices)
             for j_target in target_index
                 for source_particle in eachcol(view(source_system.particles, :, source_index))
                     # include self-induced contribution to SFS
@@ -355,11 +355,9 @@ end
 
 # CPU kernel
 function fmm.direct!(
-        target_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,0},
-        target_index,
+        target_system::ParticleField, target_index,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,0},
-        source_index) where {PS,VPS,VS,GS}
+        source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
         for target_index in target_indices
