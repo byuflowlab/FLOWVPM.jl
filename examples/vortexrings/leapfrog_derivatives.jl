@@ -113,5 +113,5 @@ run_leapfrog(x; useGPU=0)
 run_leapfrog(x; useGPU=0)
 
 # GPU run
-run_leapfrog(x; useGPU=1)
-run_leapfrog(x; useGPU=1)
+run_leapfrog(x; useGPU=2)
+run_leapfrog(x; useGPU=2)
