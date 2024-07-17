@@ -65,41 +65,6 @@ end
     return nothing
 end
 
-function expand_indices!(expanded_indices, indices)
-    i = 1
-    for index in indices
-        expanded_indices[i:i+length(index)-1] .= index
-        i += length(index)
-    end
-    return
-end
-
-function count_leaves(target_indices, source_indices)
-    leaf_idx = Vector{Int}(undef, length(target_indices))
-    leaf_idx[1] = 1
-    count = 1
-    idx = target_indices[1][1]
-    for i = 1:length(target_indices)
-        if idx != target_indices[i][1]
-            count += 1
-            idx = target_indices[i][1]
-        end
-        leaf_idx[i] = count
-    end
-
-    leaf_target_indices = Vector{UnitRange{Int}}(undef, count)
-    leaf_source_indices = [Vector{UnitRange{Int}}() for i = 1:count]
-    idx = 0
-    for i = 1:length(target_indices)
-        push!(leaf_source_indices[leaf_idx[i]], source_indices[i])
-        if idx != leaf_idx[i]
-            leaf_target_indices[leaf_idx[i]] = target_indices[i]
-            idx += 1
-        end
-    end
-    return count, leaf_target_indices, leaf_source_indices
-end
-
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
 # Uses 1 GPU
 function fmm.direct_gpu!(
@@ -190,64 +155,74 @@ function fmm.direct_gpu!(
 end
 
 # GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
-# Uses 2 GPUs
+# Uses all available GPUs
+# Each leaf is loaded on to a gpu and the kernel is launched. Results are copied back after
+# all available gpus are launched asynchronously.
 function fmm.direct_gpu!(
-        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
+        target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,2},
-        source_index) where {PS,VPS,VS,GS}
+        source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
+        source_indices) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
-        for target_index in target_indices
+        for (target_index, source_index) in zip(target_indices, source_indices)
             vorticity_direct(target_system, target_index, source_system, source_index)
         end
     else
-        # Get CUDA devices
-        devs = CUDA.devices()
+        # Count no. of leaves
+        leaf_count, leaf_target_indices, leaf_source_indices = count_leaves(target_indices,
+                                                                            source_indices)
+        ngpus = length(CUDA.devices())
 
-        # Compute expanded indices and split no. of targets
-        nt = 0
-        for target_index in target_indices
-            nt += length(target_index)
-        end
-        expanded_indices = Vector{Int}(undef, nt)
-        expand_indices!(expanded_indices, target_indices)
-        nt_mid = cld(nt, 2)
-        nt1 = nt_mid
-        nt2 = nt - nt_mid
+        t_d = CUDA.zeros(1)  # Dummy initialization so that t_d is defined in all lower scopes
 
-        # Sets precision for computations on GPU
-        # This is currently not being used for compatibility with Duals while Broadcasting
-        T = Float64
+        ileaf = 1
+        while ileaf <= leaf_count
+            leaf_remaining = leaf_count-ileaf+1
 
-        # Raise warnings and errors
-        if Threads.nthreads() < 2
-            @warn "Launch atleast 2 CPU threads for better efficieny"
-        end
-        if length(devs) < 2
-            @error "You set useGPU=2, but only $(length(devs)) GPU/s were available"
-        end
+            ileaf_gpu = ileaf
+            # Copy data to GPU and launch kernel
+            for igpu in min(ngpus, leaf_remaining):-1:1
 
-        @sync begin
-            Threads.@spawn begin
-                # Device 1
-                dev = device!(0)
+                # Set gpu
+                dev = CUDA.device!(igpu-1)
+
+                # Compute number of sources
+                ns = 0
+                for source_index in leaf_source_indices[ileaf_gpu]
+                    ns += length(source_index)
+                end
+                expanded_indices = Vector{Int}(undef, ns)
+                expand_indices!(expanded_indices, leaf_source_indices[ileaf_gpu])
+
+                # Sets precision for computations on GPU
+                T = Float64
 
                 # Copy source particles from CPU to GPU
-                s_d1 = CuArray{T}(view(source_system.particles, 1:7, source_index))
+                s_d = CuArray{T}(view(source_system.particles, 1:7, expanded_indices))
+
+                # Pad target array to nearest multiple of 32 (warp size)
+                # for efficient p, q launch config
+                t_padding = 0
+                nt = length(leaf_target_indices[ileaf_gpu])
+                if mod(nt, 32) != 0
+                    t_padding = 32*cld(nt, 32) - nt
+                end
 
                 # Copy target particles from CPU to GPU
-                t_d1 = CuArray{T}(view(target_system.particles, 1:24, expanded_indices[1:nt_mid]))
+                t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
+                t_size = nt + t_padding
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q = get_launch_config(nt1; T=T, max_threads_per_block=384)
+                p, q = get_launch_config(t_size; T=T, max_threads_per_block=384)
+                # @show nt, ns, p, q
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
-                blocks::Int32 = cld(nt1, p)
+                blocks::Int32 = cld(t_size, p)
                 shmem = sizeof(T) * 7 * p
 
                 # Check if GPU shared memory is sufficient
@@ -259,53 +234,28 @@ function fmm.direct_gpu!(
 
                 # Compute interactions using GPU
                 kernel = source_system.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d1, t_d1, p, q, kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
 
-                # Copy back from GPU to CPU
-                view(target_system.particles, 10:12, expanded_indices[1:nt_mid]) .= Array(view(t_d1, 10:12, :))
-                view(target_system.particles, 16:24, expanded_indices[1:nt_mid]) .= Array(view(t_d1, 16:24, :))
+                ileaf_gpu += 1
             end
 
-            Threads.@spawn begin
-                # Device 2
-                dev = device!(1)
+            ileaf_gpu = ileaf
+            for igpu in min(ngpus, leaf_remaining):-1:1
+                # Set gpu
+                CUDA.device!(igpu-1)
 
-                # Copy source particles from CPU to GPU
-                s_d2 = CuArray{T}(view(source_system.particles, 1:7, source_index))
-
-                # Copy target particles from CPU to GPU
-                t_d2 = CuArray{T}(view(target_system.particles, 1:24, expanded_indices[nt_mid+1:nt]))
-
-                # Get p, q for optimal GPU kernel launch configuration
-                # p is no. of targets in a block
-                # q is no. of columns per block
-                p, q = get_launch_config(nt2; T=T, max_threads_per_block=384)
-
-                # Compute no. of threads, no. of blocks and shared memory
-                threads::Int32 = p*q
-                blocks::Int32 = cld(nt2, p)
-                shmem = sizeof(T) * 7 * p
-
-                # Check if GPU shared memory is sufficient
-                dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
-                if shmem > dev_shmem
-                    error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-                          Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
-                end
-
-                # Compute interactions using GPU
-                kernel = source_system.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d2, t_d2, p, q, kernel)
-
-                # Copy back from GPU to CPU
-                view(target_system.particles, 10:12, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d2, 10:12, :))
-                view(target_system.particles, 16:24, expanded_indices[nt_mid+1:nt]) .= Array(view(t_d2, 16:24, :))
+                # Copy results back from GPU to CPU
+                view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
+                view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
+                ileaf_gpu += 1
             end
+
+            ileaf = ileaf_gpu
         end
 
         # SFS contribution
         r = zero(eltype(source_system))
-        for target_index in target_indices
+        for (target_index, source_index) in zip(target_indices, source_indices)
             for j_target in target_index
                 for source_particle in eachcol(view(source_system.particles, :, source_index))
                     # include self-induced contribution to SFS

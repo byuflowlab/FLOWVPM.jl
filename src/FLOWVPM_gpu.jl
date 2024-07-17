@@ -356,6 +356,41 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
     return
 end
 
+function expand_indices!(expanded_indices, indices)
+    i = 1
+    for index in indices
+        expanded_indices[i:i+length(index)-1] .= index
+        i += length(index)
+    end
+    return
+end
+
+function count_leaves(target_indices, source_indices)
+    leaf_idx = Vector{Int}(undef, length(target_indices))
+    leaf_idx[1] = 1
+    count = 1
+    idx = target_indices[1][1]
+    for i = 1:length(target_indices)
+        if idx != target_indices[i][1]
+            count += 1
+            idx = target_indices[i][1]
+        end
+        leaf_idx[i] = count
+    end
+
+    leaf_target_indices = Vector{UnitRange{Int}}(undef, count)
+    leaf_source_indices = [Vector{UnitRange{Int}}() for i = 1:count]
+    idx = 0
+    for i = 1:length(target_indices)
+        push!(leaf_source_indices[leaf_idx[i]], source_indices[i])
+        if idx != leaf_idx[i]
+            leaf_target_indices[leaf_idx[i]] = target_indices[i]
+            idx += 1
+        end
+    end
+    return count, leaf_target_indices, leaf_source_indices
+end
+
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
 function warmup_gpu(verbose=false; n=100)
