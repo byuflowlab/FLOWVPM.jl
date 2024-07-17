@@ -83,6 +83,9 @@ function fmm.direct_gpu!(
         leaf_count, leaf_target_indices, leaf_source_indices = count_leaves(target_indices,
                                                                             source_indices)
 
+        # Sets precision for computations on GPU
+        T = Float64
+
         for ileaf = 1:leaf_count
             # Compute number of sources
             ns = 0
@@ -91,9 +94,6 @@ function fmm.direct_gpu!(
             end
             expanded_indices = Vector{Int}(undef, ns)
             expand_indices!(expanded_indices, leaf_source_indices[ileaf])
-
-            # Sets precision for computations on GPU
-            T = Float64
 
             # Copy source particles from CPU to GPU
             s_d = CuArray{T}(view(source_system.particles, 1:7, expanded_indices))
@@ -114,7 +114,6 @@ function fmm.direct_gpu!(
             # p is no. of targets in a block
             # q is no. of columns per block
             p, q = get_launch_config(t_size; T=T, max_threads_per_block=384)
-            # @show nt, ns, p, q
 
             # Compute no. of threads, no. of blocks and shared memory
             threads::Int32 = p*q
@@ -178,7 +177,11 @@ function fmm.direct_gpu!(
                                                                             source_indices)
         ngpus = length(CUDA.devices())
 
-        t_d = CUDA.zeros(1)  # Dummy initialization so that t_d is defined in all lower scopes
+        # Sets precision for computations on GPU
+        T = Float64
+
+        # Dummy initialization so that t_d is defined in all lower scopes
+        t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
 
         ileaf = 1
         while ileaf <= leaf_count
@@ -199,9 +202,6 @@ function fmm.direct_gpu!(
                 expanded_indices = Vector{Int}(undef, ns)
                 expand_indices!(expanded_indices, leaf_source_indices[ileaf_gpu])
 
-                # Sets precision for computations on GPU
-                T = Float64
-
                 # Copy source particles from CPU to GPU
                 s_d = CuArray{T}(view(source_system.particles, 1:7, expanded_indices))
 
@@ -214,8 +214,6 @@ function fmm.direct_gpu!(
                 end
 
                 # Copy target particles from CPU to GPU
-                # @show "launch"
-                # @show ileaf_gpu, length(leaf_target_indices[ileaf_gpu])
                 t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
                 t_size = nt + t_padding
 
@@ -223,7 +221,6 @@ function fmm.direct_gpu!(
                 # p is no. of targets in a block
                 # q is no. of columns per block
                 p, q = get_launch_config(t_size; T=T, max_threads_per_block=384)
-                # @show nt, ns, p, q
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
@@ -241,17 +238,18 @@ function fmm.direct_gpu!(
                 kernel = source_system.kernel.g_dgdr
                 @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
 
+                t_d_list[igpu] = t_d
+
                 ileaf_gpu += 1
             end
 
             ileaf_gpu = ileaf
             for igpu in min(ngpus, leaf_remaining):-1:1
-                # nt = length(leaf_target_indices[ileaf_gpu])
-                # @show igpu, leaf_count, ileaf_gpu, nt, size(t_d, 2)
                 # Set gpu
                 CUDA.device!(igpu-1)
 
                 # Copy results back from GPU to CPU
+                t_d = t_d_list[igpu]
                 view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
                 view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
 
