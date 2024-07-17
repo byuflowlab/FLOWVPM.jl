@@ -110,8 +110,8 @@ FLOWVPM.warmup_gpu()
 
 # CPU run
 run_leapfrog(x; useGPU=0)
-run_leapfrog(x; useGPU=0)
+@time run_leapfrog(x; useGPU=0)
 
 # GPU run
 run_leapfrog(x; useGPU=1)
-run_leapfrog(x; useGPU=1)
+@time run_leapfrog(x; useGPU=1)
