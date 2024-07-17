@@ -136,6 +136,9 @@ function fmm.direct_gpu!(
             # Copy back from GPU to CPU
             view(target_system.particles, 10:12, leaf_target_indices[ileaf]) .= Array(view(t_d, 10:12, :))
             view(target_system.particles, 16:24, leaf_target_indices[ileaf]) .= Array(view(t_d, 16:24, :))
+
+            # Clear GPU array to avoid GC pressure
+            CUDA.unsafe_free!(t_d)
         end
 
         # SFS contribution
@@ -211,6 +214,8 @@ function fmm.direct_gpu!(
                 end
 
                 # Copy target particles from CPU to GPU
+                # @show "launch"
+                # @show ileaf_gpu, length(leaf_target_indices[ileaf_gpu])
                 t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
                 t_size = nt + t_padding
 
@@ -241,12 +246,18 @@ function fmm.direct_gpu!(
 
             ileaf_gpu = ileaf
             for igpu in min(ngpus, leaf_remaining):-1:1
+                # nt = length(leaf_target_indices[ileaf_gpu])
+                # @show igpu, leaf_count, ileaf_gpu, nt, size(t_d, 2)
                 # Set gpu
                 CUDA.device!(igpu-1)
 
                 # Copy results back from GPU to CPU
                 view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
                 view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
+
+                # Clear GPU array to avoid GC pressure
+                CUDA.unsafe_free!(t_d)
+
                 ileaf_gpu += 1
             end
 
