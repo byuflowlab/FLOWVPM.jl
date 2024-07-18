@@ -1,18 +1,16 @@
 # Contains utilities for handling gpu kernel
-function check_launch(n, p, q; T=Float32, max_threads_per_block=0, throw_error=true)
+function check_launch(n, p, q; T=Float32, max_threads_per_block=0, throw_error=false)
     if max_threads_per_block == 0
         max_threads_per_block = T==Float32 ? 784 : 256
     end
 
-    isgood = true
+    if p > n; throw_error && error("p must be less than or equal to n"); return false; end
+    if p*q >= max_threads_per_block; throw_error && error("p*q must be less than $max_threads_per_block"); return false; end
+    if q > p; throw_error && error("q must be less than or equal to p"); return false; end
+    if n % p != 0; throw_error && error("n must be divisible by p"); return false; end
+    if p % q != 0; throw_error && error("p must be divisible by q"); return false; end
 
-    if p > n; isgood = false; throw_error && error("p must be less than or equal to n"); end
-    if p*q >= max_threads_per_block; isgood = false; throw_error && error("p*q must be less than $max_threads_per_block"); end
-    if q > p; isgood = false; throw_error && error("q must be less than or equal to p"); end
-    if n % p != 0; isgood = false; throw_error && error("n must be divisible by p"); end
-    if p % q != 0; isgood = false; throw_error && error("p must be divisible by q"); end
-
-    return isgood
+    return true
 end
 
 function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_block=0)
@@ -26,11 +24,12 @@ function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_bloc
     p = 1
     q = 1
     ip = 1
-    iq = 1
     for (i, div) in enumerate(divs_n)
         if div <= p_max
             p = div
             ip = i
+        else
+            break
         end
     end
 
@@ -40,20 +39,20 @@ function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_bloc
     i_weight = 0
     j_weight = 1-i_weight
 
-    max_ij = i_weight*ip + j_weight*iq
-    if nt <= 2^13
-        divs_p = divs_n
-        for i in 1:length(divs_n)
-            for j in 1:length(divs_n)
-                isgood = check_launch(nt, divs_n[i], divs_p[j]; max_threads_per_block=max_threads_per_block, T=T, throw_error=false)
+    max_ij = i_weight*ip + j_weight*1
+    if nt <= 1<<13
+        isgood = true
+        for i in 1:ip
+            for j in 1:ip
+                isgood = check_launch(nt, divs_n[i], divs_n[j]; max_threads_per_block=max_threads_per_block, T=T)
                 if isgood && (divs_n[i] <= p_max)
                     # Check if this is the max achievable ij value
                     # in the p, q choice matrix
                     obj_val = i_weight*i+j_weight*j
-                    if (obj_val >= max_ij) && (divs_p[j] <= q_max)
+                    if (obj_val >= max_ij) && (divs_n[j] <= q_max)
                         max_ij = obj_val
                         p = divs_n[i]
-                        q = divs_p[j]
+                        q = divs_n[j]
                     end
                 end
             end
