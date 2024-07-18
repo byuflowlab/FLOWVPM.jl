@@ -1,9 +1,5 @@
 # Contains utilities for handling gpu kernel
-function check_launch(n, p, q; T=Float32, max_threads_per_block=0, throw_error=false)
-    if max_threads_per_block == 0
-        max_threads_per_block = T==Float32 ? 784 : 256
-    end
-
+function check_launch(n, p, q, max_threads_per_block=0; throw_error=false)
     if p > n; throw_error && error("p must be less than or equal to n"); return false; end
     if p*q >= max_threads_per_block; throw_error && error("p*q must be less than $max_threads_per_block"); return false; end
     if q > p; throw_error && error("q must be less than or equal to p"); return false; end
@@ -13,7 +9,7 @@ function check_launch(n, p, q; T=Float32, max_threads_per_block=0, throw_error=f
     return true
 end
 
-function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_block=0)
+function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_block=256)
     if max_threads_per_block == 0
         max_threads_per_block = T==Float32 ? 784 : 256
     end
@@ -44,7 +40,7 @@ function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_bloc
         isgood = true
         for i in 1:ip
             for j in 1:ip
-                isgood = check_launch(nt, divs_n[i], divs_n[j]; max_threads_per_block=max_threads_per_block, T=T)
+                isgood = check_launch(nt, divs_n[i], divs_n[j], max_threads_per_block)
                 if isgood && (divs_n[i] <= p_max)
                     # Check if this is the max achievable ij value
                     # in the p, q choice matrix
