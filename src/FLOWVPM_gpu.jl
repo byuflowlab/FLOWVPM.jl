@@ -9,10 +9,7 @@ function check_launch(n, p, q, max_threads_per_block=0; throw_error=false)
     return true
 end
 
-function get_launch_config(nt; T=Float32, p_max=0, q_max=0, max_threads_per_block=256)
-    if max_threads_per_block == 0
-        max_threads_per_block = T==Float32 ? 784 : 256
-    end
+function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=256)
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 
