@@ -388,22 +388,27 @@ end
 function warmup_gpu(verbose=false; n=100)
     ngpu::Int = length(CUDA.devices())
     if ngpu == 0
-        @warn("No CUDA devices found")
-
+        @warn("No CUDA device/s found")
     else
+        verbose && @info("$ngpu CUDA device/s found")
+
         # Create particle field
         pfield = ParticleField(n; useGPU=2)
 
         # Set no. of dummy particles
         pfield.np = n
 
-        # Run direct computation on particles
+        # Derivative switch for direct function
         d_switch = FastMultipole.DerivativesSwitch()
-        fmm.direct_gpu!(pfield, [1:n], d_switch, pfield, [1:n])
 
-        if verbose
-            @info("CUDA kernel compiled successfully")
-        end
+        # Create ngpu leaves each with 1:n particles
+        target_indices = fill(1:n, ngpu)
+        source_indices = fill(1:n, ngpu)
+
+        # Run direct computation on particles
+        fmm.direct_gpu!(pfield, target_indices, d_switch, pfield, source_indices)
+
+        verbose && @info("CUDA kernel compiled successfully on $ngpu device/s")
     end
 
     return
