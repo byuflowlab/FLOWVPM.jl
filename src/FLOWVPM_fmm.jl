@@ -141,12 +141,12 @@ function fmm.direct_gpu!(
         end
 
         # SFS contribution
-        r = zero(eltype(source_system))
-        for (target_index, source_index) in zip(target_indices, source_indices)
-            for j_target in target_index
-                for source_particle in eachcol(view(source_system.particles, :, source_index))
-                    # include self-induced contribution to SFS
-                    if source_system.toggle_sfs
+        if source_system.toggle_sfs
+            r = zero(eltype(source_system))
+            for (target_index, source_index) in zip(target_indices, source_indices)
+                for j_target in target_index
+                    for source_particle in eachcol(view(source_system.particles, :, source_index))
+                        # include self-induced contribution to SFS
                         Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
                     end
                 end
@@ -263,12 +263,12 @@ function fmm.direct_gpu!(
         end
 
         # SFS contribution
-        r = zero(eltype(source_system))
-        for (target_index, source_index) in zip(target_indices, source_indices)
-            for j_target in target_index
-                for source_particle in eachcol(view(source_system.particles, :, source_index))
-                    # include self-induced contribution to SFS
-                    if source_system.toggle_sfs
+        if source_system.toggle_sfs
+            r = zero(eltype(source_system))
+            for (target_index, source_index) in zip(target_indices, source_indices)
+                for j_target in target_index
+                    for source_particle in eachcol(view(source_system.particles, :, source_index))
+                        # include self-induced contribution to SFS
                         Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
                     end
                 end
