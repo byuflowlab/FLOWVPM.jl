@@ -229,8 +229,8 @@ function fmm.direct_gpu!(
             kernel = source_system.kernel.g_dgdr
             @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, s_d, p, q, kernel)
 
-            view(target_system.particles, 10:12, 1:np) .= Array(view(s_d, 10:12, :))
-            view(target_system.particles, 16:24, 1:np) .= Array(view(s_d, 16:24, :))
+            target_system.particles[10:12, :] .= Array(s_d[10:12, :])
+            target_system.particles[16:24, :] .= Array(s_d[16:24, :])
 
             # Clear GPU array to avoid GC pressure
             CUDA.unsafe_free!(s_d)
