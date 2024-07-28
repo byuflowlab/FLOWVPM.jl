@@ -192,11 +192,11 @@ function fmm.direct_gpu!(
         # Sets precision for computations on GPU
         T = Float64
 
-        if direct_full
-            # Perform direct interaction over the entire particle field
+        # No. of particles
+        np = get_np(target_system)
 
-            # No. of particles
-            np = get_np(target_system)
+        if direct_full && np<40000 && ngpus==1
+            # Perform direct interaction over the entire particle field
 
             # Copy particles from CPU to GPU
             s_d = CuArray{T}(view(target_system.particles, 1:24, 1:np))
