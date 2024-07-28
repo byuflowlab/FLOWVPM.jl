@@ -175,91 +175,148 @@ function fmm.direct_gpu!(
         # Count no. of leaves
         leaf_count, leaf_target_indices, leaf_source_indices = count_leaves(target_indices,
                                                                             source_indices)
+        # Check if it's a direct interaction only case
+        direct_full = true
+        if leaf_count == 8
+            # Check if target leaves are consecutive
+            for i in 1:7
+                if leaf_target_indices[i][end]+1 != leaf_target_indices[i+1][1]
+                    direct_full = false
+                    break
+                end
+            end
+        end
+
         ngpus = length(CUDA.devices())
 
         # Sets precision for computations on GPU
         T = Float64
 
-        # Dummy initialization so that t_d is defined in all lower scopes
-        t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+        if direct_full
+            # Perform direct interaction over the entire particle field
 
-        ileaf = 1
-        while ileaf <= leaf_count
-            leaf_remaining = leaf_count-ileaf+1
+            # No. of particles
+            np = get_np(target_system)
 
-            ileaf_gpu = ileaf
-            # Copy data to GPU and launch kernel
-            for igpu in min(ngpus, leaf_remaining):-1:1
+            # Copy particles from CPU to GPU
+            s_d = CuArray{T}(view(target_system.particles, 1:24, 1:np))
 
-                # Set gpu
-                dev = CUDA.device!(igpu-1)
+            # Pad target array to nearest multiple of 32 (warp size)
+            # for efficient p, q launch config
+            t_padding = (mod(np, 32) == 0) ? 0 : 32*cld(np, 32) - np
 
-                # Compute number of sources
-                ns = 0
-                for source_index in leaf_source_indices[ileaf_gpu]
-                    ns += length(source_index)
-                end
-                expanded_indices = Vector{Int}(undef, ns)
-                expand_indices!(expanded_indices, leaf_source_indices[ileaf_gpu])
+            t_size = np + t_padding
 
-                # Copy source particles from CPU to GPU
-                s_d = CuArray{T}(view(source_system.particles, 1:7, expanded_indices))
+            # Get p, q for optimal GPU kernel launch configuration
+            # p is no. of targets in a block
+            # q is no. of columns per block
+            p, q = get_launch_config(t_size; max_threads_per_block=384)
 
-                # Pad target array to nearest multiple of 32 (warp size)
-                # for efficient p, q launch config
-                t_padding = 0
-                nt = length(leaf_target_indices[ileaf_gpu])
-                if mod(nt, 32) != 0
-                    t_padding = 32*cld(nt, 32) - nt
-                end
+            # Compute no. of threads, no. of blocks and shared memory
+            threads = p*q
+            blocks = cld(t_size, p)
+            shmem = sizeof(T) * 7 * p
 
-                # Copy target particles from CPU to GPU
-                t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
-                t_size = nt + t_padding
-
-                # Get p, q for optimal GPU kernel launch configuration
-                # p is no. of targets in a block
-                # q is no. of columns per block
-                p, q = get_launch_config(t_size; max_threads_per_block=384)
-
-                # Compute no. of threads, no. of blocks and shared memory
-                threads::Int32 = p*q
-                blocks::Int32 = cld(t_size, p)
-                shmem = sizeof(T) * 7 * p
-
-                # Check if GPU shared memory is sufficient
-                dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
-                if shmem > dev_shmem
-                    error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-                          Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
-                end
-
-                # Compute interactions using GPU
-                kernel = source_system.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
-
-                t_d_list[igpu] = t_d
-
-                ileaf_gpu += 1
+            # Check if GPU shared memory is sufficient
+            dev = CUDA.device!(0)
+            dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+            if shmem > dev_shmem
+                error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                      Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
             end
 
-            ileaf_gpu = ileaf
-            for igpu in min(ngpus, leaf_remaining):-1:1
-                # Set gpu
-                CUDA.device!(igpu-1)
+            # Compute interactions using GPU
+            kernel = source_system.kernel.g_dgdr
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, s_d, p, q, kernel)
 
-                # Copy results back from GPU to CPU
-                t_d = t_d_list[igpu]
-                view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
-                view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
+            view(target_system.particles, 10:12, 1:np) .= Array(view(s_d, 10:12, :))
+            view(target_system.particles, 16:24, 1:np) .= Array(view(s_d, 16:24, :))
 
-                # Clear GPU array to avoid GC pressure
-                CUDA.unsafe_free!(t_d)
+            # Clear GPU array to avoid GC pressure
+            CUDA.unsafe_free!(s_d)
 
-                ileaf_gpu += 1
+        else
+            # Dummy initialization so that t_d is defined in all lower scopes
+            t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+
+            ileaf = 1
+            while ileaf <= leaf_count
+                leaf_remaining = leaf_count-ileaf+1
+
+                ileaf_gpu = ileaf
+                # Copy data to GPU and launch kernel
+                for igpu in min(ngpus, leaf_remaining):-1:1
+
+                    # Set gpu
+                    dev = CUDA.device!(igpu-1)
+
+                    # Compute number of sources
+                    ns = 0
+                    for source_index in leaf_source_indices[ileaf_gpu]
+                        ns += length(source_index)
+                    end
+                    expanded_indices = Vector{Int}(undef, ns)
+                    expand_indices!(expanded_indices, leaf_source_indices[ileaf_gpu])
+
+                    # Copy source particles from CPU to GPU
+                    s_d = CuArray{T}(view(source_system.particles, 1:7, expanded_indices))
+
+                    # Pad target array to nearest multiple of 32 (warp size)
+                    # for efficient p, q launch config
+                    t_padding = 0
+                    nt = length(leaf_target_indices[ileaf_gpu])
+                    if mod(nt, 32) != 0
+                        t_padding = 32*cld(nt, 32) - nt
+                    end
+
+                    # Copy target particles from CPU to GPU
+                    t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
+                    t_size = nt + t_padding
+
+                    # Get p, q for optimal GPU kernel launch configuration
+                    # p is no. of targets in a block
+                    # q is no. of columns per block
+                    p, q = get_launch_config(t_size; max_threads_per_block=384)
+
+                    # Compute no. of threads, no. of blocks and shared memory
+                    threads::Int32 = p*q
+                    blocks::Int32 = cld(t_size, p)
+                    shmem = sizeof(T) * 7 * p
+
+                    # Check if GPU shared memory is sufficient
+                    dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+                    if shmem > dev_shmem
+                        error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                              Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
+                    end
+
+                    # Compute interactions using GPU
+                    kernel = source_system.kernel.g_dgdr
+                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
+
+                    t_d_list[igpu] = t_d
+
+                    ileaf_gpu += 1
+                end
+
+                ileaf_gpu = ileaf
+                for igpu in min(ngpus, leaf_remaining):-1:1
+                    # Set gpu
+                    CUDA.device!(igpu-1)
+
+                    # Copy results back from GPU to CPU
+                    t_d = t_d_list[igpu]
+                    view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
+                    view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
+
+                    # Clear GPU array to avoid GC pressure
+                    CUDA.unsafe_free!(t_d)
+
+                    ileaf_gpu += 1
+                end
+
+                ileaf = ileaf_gpu
             end
-
-            ileaf = ileaf_gpu
         end
 
         # SFS contribution
