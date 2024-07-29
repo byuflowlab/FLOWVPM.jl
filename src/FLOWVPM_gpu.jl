@@ -86,9 +86,9 @@ const const4 = 0.25/pi
         crss3 = -T(const4) / r3 * ( dX1*gam2 - dX2*gam1 )
 
         # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-        UJ[1] = g_sgm * crss1
-        UJ[2] = g_sgm * crss2
-        UJ[3] = g_sgm * crss3
+        @inbounds UJ[1] = g_sgm * crss1
+        @inbounds UJ[2] = g_sgm * crss2
+        @inbounds UJ[3] = g_sgm * crss3
 
         # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
         # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
@@ -97,17 +97,17 @@ const const4 = 0.25/pi
         # Adds the Kronecker delta term
         aux2 = -T(const4) * g_sgm / r3
         # j=1
-        UJ[4] = aux * crss1 * dX1
-        UJ[5] = aux * crss2 * dX1 - aux2 * gam3
-        UJ[6] = aux * crss3 * dX1 + aux2 * gam2
+        @inbounds UJ[4] = aux * crss1 * dX1
+        @inbounds UJ[5] = aux * crss2 * dX1 - aux2 * gam3
+        @inbounds UJ[6] = aux * crss3 * dX1 + aux2 * gam2
         # j=2
-        UJ[7] = aux * crss1 * dX2 + aux2 * gam3
-        UJ[8] = aux * crss2 * dX2
-        UJ[9] = aux * crss3 * dX2 - aux2 * gam1
+        @inbounds UJ[7] = aux * crss1 * dX2 + aux2 * gam3
+        @inbounds UJ[8] = aux * crss2 * dX2
+        @inbounds UJ[9] = aux * crss3 * dX2 - aux2 * gam1
         # j=3
-        UJ[10] = aux * crss1 * dX3 - aux2 * gam2
-        UJ[11] = aux * crss2 * dX3 + aux2 * gam1
-        UJ[12] = aux * crss3 * dX3
+        @inbounds UJ[10] = aux * crss1 * dX3 - aux2 * gam2
+        @inbounds UJ[11] = aux * crss2 * dX3 + aux2 * gam1
+        @inbounds UJ[12] = aux * crss3 * dX3
     end
 
     return UJ
@@ -122,8 +122,8 @@ function gpu_atomic_direct!(s, t, p, num_cols, kernel)
     ithread::Int32 = threadIdx().x
 
     # Row and column indices of threads in a block
-    row = (ithread-1) % p + 1
-    col = floor(Int32, (ithread-1)/p) + 1
+    row::Int32 = (ithread-1) % p + 1
+    col::Int32 = floor(Int32, (ithread-1)/p) + 1
 
     itarget::Int32 = row + (blockIdx().x-1)*p
     if itarget <= t_size
@@ -143,7 +143,6 @@ function gpu_atomic_direct!(s, t, p, num_cols, kernel)
     UJ = @MVector zeros(eltype(t), 12)
     out = @MVector zeros(eltype(t), 12)
     idim::Int32 = 0
-    idx::Int32 = 0
     i::Int32 = 0
     isource::Int32 = 0
 
@@ -151,11 +150,11 @@ function gpu_atomic_direct!(s, t, p, num_cols, kernel)
     while itile <= n_tiles
         # Each thread will copy source coordinates corresponding to its index into shared memory. This will be done for each tile.
         if (col == 1)
-            idx = row + (itile-1)*p
+            isource = row + (itile-1)*p
             idim = 1
-            if idx <= s_size
+            if isource <= s_size
                 while idim <= 7
-                    @inbounds sh_mem[idim, row] = s[idim, idx]
+                    @inbounds sh_mem[idim, row] = s[idim, isource]
                     idim += 1
                 end
             else
@@ -220,8 +219,8 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
     p::Int32 = t_size/gridDim().x
 
     # Row and column indices of threads in a block
-    row = (ithread-1) % p + 1
-    col = floor(Int32, (ithread-1)/p) + 1
+    row::Int32 = (ithread-1) % p + 1
+    col::Int32 = floor(Int32, (ithread-1)/p) + 1
 
     itarget::Int32 = row + (blockIdx().x-1)*p
     @inbounds tx = t[1, itarget]

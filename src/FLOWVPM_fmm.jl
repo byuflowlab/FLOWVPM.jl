@@ -130,7 +130,7 @@ function fmm.direct_gpu!(
 
             # Compute interactions using GPU
             kernel = source_system.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
 
             # Copy back from GPU to CPU
             view(target_system.particles, 10:12, leaf_target_indices[ileaf]) .= Array(view(t_d, 10:12, :))
@@ -227,7 +227,7 @@ function fmm.direct_gpu!(
 
             # Compute interactions using GPU
             kernel = source_system.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, s_d, p, q, kernel)
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, s_d, Int32(p), Int32(q), kernel)
 
             target_system.particles[10:12, :] .= Array(s_d[10:12, :])
             target_system.particles[16:24, :] .= Array(s_d[16:24, :])
@@ -292,7 +292,7 @@ function fmm.direct_gpu!(
 
                     # Compute interactions using GPU
                     kernel = source_system.kernel.g_dgdr
-                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, p, q, kernel)
+                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
 
                     t_d_list[igpu] = t_d
 
