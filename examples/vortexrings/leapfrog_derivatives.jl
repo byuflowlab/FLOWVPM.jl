@@ -13,7 +13,7 @@ this_is_a_test = false
 
 include("vortexrings.jl")
 
-function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
+function run_leapfrog(x::Vector{TF}; useGPU=1) where TF
     radius = x[1]
     z = x[2]
 
@@ -22,7 +22,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     verbose1  = true
 
     # -------------- SIMULATION PARAMETERS -------------------------------------
-    nsteps    = 10                          # Number of time steps
+    nsteps    = 5                           # Number of time steps
     Rtot      = nsteps/100                  # (m) run simulation for equivalent
     #     time to this many radii
     nrings    = 2                           # Number of rings
@@ -33,7 +33,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     Rcrosss   = 0.10*Rs                     # (m) cross-sectional radii
     sigmas    = Rcrosss                     # Particle smoothing of each radius
     Nphis     = 100*ones(Int, nrings)       # Number of cross sections per ring
-    ncs       = 1*ones(Int, nrings)         # Number layers per cross section
+    ncs       = 3*ones(Int, nrings)         # Number layers per cross section
     extra_ncs = 0*ones(Int, nrings)         # Number of extra layers per cross section
     Os        = [[0, 0, dZ*(ri-1)] for ri in 1:nrings]  # Position of each ring
     Oaxiss    = [I for ri in 1:nrings]      # Orientation of each ring
@@ -45,7 +45,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=true) where TF
     Re        = 3000                        # Reynolds number Re = Gamma/nu
 
     # -------------- SOLVER SETTINGS -------------------------------------------
-    ncrit = useGPU ? 192 : 50
+    ncrit = (useGPU>0) ? 1600 : 50
     solver = (
               formulation   = vpm.cVPM,
               SFS           = vpm.noSFS,
@@ -102,5 +102,16 @@ using ForwardDiff
 x = [0.7906, 0.7906]
 # cfg = ForwardDiff.GradientConfig(run_leapfrog, x, ForwardDiff.Chunk{1}())
 # df = ForwardDiff.gradient(run_leapfrog, x, cfg)
-df = ForwardDiff.gradient(run_leapfrog, x)
-# run_leapfrog(x)
+# df = ForwardDiff.gradient(run_leapfrog, x)
+# run_leapfrog(x; useGPU=1)
+
+using CUDA
+FLOWVPM.warmup_gpu()
+
+# CPU run
+run_leapfrog(x; useGPU=0)
+run_leapfrog(x; useGPU=0)
+
+# GPU run
+run_leapfrog(x; useGPU=2)
+run_leapfrog(x; useGPU=2)

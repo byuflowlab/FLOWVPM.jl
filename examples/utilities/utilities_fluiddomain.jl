@@ -70,27 +70,31 @@ function computefluiddomain(pfield::vpm.ParticleField,
                                     grid_names="automatic",
                                     num=nothing,
                                     verbose=true, v_lvl=0,
+                                    Uinf=zeros(3),
                                     )
 
     _grid_names = grid_names=="automatic" ? ("Grid$(gi)" for gi in 1:length(grids)) : grid_names
     str = ""
 
-    t = @elapsed begin
+    # t = @elapsed begin
 
         np = vpm.get_np(pfield)           # Original number of particles
 
         # Rescale smoothing radii
         for P in vpm.iterate(pfield; include_static=true)
-            P.sigma[1] *= scale_sigma
+            sigma = vpm.get_sigma(P)
+            sigma[1] *= scale_sigma
         end
 
         # Estimate average sigma and minimum Gamma
         meansigma = 0
         minnormGamma = Inf
         for P in vpm.iterate(pfield; include_static=true)
-            meansigma += P.sigma[1]
+            sigma = vpm.get_sigma(P)
+            Gamma = vpm.get_Gamma(P)
+            meansigma += sigma[1]
 
-            normGamma = sqrt(P.Gamma[1]^2 + P.Gamma[2]^2 + P.Gamma[3]^2)
+            normGamma = sqrt(Gamma[1]^2 + Gamma[2]^2 + Gamma[3]^2)
             if normGamma < minnormGamma
                 minnormGamma = normGamma
             end
@@ -107,19 +111,19 @@ function computefluiddomain(pfield::vpm.ParticleField,
             end
         end
 
-    end
+    # end
 
-    if verbose
-        println("\t"^(v_lvl)*"Add nodes as particles:\t$(round(t, digits=1)) s")
-        println("\t"^(v_lvl)*"Number of particles:\t$(vpm.get_np(pfield))")
-    end
+    # if verbose
+    #     println("\t"^(v_lvl)*"Add nodes as particles:\t$(round(t, digits=1)) s")
+    #     println("\t"^(v_lvl)*"Number of particles:\t$(vpm.get_np(pfield))")
+    # end
 
     # Pre-allocate memory for U and W in grids
     fields = ["U", "W"]
     if add_J; for i in 1:3; push!(fields, "J$i"); end; end;
     if add_Wapprox; push!(fields, "Wapprox"); end;
 
-    t = @elapsed begin
+    # t = @elapsed begin
         for field_name in fields
             for grid in grids
                 if !(field_name in keys(grid.field))
@@ -128,37 +132,37 @@ function computefluiddomain(pfield::vpm.ParticleField,
                 end
             end
         end
-    end
+    # end
 
-    if verbose
-        println("\t"^(v_lvl)*"Pre-allocate U and W memory:\t$(round(t, digits=1)) s")
-    end
+    # if verbose
+    #     println("\t"^(v_lvl)*"Pre-allocate U and W memory:\t$(round(t, digits=1)) s")
+    # end
 
     # Evaluate particle field
-    t = @elapsed pfield.UJ(pfield; reset=true)
+    pfield.UJ(pfield; reset=true)
 
-    if verbose
-        println("\t"^(v_lvl)*"Evaluate UJ:\t\t$(round(t, digits=1)) s")
-    end
+    # if verbose
+    #     println("\t"^(v_lvl)*"Evaluate UJ:\t\t$(round(t, digits=1)) s")
+    # end
 
     # Add freestream
     if add_Uinf
-        Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+        # Uinf = pfield.Uinf(pfield.t)
         for P in vpm.iterate(pfield; start_i=np+1)
-            P.U .+= Uinf
+            vpm.get_U(P) .+= Uinf
         end
     end
 
     # Evaluate RBF-approximated W
     if add_Wapprox
-        t = @elapsed zeta(pfield)
+        zeta(pfield)
 
         if verbose
             println("\t"^(v_lvl)*"Evaluate Wapprox:\t\t$(round(t, digits=1)) s")
         end
     end
 
-    t = @elapsed begin
+    # t = @elapsed begin
 
         prev_np = np
 
@@ -170,7 +174,7 @@ function computefluiddomain(pfield::vpm.ParticleField,
             particles = vpm.iterate(pfield; start_i=rng.start, end_i=rng.stop, include_static=true)
 
             U  = grid.field["U"]["field_data"]
-            U .= (P.U[i] for i in 1:3, P in particles)
+            U .= (vpm.get_U(P)[i] for i in 1:3, P in particles)
 
             W  = grid.field["W"]["field_data"]
             W .= (fun(P) for fun in (vpm.get_W1, vpm.get_W2, vpm.get_W3), P in particles)
@@ -194,13 +198,13 @@ function computefluiddomain(pfield::vpm.ParticleField,
             end
 
             prev_np += nnodes
-        end
+        # end
 
     end
 
-    if verbose
-        println("\t"^(v_lvl)*"Save VTK:\t\t$(round(t, digits=1)) s")
-    end
+    # if verbose
+    #     println("\t"^(v_lvl)*"Save VTK:\t\t$(round(t, digits=1)) s")
+    # end
 
     # Remove node particles
     if remove_nodeparticles
@@ -211,7 +215,8 @@ function computefluiddomain(pfield::vpm.ParticleField,
 
     # Restore original smoothing radii
     for P in vpm.iterate(pfield; include_static=true)
-        P.sigma[1] /= scale_sigma
+        sigma = vpm.get_sigma(P)
+        sigma[1] /= scale_sigma
     end
 
     return str

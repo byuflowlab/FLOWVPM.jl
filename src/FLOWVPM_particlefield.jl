@@ -9,7 +9,7 @@
 =###############################################################################
 
 const nfields = 43
-const useGPU_default = false
+const useGPU_default = 0
 
 ################################################################################
 # FMM STRUCT
@@ -80,7 +80,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
-    useGPU::Bool                                # run on GPU if true, CPU if false
+    useGPU::Int                                 # run on GPU if >0, CPU if 0
 
     # Internal memory for computation
     M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.

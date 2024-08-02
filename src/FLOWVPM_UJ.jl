@@ -62,7 +62,8 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField;
+function UJ_fmm(
+        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
         verbose::Bool=false, # unused
         rbf::Bool=false,
         sfs::Bool=false,
@@ -71,7 +72,7 @@ function UJ_fmm(pfield::ParticleField;
         reset::Bool=true,
         reset_sfs::Bool=false,
         sort::Bool=true
-    )
+    ) where {useGPU}
 
     # reset # TODO should this really have an elseif in between?
     if reset
@@ -90,7 +91,10 @@ function UJ_fmm(pfield::ParticleField;
     farfield = !rbf
     #@show typeof(pfield)
     # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, concurrent_direct=pfield.useGPU)
+    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, gpu=(useGPU>0))
+    # This should be concurrent_direct=(pfield.useGPU > 0)
+    # But until multithread_direct!() works for the target_indices argument,
+    # we'll leave it true
 
     return nothing
 end
