@@ -176,9 +176,12 @@ function fmm.direct_gpu!(
         leaf_count, leaf_target_indices, leaf_source_indices = count_leaves(target_indices,
                                                                             source_indices)
         # Check if it's a direct interaction only case
-        direct_full = true
+        direct_full = leaf_count == 1 ? true : false  # When UJ_direct is selected
+
+        # When UJ_fmm is selected but with a large ncrit value
         if leaf_count == 8
             # Check if target leaves are consecutive
+            direct_full = true
             for i in 1:7
                 if leaf_target_indices[i][end]+1 != leaf_target_indices[i+1][1]
                     direct_full = false
@@ -195,7 +198,7 @@ function fmm.direct_gpu!(
         # No. of particles
         np = get_np(target_system)
 
-        if direct_full && np<40000 && ngpus==1
+        if direct_full# && np<40000 && ngpus==1
             # Perform direct interaction over the entire particle field
 
             # Copy particles from CPU to GPU
