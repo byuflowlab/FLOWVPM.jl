@@ -65,7 +65,7 @@ function addannulus(pfield::vpm.ParticleField, circulation::Real,
     a = R*sqrt(AR)                      # Semi-major axis
     b = R/sqrt(AR)                      # Semi-minor axis
 
-    fun_S(phi, a, b) = a * Elliptic.E(phi, 1-(b/a)^2) # Arc length from 0 to a given angle
+    fun_S(phi, a, b) = a * EllipticFunctions.ellipticE(phi, 1-(b/a)^2) # Arc length from 0 to a given angle
     Stot = fun_S(2*pi, a, b)            # Total perimeter length of centerline
 
                                         # Non-dimensional arc length from 0 to a given value <=1
@@ -151,8 +151,7 @@ function probeline_UW!(pfield, U, W, lines; Gamma=1e-10, sigma=1)
     end
 
     # Evaluate UJ
-    vpm._reset_particles(pfield)
-    pfield.UJ(pfield)
+    pfield.UJ(pfield; reset=true)
 
     # Calculate freestream
     Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)

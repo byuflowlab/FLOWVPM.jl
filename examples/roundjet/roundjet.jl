@@ -14,8 +14,8 @@ vpm = FLOWVPM
 
 import Printf: @printf
 import Roots
-import Cubature
-import Elliptic
+import HCubature
+import EllipticFunctions
 import LinearAlgebra: I
 import ForwardDiff
 

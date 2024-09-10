@@ -36,7 +36,7 @@ where `Oaxis[:, 1]` is the major axis, `Oaxis[:, 2]` is the minor axis, and
 """
 function addvortexring(pfield::vpm.ParticleField, circulation::Real,
                             R::Real, AR::Real, Rcross::Real,
-                            dxoRcross::Real, sigma::Real, minmagGamma::Real;
+                            dxoRcross::Real, sigma::Real; minmagGamma::Real=0.0,
                             O::Vector{<:Real}=zeros(3), Oaxis=I,
                             fx=3.00, fy=3.00, fz=1.75,
                             zeta=(r,Rcross) -> 1/(pi*Rcross^2) * exp(-r^2/Rcross^2),

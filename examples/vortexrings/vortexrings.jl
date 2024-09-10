@@ -14,10 +14,9 @@ vpm = FLOWVPM
 
 import Printf: @printf
 import Roots
-import Cubature
-import Elliptic
+import HCubature
+import EllipticFunctions
 import LinearAlgebra: I
-import DifferentialEquations
 
 try
     # If this variable exist, we know we are running this as a unit test
