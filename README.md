@@ -21,9 +21,9 @@ Furthermore, rVPM is highly efficient since it uses computational elements only 
 FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programming language for high-performance computing.
 The FMM acceleration has been tested in Linux-based machines (including supercomputing HPC clusters).
 Limited support is provided for MacOs and Windows machines, and we would graciously accept pull requests automating the compilation of the FMM for these architectures (see [FLOWExaFMM](https://github.com/byuflowlab/FLOWExaFMM)).
-[Paraview](https://www.paraview.org/) is recommended for visualization of simulations.
+[ParaView](https://www.paraview.org/) is recommended for visualization of simulations.
 
-* Installation instructions: [`docs/installation-linux.ipynb`](https://nbviewer.org/github/byuflowlab/FLOWVPM.jl/blob/master/docs/installation-linux.ipynb)
+* Installation instructions: [`docs/installation-linux.ipynb`](https://nbviewer.org/github/byuflowlab/FLOWVPM.jl/blob/master/docs/installation-linux.ipynb), also see [FLOWUnsteady's docs](https://flow.byu.edu/FLOWUnsteady/installation/general/#FLOWVPM)
 
 
 ## Features
@@ -43,7 +43,7 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
 
 ## Theory and Validation
   * E. J. Alvarez, 2022, *Reformulated Vortex Particle Method and Meshless Large Eddy Simulation of Multirotor Aircraft*. Doctoral Dissertation, Brigham Young University. [[PDF]](https://scholarsarchive.byu.edu/etd/9589/)[[VIDEO]](https://www.nas.nasa.gov/pubs/ams/2022/08-09-22.html)
-  * E. J. Alvarez & A. Ning, 2022, *Reviving the Vortex Particle Method: A Stable Formulation for Meshless Large Eddy Simulation*. In review. [[PDF]](https://arxiv.org/abs/2206.03658)
+  * E. J. Alvarez & A. Ning, 2024, *Stable Vortex Particle Method Formulation for Meshless Large-Eddy Simulation*. AIAA Journal. [[PDF]](https://arc.aiaa.org/doi/epdf/10.2514/1.J063045)
   * E. J. Alvarez, J. Mehr, & A. Ning, 2022, *FLOWUnsteady: An Interactional Aerodynamics Solver for Multirotor Aircraft and Wind Energy*. AIAA AVIATION 2022 Forum. [[PDF]](https://scholarsarchive.byu.edu/facpub/5830/)
 
 ## Sponsors
@@ -70,8 +70,14 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
   [<img src="docs/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://youtu.be/-6aR37Z6hig)
 
 ## About
-  * Main Developer    : Eduardo J Alvarez
-  * Email             : Edo.AlvarezR@gmail.com
-  * Website           : [edoalvarez.com](https://www.edoalvarez.com/)
+
+FLOWVPM is an open-source project led by the [FLOW Lab](http://flow.byu.edu/) at Brigham Young University.
+All contributions are welcome.
+
+If you find FLOWVPM useful in your work, we kindly request that you cite the following paper [[URL]](https://arc.aiaa.org/doi/10.2514/1.J063045) [[PDF]](https://arc.aiaa.org/doi/epdf/10.2514/1.J063045):
+
+>Alvarez, E. J., and Ning, A., “Stable Vortex Particle Method Formulation for Meshless Large-Eddy Simulation,” *AIAA Journal*, 2024. DOI:[10.2514/1.J063045](https://doi.org/10.2514/1.J063045).
+
+  * Developers/contributors : [Eduardo J. Alvarez](https://www.edoalvarez.com/) (main), [Cibin Joseph](https://github.com/cibinjoseph), [Ryan Anderson](https://flow.byu.edu/people/), [Eric Green](https://flow.byu.edu/people/)
   * Created           : 2019
   * License           : MIT
