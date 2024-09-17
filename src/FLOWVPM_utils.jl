@@ -42,7 +42,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
-                      custom_UJ=nothing,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
                       save_pfield::Bool=true,
@@ -86,6 +85,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     # RUN
     for i in 0:nsteps
 
+
         if i%verbose_nsteps==0
             vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
         end
@@ -100,10 +100,11 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         # Time step
         if i!=0
             # Add static particles
+
             remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
+            nextstep(pfield, dt; relax=relax)
 
             # Remove static particles (assumes particles remained sorted)
             if remove==nothing || remove
@@ -112,6 +113,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 end
             end
         end
+    
 
         # Calls user-defined runtime function
         breakflag = runtime_function(pfield, pfield.t, dt;
@@ -119,11 +121,12 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                             vprintln(str, v_lvl+2) : nothing)
 
         # Save particle field
-        if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat
+        if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
                                         overwrite_time=overwrite_time)
         end
+
 
         # User-indicated end of simulation
         if breakflag
@@ -151,9 +154,9 @@ function save(self::ParticleField, file_name::String; path::String="",
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, eltype(self.particles); nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1; R=eltype(self.M), nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
-                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.particles)(0.3)))
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.M)(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
@@ -185,21 +188,16 @@ function save(self::ParticleField, file_name::String; path::String="",
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [get_X(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [get_Gamma(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["sigma"] = [get_sigma(P)[] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [get_circulation(P)[] for P in iterate(self; include_static=true)]
-    h5["vol"] = [get_vol(P)[] for P in iterate(self; include_static=true)]
-    h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
-    # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
-    h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_x"] = [get_J(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_y"] = [get_J(P)[i] for i in 4:6, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_z"] = [get_J(P)[i] for i in 7:9, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["X"] = [P.X[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["Gamma"] = [P.Gamma[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["sigma"] = [P.sigma[1] for P in iterate(self; include_static=true)]
+    h5["circulation"] = [P.circulation[1] for P in iterate(self; include_static=true)]
+    h5["vol"] = [P.vol[1] for P in iterate(self; include_static=true)]
+    h5["static"] = Int[P.static[1] for P in iterate(self; include_static=true)]
+    h5["i"] = [P.index[1] for P in iterate(self; include_static=true)]
 
     if isLES(self)
-        h5["C"] = [get_C(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+        h5["C"] = [P.C[i] for i in 1:3, P in iterate(self; include_static=true)]
     end
 
     # # Connectivity information
@@ -262,41 +260,6 @@ function save(self::ParticleField, file_name::String; path::String="",
                             h5fname, ":Gamma</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
-              # Attribute: velocity
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity\" Type=\"Vector\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":velocity</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
-
-              # Attribute: velocity gradient x
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient x\" Type=\"Vector\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":velocity_gradient_x</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
-
-              # Attribute: velocity gradient y
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient y\" Type=\"Vector\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":velocity_gradient_y</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
-
-              # Attribute: velocity gradient z
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient z\" Type=\"Vector\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":velocity_gradient_z</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
-
-              # Attribute: vorticity
-              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"vorticity\" Type=\"Vector\">\n")
-                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
-                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
-                            h5fname, ":vorticity</DataItem>\n")
-              print(xmf, "\t\t\t\t</Attribute>\n")
-
               # Attribute: sigma
               print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"sigma\" Type=\"Scalar\">\n")
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
@@ -327,11 +290,11 @@ function save(self::ParticleField, file_name::String; path::String="",
 
 
               # Attribute: index
-              # print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
-              #   print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-              #               " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
-              #               h5fname, ":i</DataItem>\n")
-              # print(xmf, "\t\t\t\t</Attribute>\n")
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
+                            " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
+                            h5fname, ":i</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
 
               if isLES(self)
                   # Attribute: C
@@ -466,7 +429,7 @@ end
 
 Reads an HDF5 file containing a particle field created with `save(pfield)`.
 """
-function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
+function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
                                         path::String="",
                                         overwrite::Bool=true,
                                         load_time::Bool=true) where{R<:Real, F, V}

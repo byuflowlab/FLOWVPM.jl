@@ -16,8 +16,7 @@
     `Relaxation(relax, nsteps_relax, rlxf)`
 
 Defines a relaxation method implemented in the function
-`relax(rlxf::Real, p)` where `p` is particle,
-`rlxf` is the relaxation factor between 0
+`relax(rlxf::Real, p::Particle)` where `rlxf` is the relaxation factor between 0
 and 1, with 0 == no relaxation, and 1 == full relaxation. The simulation is
 relaxed every `nsteps_relax` steps.
 """
@@ -28,62 +27,56 @@ struct Relaxation{R,Trelax}
 end
 
 # Make Relaxation object callable
-(rlx::Relaxation)(p) = rlx.relax(rlx.rlxf, p)
+(rlx::Relaxation)(p::Particle) = rlx.relax(rlx.rlxf, p)
 
 
 ##### RELAXATION METHODS #######################################################
 """
-    `relax_Pedrizzetti(rlxf::Real, p)`
+    `relax_Pedrizzetti(rlxf::Real, p::Particle)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
-function relax_pedrizzetti(rlxf::Real, p)
+function relax_pedrizzetti(rlxf::Real, p::Particle)
 
-    J = get_J(p)
-    G = get_Gamma(p)
+    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
+                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
+                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
-
-    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
-
-    G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
-    G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
-    G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
 
     return nothing
 end
 
 
 """
-    `relax_correctedPedrizzetti(rlxf::Real, p)`
+    `relax_correctedPedrizzetti(rlxf::Real, p::Particle)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 This version fixes the error in Pedrizzetti's relaxation that made the strength
 to continually decrease over time. See notebook 20200921 for derivation.
 """
-function relax_correctedpedrizzetti(rlxf::Real, p)
+function relax_correctedpedrizzetti(rlxf::Real, p::Particle)
 
-    J = get_J(p)
-    G = get_Gamma(p)
+    nrmw = sqrt( (p.J[3,2]-p.J[2,3])*(p.J[3,2]-p.J[2,3]) +
+                    (p.J[1,3]-p.J[3,1])*(p.J[1,3]-p.J[3,1]) +
+                    (p.J[2,1]-p.J[1,2])*(p.J[2,1]-p.J[1,2]))
+    nrmGamma = sqrt(p.Gamma[1]^2 + p.Gamma[2]^2 + p.Gamma[3]^2)
 
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
+    b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (
+                                    p.Gamma[1]*(p.J[3,2]-p.J[2,3]) +
+                                    p.Gamma[2]*(p.J[1,3]-p.J[3,1]) +
+                                    p.Gamma[3]*(p.J[2,1]-p.J[1,2])
+                                   ) / (nrmGamma*nrmw))
 
-    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
-
-    b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
-                                    G[2]*(J[7]-J[3]) +
-                                    G[3]*(J[2]-J[4])) / (nrmGamma*nrmw))
-
-    G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
-    G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
-    G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+    p.Gamma[1] = (1-rlxf)*p.Gamma[1] + rlxf*nrmGamma*(p.J[3,2]-p.J[2,3])/nrmw
+    p.Gamma[2] = (1-rlxf)*p.Gamma[2] + rlxf*nrmGamma*(p.J[1,3]-p.J[3,1])/nrmw
+    p.Gamma[3] = (1-rlxf)*p.Gamma[3] + rlxf*nrmGamma*(p.J[2,1]-p.J[1,2])/nrmw
 
     # Normalize the direction of the new vector to maintain the same strength
-    G ./= sqrt(b2)
+    p.Gamma ./= sqrt(b2)
 
     return nothing
 end

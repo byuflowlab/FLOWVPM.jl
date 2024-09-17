@@ -4,9 +4,9 @@
     passed to `run_vpm!(...)` through the `runtime_function` optional argument.
 
 # AUTHORSHIP
-* Author    : Eduardo J Alvarez
-* Email     : Edo.AlvarezR@gmail.com
-* Created   : Jul 2021
+  * Author    : Eduardo J Alvarez
+  * Email     : Edo.AlvarezR@gmail.com
+  * Created   : Jul 2021
 =###############################################################################
 
 
@@ -20,16 +20,16 @@ quick, dirty, and cheap way of getting an idea of how the enstrophy of the
 system may be evolving (see notebook 20210702).
 """
 function monitor_enstrophy_Gamma2(pfield, t, dt; save_path=nothing, run_name="",
-        suff="enstrophy.log",
-        vprintln=(args...)->nothing,
-        out=[])
+                                                    suff="enstrophy.log",
+                                                    vprintln=(args...)->nothing,
+                                                    out=[])
 
     # Calculate enstrophy
     enstrophy = 0
     for P in iterator(pfield)
-        enstrophy += (get_Gamma(P)[1]*get_Gamma(P)[1] +
-                      get_Gamma(P)[2]*get_Gamma(P)[2] +
-                      get_Gamma(P)[3]*get_Gamma(P)[3]) / get_sigma(P)[]^3
+        enstrophy += (P.Gamma[1]*P.Gamma[1]
+                      + P.Gamma[2]*P.Gamma[2] + P.Gamma[3]*P.Gamma[3]
+                                                              ) / P.sigma[1]^3
     end
     enstrophy *= 0.5*pfield.kernel.zeta(0)
 
@@ -70,18 +70,17 @@ precalculated, which is true if this function is called after the relaxation
 step. DON'T USE THIS MONITOR UNLESS YOU KNOW THAT THIS CONDITION IS MET.
 """
 function monitor_enstrophy_Gammaomega(pfield, t, dt; save_path=nothing, run_name="",
-        suff="enstrophy.log",
-        vprintln=(args...)->nothing,
-        out=[])
+                                                    suff="enstrophy.log",
+                                                    vprintln=(args...)->nothing,
+                                                    out=[])
 
     if pfield.nt != 0
 
         # Calculate enstrophy
         enstrophy = 0
         for P in iterator(pfield)
-            enstrophy += (get_Gamma(P)[1]*get_W1(P) +
-                          get_Gamma(P)[2]*get_W2(P) +
-                          get_Gamma(P)[3]*get_W3(P))
+            enstrophy += ( P.Gamma[1]*get_W1(P)
+                          + P.Gamma[2]*get_W2(P) + P.Gamma[3]*get_W3(P) )
         end
         enstrophy *= 0.5
 
@@ -126,11 +125,11 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
     mean = 0
     N, nzero, Nstatic, Ntot = 0, 0, 0, get_np(pfield)
     for P in iterator(pfield)
-        if get_C(P)[1] == 0
+        if P.C[1] == 0
             nzero += 1
         else
             N += 1
-            mean += abs(get_C(P)[1])
+            mean += abs(P.C[1])
         end
 
         if P.static[1]
@@ -146,7 +145,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
 
     for P in iterator(pfield)
 
-        C = abs(get_C(P)[1])
+        C = abs(P.C[1])
 
         if C != 0
             val = C - mean
