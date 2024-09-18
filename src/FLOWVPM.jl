@@ -29,8 +29,8 @@ using StaticArrays
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
 # const fmm = FLOWExaFMM
-import FLOWFMM
-const fmm = FLOWFMM
+import FastMultipole
+const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
