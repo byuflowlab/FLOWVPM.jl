@@ -50,8 +50,9 @@ mutable struct FMM
   ncrit::Int64                    # Max number of particles per leaf
   theta::FLOAT_TYPE                  # Neighborhood criterion
   nonzero_sigma::Bool
+  relative_error::Float64
 
-  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true) = new(p, ncrit, theta, nonzero_sigma)
+  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, relative_error=0.25) = new(p, ncrit, theta, nonzero_sigma, relative_error)
 end
 
 ################################################################################
