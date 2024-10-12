@@ -46,7 +46,7 @@ ts = zeros(length(n_particles))
 nparticles = zeros(Int,length(n_particles))
 for (i,n) in enumerate(n_particles)
     println("Requested np:\t$n")
-    t, np = benchmark_fmm(n; circulation=1.0, Lx=1.0, Ly=1.0, Lz=7.0, overlap=1.3, theta=0.4, p=4, ncrit=50, nonzero_sigma=false)
+    t, np = benchmark_fmm(n; circulation=1.0, Lx=1.0, Ly=1.0, Lz=7.0, overlap=1.3, theta=0.4, p=4, ncrit=15, nonzero_sigma=false)
     println("Actual np:\t$np")
     println("Benchmark:\t$t seconds")
     ts[i] = t
