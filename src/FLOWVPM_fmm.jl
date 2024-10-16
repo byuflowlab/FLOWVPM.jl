@@ -72,7 +72,7 @@ function fmm.direct_gpu!(
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 1},
-        source_indices) where {PS,VPS,VS,GS}
+        source_indices) where {PS,VS,GS}
 
     if source_system.toggle_rbf
         for (target_index, source_index) in zip(target_indices, source_indices)
@@ -165,7 +165,7 @@ function fmm.direct_gpu!(
         target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
-        source_indices) where {PS,VPS,VS,GS}
+        source_indices) where {PS,VS,GS}
 
     if source_system.toggle_rbf
         for (target_index, source_index) in zip(target_indices, source_indices)
@@ -339,9 +339,9 @@ end
 # function fmm.direct!(
 #         target_system::ParticleField{TFT,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
 #         target_index,
-#         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+#         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
 #         source_system::ParticleField{TFS,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-#         source_index) where {TFT,TFS,PS,VPS,VS,GS}
+#         source_index) where {TFT,TFS,PS,VS,GS}
 #
 #     if source_system.toggle_rbf
 #         vorticity_direct(target_system, target_index, source_system, source_index)
@@ -400,7 +400,7 @@ end
 function fmm.direct!(
         target_system::ParticleField, target_indices,
         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
-        source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+        source_system::ParticleField, source_index) where {PS,VS,GS}
 
     if source_system.toggle_rbf
         for target_index in target_indices
