@@ -58,7 +58,7 @@ function cost_error(relative_error, U_direct, i=7)
     Lz=7.0
     overlap=1.3
     theta=0.4
-    p=20
+    p=8
     ncrit=7
     nonzero_sigma=true
     pfield, nparticles = create_pfield(n_particles, seed; circulation, Lx, Ly, Lz, overlap, theta, p, ncrit, nonzero_sigma, relative_error)
@@ -112,21 +112,21 @@ function cost_error_2(rtols, U_direct=nothing)
     εs = zeros(length(rtols))
     for (i,rtol) in enumerate(rtols)
         println("$i: requested rtol = $rtol")
-        t, ε, U_direct = cost_error(rtol,nothing)
+        t, ε, U_direct = cost_error(rtol,U_direct)
         ts[i] = t
         εs[i] = ε
-        @show U_direct[:,1]
     end
     return ts, εs, U_direct
 end
 
 #rtols = [10.0^n for n in [-16,-8,-4,-2,-1,-0.5,0]]
-rtols = [10.0^n for n in [-4,-2,-1,0]]
-#ts, εs, U_direct = cost_error_2(rtols)
+#rtols = [10.0^n for n in [-4,-2,-1,0]]
+rtols = [10.0^n for n in [-8]]
+ts, εs, U_direct = cost_error_2(rtols)
 #rtols2 = [10.0^n for n in [1.0,2.0,3.0]]
 #ts2, εs2 = cost_error(rtols2)
 
-
+#=
 seed = 123
 n_particles = 4^i
 println("\tRequested np:\t$n_particles")
@@ -138,7 +138,7 @@ overlap=1.3
 theta=0.4
 p=4
 ncrit=10
-nonzero_sigma=false
+nonzero_sigma=true
 relative_error = 0.1
 pfield, nparticles = create_pfield(n_particles, seed; circulation, Lx, Ly, Lz, overlap, theta, p, ncrit, nonzero_sigma, relative_error)
 
@@ -152,3 +152,4 @@ Profile.clear()
 @profile pfield.UJ(pfield)
 
 pprof()
+=#
