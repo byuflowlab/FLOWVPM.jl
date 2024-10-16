@@ -53,4 +53,5 @@ for (i,n) in enumerate(n_particles)
     nparticles[i] = np
     println()
 end
-bson.@save "benchmark_vpm_fmm_20231125_nthreads_$(Threads.nthreads()).bson" ts nparticles
+#bson.@save "benchmark_vpm_fmm_20231125_nthreads_$(Threads.nthreads()).bson" ts nparticles
+bson.@save "benchmark_vpm_fmm_20241010_nthreads_$(Threads.nthreads()).bson" ts nparticles

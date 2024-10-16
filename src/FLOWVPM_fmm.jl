@@ -4,8 +4,8 @@
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)[]
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
+#Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
+Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Strength) = get_Gamma(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
@@ -14,7 +14,7 @@ Base.getindex(particle_field::ParticleField, i, ::fmm.Body) = get_particle(parti
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Body) = get_particle(particle_field, i) .= val
 
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
+#Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = set_U(particle_field, i, val)
 Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = set_J(particle_field, i, vec(val))
 
@@ -25,7 +25,7 @@ Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any,
 
 fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
 
-fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
+fmm.body_to_multipole!(system::ParticleField, args...) = fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
 
 @inline function vorticity_direct(target_system::ParticleField, target_index, source_system, source_index)
     for j_target in target_index
@@ -70,7 +70,7 @@ end
 function fmm.direct_gpu!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 1},
         target_indices,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 1},
         source_indices) where {PS,VPS,VS,GS}
 
@@ -163,7 +163,7 @@ end
 function fmm.direct_gpu!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         target_indices,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         source_indices) where {PS,VPS,VS,GS}
 
@@ -399,7 +399,7 @@ end
 # CPU kernel
 function fmm.direct!(
         target_system::ParticleField, target_indices,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
