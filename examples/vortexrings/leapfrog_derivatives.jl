@@ -17,7 +17,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=1) where TF
     radius = x[1]
     z = x[2]
 
-    save_path = "leapfrog_simulation00"     # Simulation gets saved in this folder
+    save_path = "leapfrog_simulation.case"     # Simulation gets saved in this folder
 
     verbose1  = true
 
