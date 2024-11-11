@@ -11,3 +11,4 @@ fmm.so
 jobscript.sh
 runcase.jl
 *.log
+*.case
