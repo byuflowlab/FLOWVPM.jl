@@ -9,6 +9,19 @@ function check_launch(n, p, q, max_threads_per_block=0; throw_error=false)
     return true
 end
 
+function check_shared_memory(dev, shmem_required, throw_error=true)
+    dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+    if shmem > dev_shmem
+        msg = "Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU. Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff."
+        if throw_error
+            error(msg)
+        else
+            @warn msg
+        end
+    end
+    return
+end
+
 function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=256)
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
