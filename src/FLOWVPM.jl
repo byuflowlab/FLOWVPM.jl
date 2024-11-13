@@ -26,6 +26,7 @@ import DataStructures: OrderedDict
 using ReverseDiff
 using StaticArrays
 using CUDA
+using CUDA: i32
 using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------

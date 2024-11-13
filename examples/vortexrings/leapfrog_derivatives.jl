@@ -17,7 +17,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=1) where TF
     radius = x[1]
     z = x[2]
 
-    save_path = "leapfrog_simulation00"     # Simulation gets saved in this folder
+    save_path = "leapfrog_simulation.case"     # Simulation gets saved in this folder
 
     verbose1  = true
 
@@ -109,9 +109,9 @@ using CUDA
 FLOWVPM.warmup_gpu()
 
 # CPU run
-run_leapfrog(x; useGPU=0)
-run_leapfrog(x; useGPU=0)
+# run_leapfrog(x; useGPU=0)
+# run_leapfrog(x; useGPU=0)
 
 # GPU run
 run_leapfrog(x; useGPU=2)
-run_leapfrog(x; useGPU=2)
+CUDA.@profile run_leapfrog(x; useGPU=2)
