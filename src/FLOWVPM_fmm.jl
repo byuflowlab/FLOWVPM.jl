@@ -359,13 +359,13 @@ function fmm.direct_gpu!(
                     # Pad target array to nearest multiple of 32 (warp size)
                     # for efficient p, q launch config
                     t_padding = 0
-                    nt = length(leaf_target_indices[ileaf_gpu])
+                    nt = length(leaf_target_indices[ileaf_stream])
                     if mod(nt, 32) != 0
                         t_padding = 32*cld(nt, 32) - nt
                     end
 
                     # Copy target particles from CPU to GPU
-                    t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_gpu]))
+                    t_d = CuArray{T}(view(target_system.particles, 1:24, leaf_target_indices[ileaf_stream]))
                     t_size = nt + t_padding
 
                     # Get p, q for optimal GPU kernel launch configuration
@@ -391,11 +391,11 @@ function fmm.direct_gpu!(
 
                     t_d_list[istream] = t_d
 
-                    ileaf_gpu += 1
+                    ileaf_stream += 1
                     igpu = (igpu % ngpus) + 1  # Cycle igpu over 1:ngpus
                 end
 
-                ileaf_gpu = ileaf
+                ileaf_stream = ileaf
                 istream = 1
                 igpu = 1
                 for istream in min(nstreams, leaf_remaining):-1:1
@@ -405,18 +405,18 @@ function fmm.direct_gpu!(
 
                         # Copy results back from GPU to CPU
                         t_d = t_d_list[istream]
-                        view(target_system.particles, 10:12, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 10:12, :))
-                        view(target_system.particles, 16:24, leaf_target_indices[ileaf_gpu]) .= Array(view(t_d, 16:24, :))
+                        view(target_system.particles, 10:12, leaf_target_indices[ileaf_stream]) .= Array(view(t_d, 10:12, :))
+                        view(target_system.particles, 16:24, leaf_target_indices[ileaf_stream]) .= Array(view(t_d, 16:24, :))
 
                         # Clear GPU array to avoid GC pressure
                         CUDA.unsafe_free!(t_d)
                     end
 
-                    ileaf_gpu += 1
+                    ileaf_stream += 1
                     igpu = (igpu % ngpus) + 1  # Cycle igpu over 1:ngpus
                 end
 
-                ileaf = ileaf_gpu
+                ileaf = ileaf_stream
             end
         end
 
