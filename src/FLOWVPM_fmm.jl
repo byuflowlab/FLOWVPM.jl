@@ -254,7 +254,7 @@ end
 function fmm.direct_gpu!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         target_indices,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         source_indices) where {PS,VPS,VS,GS}
 
@@ -500,7 +500,7 @@ end
 # CPU kernel
 function fmm.direct!(
         target_system::ParticleField, target_index,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
 
     if source_system.toggle_rbf
