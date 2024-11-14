@@ -254,9 +254,9 @@ end
 function fmm.direct_gpu!(
         target_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
         target_indices,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
-        source_indices) where {PS,VPS,VS,GS}
+        source_indices) where {PS,VS,GS}
 
     if source_system.toggle_rbf
         for (target_index, source_index) in zip(target_indices, source_indices)
@@ -436,13 +436,130 @@ function fmm.direct_gpu!(
     return nothing
 end
 
+function fmm.nearfield_device!(
+        target_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, <:Any},
+        target_tree::fmm.Tree,
+        derivatives_switches::fmm.DerivativesSwitch{PS,VS,GS},
+        source_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, <:Any},
+        source_tree::fmm.Tree,
+        direct_list) where {PS,VS,GS}
+
+    # Sort the direct_list by targets
+    # This is to avoid race conditions when parallelized with multiple gpus
+    sorted_direct_list = fmm.sort_list_by_target(direct_list, target_tree.branches)
+
+    # The gpu kernel requires the source indices to be expanded to a single array
+    target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
+    leaf_count = length(target_sources)
+
+    ngpus = length(CUDA.devices())
+
+    # Sets precision for computations on GPU
+    T = Float64
+
+    # Dummy initialization so that t_d is defined in all lower scopes
+    t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+
+    ileaf = 1
+    while ileaf <= leaf_count
+        leaf_remaining = leaf_count-ileaf+1
+
+        ileaf_gpu = ileaf
+        # Copy data to GPU and launch kernel
+        for igpu in min(ngpus, leaf_remaining):-1:1
+
+            # Set gpu
+            dev = CUDA.device!(igpu-1)
+
+            # Compute number of sources
+            source_indices = expand_source_indices(target_sources[ileaf_gpu], source_tree.branches)
+            ns = length(source_indices)
+
+            # Copy source particles from CPU to GPU
+            s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
+
+            # Pad target array to nearest multiple of 32 (warp size)
+            # for efficient p, q launch config
+            t_padding = 0
+            target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
+            nt = length(target_index_range)
+            if mod(nt, 32) != 0
+                t_padding = 32*cld(nt, 32) - nt
+            end
+
+            # Copy target particles from CPU to GPU
+            t_d = CuArray{T}(view(target_systems.particles, 1:24, target_index_range))
+            t_size = nt + t_padding
+
+            # Get p, q for optimal GPU kernel launch configuration
+            # p is no. of targets in a block
+            # q is no. of columns per block
+            p, q = get_launch_config(t_size; max_threads_per_block=384)
+
+            # Compute no. of threads, no. of blocks and shared memory
+            threads::Int32 = p*q
+            blocks::Int32 = cld(t_size, p)
+            shmem = sizeof(T) * 7 * p
+
+            # Check if GPU shared memory is sufficient
+            dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+            if shmem > dev_shmem
+                error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
+                      Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
+            end
+
+            # Compute interactions using GPU
+            kernel = source_systems.kernel.g_dgdr
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+
+            t_d_list[igpu] = t_d
+
+            ileaf_gpu += 1
+        end
+
+        ileaf_gpu = ileaf
+        for igpu in min(ngpus, leaf_remaining):-1:1
+            # Set gpu
+            CUDA.device!(igpu-1)
+
+            target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
+
+            # Copy results back from GPU to CPU
+            t_d = t_d_list[igpu]
+            view(target_systems.particles, 10:12, target_index_range) .= Array(view(t_d, 10:12, :))
+            view(target_systems.particles, 16:24, target_index_range) .= Array(view(t_d, 16:24, :))
+
+            # Clear GPU array to avoid GC pressure
+            CUDA.unsafe_free!(t_d)
+
+            ileaf_gpu += 1
+        end
+
+        ileaf = ileaf_gpu
+    end
+
+    # SFS contribution
+    if source_systems.toggle_sfs
+        r = zero(eltype(source_systems))
+        for (target_index, source_index) in zip(target_indices, source_indices)
+            for j_target in target_index
+                for source_particle in eachcol(view(source_systems.particles, :, source_index))
+                    # include self-induced contribution to SFS
+                    Estr_direct(target_systems, j_target, source_particle, r, source_systems.kernel.zeta, source_systems.transposed)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 # GPU kernel for ForwardDiff.Duals that uses parallel reduction
 # function fmm.direct!(
 #         target_system::ParticleField{TFT,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
 #         target_index,
-#         derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
+#         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
 #         source_system::ParticleField{TFS,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-#         source_index) where {TFT,TFS,PS,VPS,VS,GS}
+#         source_index) where {TFT,TFS,PS,VS,GS}
 #
 #     if source_system.toggle_rbf
 #         vorticity_direct(target_system, target_index, source_system, source_index)
@@ -500,8 +617,8 @@ end
 # CPU kernel
 function fmm.direct!(
         target_system::ParticleField, target_index,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS},
-        source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
+        source_system::ParticleField, source_index) where {PS,VS,GS}
 
     if source_system.toggle_rbf
         for target_index in target_indices
