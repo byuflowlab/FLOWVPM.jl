@@ -364,6 +364,62 @@ function expand_indices!(expanded_indices, indices)
     return
 end
 
+"""
+    combine_source_indices(sorted_direct_list, source_branches::Vector{<:fmm.Branch})
+
+Combines all the sources corresponding to a target branch.
+The input sorted_direct_list has to be sorted by target 
+using the function fmm.sort_list_by_target().
+"""
+function combine_source_indices(sorted_direct_list, source_branches::Vector{<:fmm.Branch})
+    # This algorithm needs to be changed to count the source indices first
+    # and then allocate and fill instead of performing a push!() operation
+
+    result = Vector{Vector{Int32}}()
+    current_target = sorted_direct_list[1][1]
+    current_sources = Int32[]
+
+    # Loop through sorted_direct_list to accumulate sources corresponding to a target
+    for pair in sorted_direct_list
+        target, source = pair[1], pair[2]
+        if target != current_target
+            # Append both target and source to result
+            push!(result, vcat([current_target], current_sources))
+            # Reset for new target
+            current_target = target
+            empty!(current_sources)
+        end
+        push!(current_sources, source)
+    end
+
+    # Add last group
+    push!(result, vcat([current_target], current_sources))
+
+    return result
+end
+
+"""
+    expand_source_indices(target_sources, source_branches)
+
+Expands the bodies_index for all branches corresponding to a target branch
+"""
+function expand_source_indices(target_sources, source_branches)
+    # Count cardinality of each branch
+    branch_count = Vector{Int}(undef, length(target_sources)-1)
+    for i in 2:length(target_sources)
+        branch_count[i-1] = length(source_branches[i].bodies_index)
+    end
+
+    # Expand each branch's bodies_index into result
+    expanded_indices = Vector{Int}(undef, sum(branch_count))
+    i = 1
+    for ibranch in 1:length(branch_count)
+        expanded_indices[i:i+branch_count[ibranch]-1] .= source_branches[target_sources[ibranch+1]].bodies_index
+        i += branch_count[ibranch]
+    end
+    return expanded_indices
+end
+
 function count_leaves(target_indices, source_indices)
     leaf_idx = Vector{Int}(undef, length(target_indices))
     leaf_idx[1] = 1
