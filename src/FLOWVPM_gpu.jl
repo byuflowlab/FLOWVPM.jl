@@ -407,7 +407,7 @@ function expand_source_indices(target_sources, source_branches)
     # Count cardinality of each branch
     branch_count = Vector{Int}(undef, length(target_sources)-1)
     for i in 2:length(target_sources)
-        branch_count[i-1] = length(source_branches[i].bodies_index)
+        branch_count[i-1] = length(source_branches[target_sources[i]].bodies_index)
     end
 
     # Expand each branch's bodies_index into result
