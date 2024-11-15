@@ -401,7 +401,8 @@ end
 """
     expand_source_indices(target_sources, source_branches)
 
-Expands the bodies_index for all branches corresponding to a target branch
+Expands the bodies_index for all branches corresponding to a target branch.
+`target_sources` contains the target branch index and source branch indices.
 """
 function expand_source_indices(target_sources, source_branches)
     # Count cardinality of each branch
