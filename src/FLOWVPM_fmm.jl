@@ -446,7 +446,7 @@ function fmm.nearfield_device!(
 
     # Sort the direct_list by targets
     # This is to avoid race conditions when parallelized with multiple gpus
-    sorted_direct_list = fmm.sort_list_by_target(direct_list, target_tree.branches)
+    sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
 
     # The gpu kernel requires the source indices to be expanded to a single array
     target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
