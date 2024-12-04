@@ -28,6 +28,7 @@ using StaticArrays
 using CUDA
 using CUDA: i32
 using Primes
+using Base.Threads
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM

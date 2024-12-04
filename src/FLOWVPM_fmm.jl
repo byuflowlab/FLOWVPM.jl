@@ -390,9 +390,9 @@ function fmm.direct!(
             vorticity_direct(target_system, target_index, source_system, source_index)
         end
     else
-        r = zero(eltype(source_system))
 
-        for j_target in target_index
+        Threads.@threads for j_target in target_index
+            r = zero(eltype(source_system))  # Moved inside loop for thread-safety
             target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
 
             for source_particle in eachcol(view(source_system.particles, :, source_index))
