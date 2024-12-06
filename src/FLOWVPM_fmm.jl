@@ -135,11 +135,7 @@ function fmm.nearfield_device!(
             shmem = sizeof(T) * 7 * p
 
             # Check if GPU shared memory is sufficient
-            dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
-            if shmem > dev_shmem
-                error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-                      Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
-            end
+            check_shared_memory(dev, shmem)
 
             # Compute interactions using GPU
             kernel = source_systems.kernel.g_dgdr
@@ -261,11 +257,7 @@ function fmm.nearfield_device!(
             shmem = sizeof(T) * 7 * p
 
             # Check if GPU shared memory is sufficient
-            dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
-            if shmem > dev_shmem
-                error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-                      Try reducing ncrit, using more GPUs or reduce Chunk size if using ForwardDiff.")
-            end
+            check_shared_memory(dev, shmem)
 
             # Compute interactions using GPU
             kernel = source_systems.kernel.g_dgdr
