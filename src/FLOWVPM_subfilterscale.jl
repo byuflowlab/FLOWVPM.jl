@@ -293,9 +293,10 @@ function control_magnitude(P, pfield)
 
         # f_p filter criterion
         if aux > 0
-            add_SFS1(P, -aux*get_Gamma(P)[1])
-            add_SFS2(P, -aux*get_Gamma(P)[2])
-            add_SFS3(P, -aux*get_Gamma(P)[3])
+            get_SFS(P) .+= -aux .* get_Gamma(P)
+            # add_SFS1(P, -aux*get_Gamma(P)[1])
+            # add_SFS2(P, -aux*get_Gamma(P)[2])
+            # add_SFS3(P, -aux*get_Gamma(P)[3])
         end
     end
 end
