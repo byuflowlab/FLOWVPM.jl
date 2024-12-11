@@ -132,7 +132,7 @@ end
 
 # Each thread handles a single target and uses local GPU memory
 # Sources divided into multiple columns and influence is computed by multiple threads
-function gpu_atomic_direct!(s, t, p, q, kernel)
+function gpu_atomic_direct!(out, s, t, p, q, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -200,13 +200,8 @@ function gpu_atomic_direct!(s, t, p, q, kernel)
     # Each target will be accessed by q no. of threads
     if itarget <= t_size
         idim = 1i32
-        while idim <= 3i32
-            @inbounds CUDA.@atomic t[9i32+idim, itarget] += UJ[idim]
-            idim += 1i32
-        end
-        idim = 4i32
         while idim <= 12i32
-            @inbounds CUDA.@atomic t[12i32+idim, itarget] += UJ[idim]
+            @inbounds CUDA.@atomic out[idim, itarget] += UJ[idim]
             idim += 1i32
         end
     end
@@ -219,7 +214,7 @@ end
 # Low-storage parallel reduction
 # - p is no. of targets per block. Typically same as no. of sources per block.
 # - q is no. of columns per tile
-function gpu_reduction_direct!(s, t, num_cols, kernel)
+function gpu_reduction_direct!(out, s, t, num_cols, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -340,15 +335,10 @@ function gpu_reduction_direct!(s, t, num_cols, kernel)
     # Now, each col 1 has the net influence of all sources on its target
     # Write all data back to global memory
     if col == 1
-        idim = 1
-        while idim <= 3
-            @inbounds t[9+idim, itarget] += UJ[idim]
-            idim += 1
-        end
-        idim = 4
-        while idim<= 12
-            @inbounds t[12+idim, itarget] += UJ[idim]
-            idim += 1
+        idim = 1i32
+        while idim <= 12i32
+            @inbounds out[idim, itarget] += UJ[idim]
+            idim += 1i32
         end
     end
 

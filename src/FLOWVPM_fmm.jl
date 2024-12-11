@@ -93,8 +93,8 @@ function fmm.nearfield_device!(
     # Sets precision for computations on GPU
     T = Float64
 
-    # Dummy initialization so that t_d is defined in all lower scopes
-    t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+    # Dummy initialization so that UJ_d is defined in all lower scopes
+    UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
 
     if fully_direct && ngpus == 1
         ns = get_np(source_systems)
@@ -112,7 +112,8 @@ function fmm.nearfield_device!(
         t_size = nt + t_padding
 
         # Copy target particles from CPU to GPU
-        t_d = CuArray{T}(view(source_systems.particles, 1:24, 1:nt))
+        t_d = s_d
+        UJ_d = CUDA.zeros(T, 12, nt)
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
@@ -130,13 +131,13 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
 
-        view(target_systems.particles, 10:12, 1:nt) .= Array(view(t_d, 10:12, :))
-        view(target_systems.particles, 16:24, 1:nt) .= Array(view(t_d, 16:24, :))
+        view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
+        view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
 
         # Clear GPU array to avoid GC pressure
-        CUDA.unsafe_free!(t_d)
+        CUDA.unsafe_free!(UJ_d)
     else
         ileaf = 1
         while ileaf <= leaf_count
@@ -167,7 +168,8 @@ function fmm.nearfield_device!(
                 end
 
                 # Copy target particles from CPU to GPU
-                t_d = CuArray{T}(view(target_systems.particles, 1:24, target_index_range))
+                t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
+                UJ_d = CUDA.zeros(T, 12, nt)
                 t_size = nt + t_padding
 
                 # Get p, q for optimal GPU kernel launch configuration
@@ -185,9 +187,9 @@ function fmm.nearfield_device!(
 
                 # Compute interactions using GPU
                 kernel = source_systems.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
 
-                t_d_list[igpu] = t_d
+                UJ_d_list[igpu] = UJ_d
 
                 ileaf_gpu += 1
             end
@@ -200,12 +202,12 @@ function fmm.nearfield_device!(
                 target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
 
                 # Copy results back from GPU to CPU
-                t_d = t_d_list[igpu]
-                view(target_systems.particles, 10:12, target_index_range) .= Array(view(t_d, 10:12, :))
-                view(target_systems.particles, 16:24, target_index_range) .= Array(view(t_d, 16:24, :))
+                UJ_d = UJ_d_list[igpu]
+                view(target_systems.particles, 10:12, target_index_range) .= Array(view(UJ_d, 1:3, :))
+                view(target_systems.particles, 16:24, target_index_range) .= Array(view(UJ_d, 4:12, :))
 
                 # Clear GPU array to avoid GC pressure
-                CUDA.unsafe_free!(t_d)
+                CUDA.unsafe_free!(UJ_d)
 
                 ileaf_gpu += 1
             end
@@ -257,8 +259,8 @@ function fmm.nearfield_device!(
     # Sets precision for computations on GPU
     T = Float64
 
-    # Dummy initialization so that t_d is defined in all lower scopes
-    t_d_list = Vector{CuArray{T, 2}}(undef, nstreams)
+    # Dummy initialization so that UJ_d is defined in all lower scopes
+    UJ_d_list = Vector{CuArray{T, 2}}(undef, nstreams)
 
     ileaf = 1
     while ileaf <= leaf_count
@@ -290,8 +292,11 @@ function fmm.nearfield_device!(
             end
 
             # Copy target particles from CPU to GPU
-            t_d = CuArray{T}(view(target_systems.particles, 1:24, target_index_range))
+            t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
             t_size = nt + t_padding
+
+            # Initialize output array
+            UJ_d = CUDA.zeros(T, 12, nt)
 
             # Get p, q for optimal GPU kernel launch configuration
             # p is no. of targets in a block
@@ -308,9 +313,9 @@ function fmm.nearfield_device!(
 
             # Compute interactions using GPU
             kernel = source_systems.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
 
-            t_d_list[istream] = t_d
+            UJ_d_list[istream] = UJ_d
 
             ileaf_stream += 1
             igpu = (igpu % ngpus) + 1  # Cycle igpu over 1:ngpus
@@ -327,12 +332,12 @@ function fmm.nearfield_device!(
                 target_index_range = target_tree.branches[target_sources[ileaf_stream][1]].bodies_index
 
                 # Copy results back from GPU to CPU
-                t_d = t_d_list[istream]
-                view(target_systems.particles, 10:12, target_index_range) .= Array(view(t_d, 10:12, :))
-                view(target_systems.particles, 16:24, target_index_range) .= Array(view(t_d, 16:24, :))
+                UJ_d = UJ_d_list[istream]
+                view(target_systems.particles, 10:12, target_index_range) .= Array(view(UJ_d, 1:3, :))
+                view(target_systems.particles, 16:24, target_index_range) .= Array(view(Uj_d, 4:12, :))
 
                 # Clear GPU array to avoid GC pressure
-                CUDA.unsafe_free!(t_d)
+                CUDA.unsafe_free!(UJ_d)
             end
 
             ileaf_stream += 1
