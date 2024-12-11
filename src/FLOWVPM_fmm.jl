@@ -85,6 +85,9 @@ function fmm.nearfield_device!(
     target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
     leaf_count = length(target_sources)
 
+    # Check if direct interaction is required for the entire domain
+    fully_direct = (leaf_count == 8) && is_fully_direct(target_sources)
+
     ngpus = length(CUDA.devices())
 
     # Sets precision for computations on GPU
@@ -93,78 +96,122 @@ function fmm.nearfield_device!(
     # Dummy initialization so that t_d is defined in all lower scopes
     t_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
 
-    ileaf = 1
-    while ileaf <= leaf_count
-        leaf_remaining = leaf_count-ileaf+1
+    if fully_direct && ngpus == 1
+        ns = get_np(source_systems)
 
-        ileaf_gpu = ileaf
-        # Copy data to GPU and launch kernel
-        for igpu in min(ngpus, leaf_remaining):-1:1
+        # Copy source particles from CPU to GPU
+        s_d = CuArray{T}(view(source_systems.particles, 1:7, 1:ns))
 
-            # Set gpu
-            dev = CUDA.device!(igpu-1)
+        # Pad target array to nearest multiple of 32 (warp size)
+        # for efficient p, q launch config
+        t_padding = 0
+        nt = ns
+        if mod(nt, 32) != 0
+            t_padding = 32*cld(nt, 32) - nt
+        end
+        t_size = nt + t_padding
 
-            # Compute number of sources
-            source_indices = expand_source_indices(target_sources[ileaf_gpu], source_tree.branches)
-            ns = length(source_indices)
+        # Copy target particles from CPU to GPU
+        t_d = CuArray{T}(view(source_systems.particles, 1:24, 1:nt))
 
-            # Copy source particles from CPU to GPU
-            s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
+        # Get p, q for optimal GPU kernel launch configuration
+        # p is no. of targets in a block
+        # q is no. of columns per block
+        p, q = get_launch_config(t_size; max_threads_per_block=384)
 
-            # Pad target array to nearest multiple of 32 (warp size)
-            # for efficient p, q launch config
-            t_padding = 0
-            target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
-            nt = length(target_index_range)
-            if mod(nt, 32) != 0
-                t_padding = 32*cld(nt, 32) - nt
+        # Compute no. of threads, no. of blocks and shared memory
+        threads = p*q
+        blocks = cld(t_size, p)
+        shmem = sizeof(T) * 7 * p
+
+        # Check if GPU shared memory is sufficient
+        dev = CUDA.device()
+        check_shared_memory(dev, shmem)
+
+        # Compute interactions using GPU
+        kernel = source_systems.kernel.g_dgdr
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+
+        view(target_systems.particles, 10:12, 1:nt) .= Array(view(t_d, 10:12, :))
+        view(target_systems.particles, 16:24, 1:nt) .= Array(view(t_d, 16:24, :))
+
+        # Clear GPU array to avoid GC pressure
+        CUDA.unsafe_free!(t_d)
+    else
+        ileaf = 1
+        while ileaf <= leaf_count
+            leaf_remaining = leaf_count-ileaf+1
+
+            ileaf_gpu = ileaf
+            # Copy data to GPU and launch kernel
+            for igpu in min(ngpus, leaf_remaining):-1:1
+
+                # Set gpu
+                dev = CUDA.device!(igpu-1)
+
+                # Compute number of sources
+                source_indices = expand_source_indices(target_sources[ileaf_gpu], source_tree.branches)
+                ns = length(source_indices)
+
+
+                # Copy source particles from CPU to GPU
+                s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
+
+                # Pad target array to nearest multiple of 32 (warp size)
+                # for efficient p, q launch config
+                t_padding = 0
+                target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
+                nt = length(target_index_range)
+                if mod(nt, 32) != 0
+                    t_padding = 32*cld(nt, 32) - nt
+                end
+
+                # Copy target particles from CPU to GPU
+                t_d = CuArray{T}(view(target_systems.particles, 1:24, target_index_range))
+                t_size = nt + t_padding
+
+                # Get p, q for optimal GPU kernel launch configuration
+                # p is no. of targets in a block
+                # q is no. of columns per block
+                p, q = get_launch_config(t_size; max_threads_per_block=384)
+
+                # Compute no. of threads, no. of blocks and shared memory
+                threads::Int32 = p*q
+                blocks::Int32 = cld(t_size, p)
+                shmem = sizeof(T) * 7 * p
+
+                # Check if GPU shared memory is sufficient
+                check_shared_memory(dev, shmem)
+
+                # Compute interactions using GPU
+                kernel = source_systems.kernel.g_dgdr
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+
+                t_d_list[igpu] = t_d
+
+                ileaf_gpu += 1
             end
 
-            # Copy target particles from CPU to GPU
-            t_d = CuArray{T}(view(target_systems.particles, 1:24, target_index_range))
-            t_size = nt + t_padding
+            ileaf_gpu = ileaf
+            for igpu in min(ngpus, leaf_remaining):-1:1
+                # Set gpu
+                CUDA.device!(igpu-1)
 
-            # Get p, q for optimal GPU kernel launch configuration
-            # p is no. of targets in a block
-            # q is no. of columns per block
-            p, q = get_launch_config(t_size; max_threads_per_block=384)
+                target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
 
-            # Compute no. of threads, no. of blocks and shared memory
-            threads::Int32 = p*q
-            blocks::Int32 = cld(t_size, p)
-            shmem = sizeof(T) * 7 * p
+                # Copy results back from GPU to CPU
+                t_d = t_d_list[igpu]
+                view(target_systems.particles, 10:12, target_index_range) .= Array(view(t_d, 10:12, :))
+                view(target_systems.particles, 16:24, target_index_range) .= Array(view(t_d, 16:24, :))
 
-            # Check if GPU shared memory is sufficient
-            check_shared_memory(dev, shmem)
+                # Clear GPU array to avoid GC pressure
+                CUDA.unsafe_free!(t_d)
 
-            # Compute interactions using GPU
-            kernel = source_systems.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(s_d, t_d, Int32(p), Int32(q), kernel)
+                ileaf_gpu += 1
+            end
 
-            t_d_list[igpu] = t_d
-
-            ileaf_gpu += 1
+            ileaf = ileaf_gpu
         end
-
-        ileaf_gpu = ileaf
-        for igpu in min(ngpus, leaf_remaining):-1:1
-            # Set gpu
-            CUDA.device!(igpu-1)
-
-            target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
-
-            # Copy results back from GPU to CPU
-            t_d = t_d_list[igpu]
-            view(target_systems.particles, 10:12, target_index_range) .= Array(view(t_d, 10:12, :))
-            view(target_systems.particles, 16:24, target_index_range) .= Array(view(t_d, 16:24, :))
-
-            # Clear GPU array to avoid GC pressure
-            CUDA.unsafe_free!(t_d)
-
-            ileaf_gpu += 1
-        end
-
-        ileaf = ileaf_gpu
     end
 
     # SFS contribution

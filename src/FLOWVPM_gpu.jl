@@ -447,6 +447,19 @@ function count_leaves(target_indices, source_indices)
     return count, leaf_target_indices, leaf_source_indices
 end
 
+# Checks the interaction list to see if it's a direct interaction only case
+function is_fully_direct(target_sources)::Bool
+    for i in 1:length(target_sources)
+        first_element = target_sources[i][1]
+        for j in 1:length(target_sources)
+            if first_element != target_sources[j][i+1]
+                return false
+            end
+        end
+    end
+    return true
+end
+
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
 function warmup_gpu(verbose=false; n=100)
