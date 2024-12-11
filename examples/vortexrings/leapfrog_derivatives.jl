@@ -106,7 +106,7 @@ x = [0.7906, 0.7906]
 # run_leapfrog(x; useGPU=1)
 
 using CUDA
-FLOWVPM.warmup_gpu()
+# FLOWVPM.warmup_gpu()
 
 # CPU run
 # run_leapfrog(x; useGPU=0)

@@ -470,7 +470,8 @@ function warmup_gpu(verbose=false; n=100)
         source_indices = fill(1:n, ngpu)
 
         # Run direct computation on particles
-        fmm.direct_gpu!(pfield, target_indices, d_switch, pfield, source_indices)
+        # This needs to be corrected
+        fmm.nearfield_device!(pfield, target_indices, d_switch, pfield, source_indices)
 
         verbose && @info("CUDA kernel compiled successfully on $ngpu device/s")
     end
