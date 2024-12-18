@@ -118,7 +118,7 @@ function fmm.nearfield_device!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(t_size; max_threads_per_block=384)
+        p, q = get_launch_config(t_size; max_threads_per_block=512)
 
         # Compute no. of threads, no. of blocks and shared memory
         threads = p*q

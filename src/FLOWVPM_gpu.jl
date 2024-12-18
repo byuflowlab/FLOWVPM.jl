@@ -22,7 +22,7 @@ function check_shared_memory(dev, shmem_required, throw_error=true)
     return
 end
 
-function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=256)
+function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=512)
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 
