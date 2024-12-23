@@ -334,7 +334,7 @@ function fmm.nearfield_device!(
                 # Copy results back from GPU to CPU
                 UJ_d = UJ_d_list[istream]
                 view(target_systems.particles, 10:12, target_index_range) .= Array(view(UJ_d, 1:3, :))
-                view(target_systems.particles, 16:24, target_index_range) .= Array(view(Uj_d, 4:12, :))
+                view(target_systems.particles, 16:24, target_index_range) .= Array(view(UJ_d, 4:12, :))
 
                 # Clear GPU array to avoid GC pressure
                 CUDA.unsafe_free!(UJ_d)
