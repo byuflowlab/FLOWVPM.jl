@@ -436,7 +436,7 @@ function generate_particlefield(settings_fname::String;
                                         check_userfun=true)
 
     # Open settings file
-    setfname = settings_fname * (settings_fname[end-3:end]==".jld" ? "" : ".jld")
+    setfname = settings_fname * (settings_fname[end-3:end]==".bson" ? "" : ".bson")
     settings = read_settings(setfname; path=path)
 
     # Overwrite settings requested by user
