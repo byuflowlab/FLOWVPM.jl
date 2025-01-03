@@ -77,6 +77,9 @@ function fmm.nearfield_device!(
         source_tree::fmm.Tree,
         direct_list) where {PS,VS,GS}
 
+    # Square or Rectangular tile kernel
+    rectangular = true
+
     # Sort the direct_list by targets
     # This is to avoid race conditions when parallelized with multiple gpus
     sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
@@ -118,12 +121,20 @@ function fmm.nearfield_device!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(t_size; max_threads_per_block=512)
+        if rectangular
+            p, q, r = get_launch_config(t_size, ns; max_threads_per_block=512)
+        else
+            p, q = get_launch_config(t_size; max_threads_per_block=512)
+        end
 
         # Compute no. of threads, no. of blocks and shared memory
         threads = p*q
         blocks = cld(t_size, p)
-        shmem = sizeof(T) * 7 * p
+        if rectangular
+            shmem = sizeof(T) * 7 * r
+        else
+            shmem = sizeof(T) * 7 * p
+        end
 
         # Check if GPU shared memory is sufficient
         dev = CUDA.device()
@@ -131,7 +142,11 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+        if rectangular
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), Int32(r), kernel)
+        else
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+        end
 
         view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
         view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
@@ -175,19 +190,31 @@ function fmm.nearfield_device!(
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q = get_launch_config(t_size; max_threads_per_block=512)
+                if rectangular
+                    p, q, r = get_launch_config(t_size, ns; max_threads_per_block=512)
+                else
+                    p, q = get_launch_config(t_size; max_threads_per_block=512)
+                end
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads::Int32 = p*q
                 blocks::Int32 = cld(t_size, p)
-                shmem = sizeof(T) * 7 * p
+                if rectangular
+                    shmem = sizeof(T) * 7 * r
+                else
+                    shmem = sizeof(T) * 7 * p
+                end
 
                 # Check if GPU shared memory is sufficient
                 check_shared_memory(dev, shmem)
 
                 # Compute interactions using GPU
                 kernel = source_systems.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+                if rectangular
+                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), Int32(r), kernel)
+                else
+                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+                end
 
                 UJ_d_list[igpu] = UJ_d
 

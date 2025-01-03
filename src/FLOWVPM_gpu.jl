@@ -22,7 +22,7 @@ function check_shared_memory(dev, shmem_required, throw_error=true)
     return
 end
 
-function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=512)
+@inline function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=512)
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 
@@ -66,6 +66,69 @@ function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=512)
     end
 
     return p, q
+end
+
+@inline function get_launch_config(nt, ns; p_max=0, q_max=0, r_max=875, max_threads_per_block=512)
+    # r_max=875 corresponds to 48KB in shared memory
+    p_max = (p_max == 0) ? max_threads_per_block : p_max
+    q_max = (q_max == 0) ? max_threads_per_block : q_max
+
+    # Find p
+    divs_nt = sort(divisors(nt))
+    p = 1
+    q = 1
+    ip = 1
+    for (i, div) in enumerate(divs_nt)
+        if div <= p_max
+            p = div
+            ip = i
+        else
+            break
+        end
+    end
+
+    # Find r
+    divs_ns = sort(divisors(ns))
+    r = 1
+    ir = 1
+    for (i, div) in enumerate(divs_ns)
+        if div <= r_max
+            r = div
+            ir = i
+        else
+            break
+        end
+    end
+
+    # Decision algorithm 1: Creates a matrix using indices and finds max of
+    # weighted sum of indices
+
+    # Find q based on r
+    i_weight = 0
+    j_weight = 1-i_weight
+
+    max_ij = i_weight*ip + j_weight*1
+    if nt <= 1<<13
+        isgood = true
+        for i in 1:ip
+            for j in 1:ir
+                # isgood = check_launch(nt, divs_nt[i], divs_ns[j], max_threads_per_block)
+                isgood = divs_nt[i]*divs_ns[j] < max_threads_per_block
+                if isgood && (divs_nt[i] <= p_max)
+                    # Check if this is the max achievable ij value
+                    # in the p, q choice matrix
+                    obj_val = i_weight*i+j_weight*j
+                    if (obj_val >= max_ij) && (divs_ns[j] <= q_max)
+                        max_ij = obj_val
+                        p = divs_nt[i]
+                        q = divs_ns[j]
+                    end
+                end
+            end
+        end
+    end
+
+    return p, q, r
 end
 
 const eps2 = 1e-6
