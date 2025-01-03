@@ -1,5 +1,9 @@
 # Contains utilities for handling gpu kernel
-function check_launch(n, p, q, max_threads_per_block=0; throw_error=false)
+const default_max_threads_per_block::Int32 = 512
+
+function check_launch(n, p, q,
+        max_threads_per_block=default_max_threads_per_block; throw_error=false)
+
     if p > n; throw_error && error("p must be less than or equal to n"); return false; end
     if p*q >= max_threads_per_block; throw_error && error("p*q must be less than $max_threads_per_block"); return false; end
     if q > p; throw_error && error("q must be less than or equal to p"); return false; end
@@ -8,6 +12,22 @@ function check_launch(n, p, q, max_threads_per_block=0; throw_error=false)
 
     return true
 end
+
+function check_launch(nt, ns, p, q, r,
+        max_threads_per_block=default_max_threads_per_block; throw_error=false)
+
+    if p > nt; throw_error && error("p must be less than or equal to nt"); return false; end
+    if p*q > max_threads_per_block; throw_error && error("p*q must be less than $max_threads_per_block"); return false; end
+    # if q > p; throw_error && error("q must be less than or equal to p"); return false; end
+    if q > r; throw_error && error("q must be less than or equal to r"); return false; end
+    if nt % p != 0; throw_error && error("nt must be divisible by p"); return false; end
+    # if p % q != 0; throw_error && error("p must be divisible by q"); return false; end
+    if ns % r != 0; throw_error && error("ns must be divisible by p"); return false; end
+    if r % q != 0; throw_error && error("r must be divisible by q"); return false; end
+
+    return true
+end
+
 
 function check_shared_memory(dev, shmem_required, throw_error=true)
     dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
@@ -22,13 +42,16 @@ function check_shared_memory(dev, shmem_required, throw_error=true)
     return
 end
 
-@inline function get_launch_config(nt; p_max=0, q_max=0, max_threads_per_block=512)
+@inline function get_launch_config(nt; p_max=0, q_max=0,
+        max_threads_per_block=default_max_threads_per_block)
+
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? p_max : q_max
 
     divs_n = sort(divisors(nt))
     p = 1
     q = 1
+    r = 1  # r is returned only for consistency with the other get_launch_config()
     ip = 1
     for (i, div) in enumerate(divs_n)
         if div <= p_max
@@ -46,29 +69,29 @@ end
     j_weight = 1-i_weight
 
     max_ij = i_weight*ip + j_weight*1
-    if nt <= 1<<13
-        isgood = true
-        for i in 1:ip
-            for j in 1:ip
-                isgood = check_launch(nt, divs_n[i], divs_n[j], max_threads_per_block)
-                if isgood && (divs_n[i] <= p_max)
-                    # Check if this is the max achievable ij value
-                    # in the p, q choice matrix
-                    obj_val = i_weight*i+j_weight*j
-                    if (obj_val >= max_ij) && (divs_n[j] <= q_max)
-                        max_ij = obj_val
-                        p = divs_n[i]
-                        q = divs_n[j]
-                    end
+    isgood = true
+    for i in 1:ip
+        for j in 1:ip
+            isgood = check_launch(nt, divs_n[i], divs_n[j], max_threads_per_block)
+            if isgood && (divs_n[i] <= p_max)
+                # Check if this is the max achievable ij value
+                # in the p, q choice matrix
+                obj_val = i_weight*i+j_weight*j
+                if (obj_val >= max_ij) && (divs_n[j] <= q_max)
+                    max_ij = obj_val
+                    p = divs_n[i]
+                    q = divs_n[j]
                 end
             end
         end
     end
 
-    return p, q
+    return p, q, r
 end
 
-@inline function get_launch_config(nt, ns; p_max=0, q_max=0, r_max=875, max_threads_per_block=512)
+@inline function get_launch_config(nt, ns; p_max=0, q_max=0, r_max=875,
+        max_threads_per_block=default_max_threads_per_block)
+
     # r_max=875 corresponds to 48KB in shared memory
     p_max = (p_max == 0) ? max_threads_per_block : p_max
     q_max = (q_max == 0) ? max_threads_per_block : q_max
@@ -108,21 +131,19 @@ end
     j_weight = 1-i_weight
 
     max_ij = i_weight*ip + j_weight*1
-    if nt <= 1<<13
-        isgood = true
-        for i in 1:ip
-            for j in 1:ir
-                # isgood = check_launch(nt, divs_nt[i], divs_ns[j], max_threads_per_block)
-                isgood = divs_nt[i]*divs_ns[j] < max_threads_per_block
-                if isgood && (divs_nt[i] <= p_max)
-                    # Check if this is the max achievable ij value
-                    # in the p, q choice matrix
-                    obj_val = i_weight*i+j_weight*j
-                    if (obj_val >= max_ij) && (divs_ns[j] <= q_max)
-                        max_ij = obj_val
-                        p = divs_nt[i]
-                        q = divs_ns[j]
-                    end
+    isgood = true
+    for i in 1:ip
+        for j in 1:ir
+            isgood = check_launch(nt, ns, divs_nt[i], divs_ns[j], r, max_threads_per_block)
+            # isgood = divs_nt[i]*divs_ns[j] < max_threads_per_block
+            if isgood && (divs_nt[i] <= p_max)
+                # Check if this is the max achievable ij value
+                # in the p, q choice matrix
+                obj_val = i_weight*i+j_weight*j
+                if (obj_val >= max_ij) && (divs_ns[j] <= q_max)
+                    max_ij = obj_val
+                    p = divs_nt[i]
+                    q = divs_ns[j]
                 end
             end
         end
@@ -474,32 +495,6 @@ function expand_source_indices(target_sources, source_branches)
     return expanded_indices
 end
 
-function count_leaves(target_indices, source_indices)
-    leaf_idx = Vector{Int}(undef, length(target_indices))
-    leaf_idx[1] = 1
-    count = 1
-    idx = target_indices[1][1]
-    for i = 1:length(target_indices)
-        if idx != target_indices[i][1]
-            count += 1
-            idx = target_indices[i][1]
-        end
-        leaf_idx[i] = count
-    end
-
-    leaf_target_indices = Vector{UnitRange{Int}}(undef, count)
-    leaf_source_indices = [Vector{UnitRange{Int}}() for i = 1:count]
-    idx = 0
-    for i = 1:length(target_indices)
-        push!(leaf_source_indices[leaf_idx[i]], source_indices[i])
-        if idx != leaf_idx[i]
-            leaf_target_indices[leaf_idx[i]] = target_indices[i]
-            idx += 1
-        end
-    end
-    return count, leaf_target_indices, leaf_source_indices
-end
-
 # Checks the interaction list to see if it's a direct interaction only case
 function is_fully_direct(target_sources)::Bool
     for i in 1:length(target_sources)
@@ -515,6 +510,8 @@ end
 
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
+# NOTE: THIS DOES NOT WORK WITH THE NEW nearfield_device!() FUNCTION
+# SINCE THAT REQUIRES BRANCHES AND TREE DATA STRUCTURES
 function warmup_gpu(verbose=false; n=100)
     ngpu::Int = length(CUDA.devices())
     if ngpu == 0
