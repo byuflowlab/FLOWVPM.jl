@@ -425,7 +425,7 @@ end
 
 # CPU kernel
 function fmm.direct!(
-        target_system::ParticleField, target_index,
+        target_system, target_index,
         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
         source_system::ParticleField, source_index) where {PS,VS,GS}
 
