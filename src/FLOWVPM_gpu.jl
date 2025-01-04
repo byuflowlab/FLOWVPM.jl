@@ -163,7 +163,7 @@ const const4 = 0.25/pi
     r = sqrt(r2)
 
     # Mapping to variables
-    @inbounds sigma = s[7, j]
+    @inbounds sigma = s[7i32, j]
 
     if r2 > T(eps2) && abs(sigma) > T(eps2)
         # Mapping to variables
@@ -191,24 +191,28 @@ const const4 = 0.25/pi
         @inbounds UJ[2i32] += g_sgm * crss2
         @inbounds UJ[3i32] += g_sgm * crss3
 
-        @inbounds gam1 *= g_sgm
-        @inbounds gam2 *= g_sgm
-        @inbounds gam3 *= g_sgm
+        gam1 *= g_sgm
+        gam2 *= g_sgm
+        gam3 *= g_sgm
+
+        dX1 *= aux
+        dX2 *= aux
+        dX3 *= aux
 
         # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
         # Adds the Kronecker delta term
         # j=1
-        @inbounds UJ[4i32] += aux * crss1 * dX1
-        @inbounds UJ[5i32] += aux * crss2 * dX1 - gam3
-        @inbounds UJ[6i32] += aux * crss3 * dX1 + gam2
+        @inbounds UJ[4i32] += crss1 * dX1
+        @inbounds UJ[5i32] += crss2 * dX1 - gam3
+        @inbounds UJ[6i32] += crss3 * dX1 + gam2
         # j=2
-        @inbounds UJ[7i32] += aux * crss1 * dX2 + gam3
-        @inbounds UJ[8i32] += aux * crss2 * dX2
-        @inbounds UJ[9i32] += aux * crss3 * dX2 - gam1
+        @inbounds UJ[7i32] += crss1 * dX2 + gam3
+        @inbounds UJ[8i32] += crss2 * dX2
+        @inbounds UJ[9i32] += crss3 * dX2 - gam1
         # j=3
-        @inbounds UJ[10i32] += aux * crss1 * dX3 - gam2
-        @inbounds UJ[11i32] += aux * crss2 * dX3 + gam1
-        @inbounds UJ[12i32] += aux * crss3 * dX3
+        @inbounds UJ[10i32] += crss1 * dX3 - gam2
+        @inbounds UJ[11i32] += crss2 * dX3 + gam1
+        @inbounds UJ[12i32] += crss3 * dX3
     end
 
     return
@@ -216,7 +220,7 @@ end
 
 # Each thread handles a single target and uses local GPU memory
 # Sources divided into multiple columns and influence is computed by multiple threads
-function gpu_atomic_direct!(out, s, t, p, q, kernel)
+function gpu_atomic_square!(out, s, t, p, q, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -266,6 +270,117 @@ function gpu_atomic_direct!(out, s, t, p, q, kernel)
 
         # Each thread will compute the influence of all the sources
         # in the shared memory on the target corresponding to its index
+        i = 1i32
+        while i <= bodies_per_col
+            isource = i + bodies_per_col*(col-1i32)
+            if isource <= s_size
+                if itarget <= t_size
+                    gpu_interaction!(UJ, tx, ty, tz, sh_mem, isource, kernel)
+                end
+            end
+            i += 1i32
+        end
+        itile += 1i32
+        sync_threads()
+    end
+
+    # Sum up accelerations for each target/thread
+    # Each target will be accessed by q no. of threads
+    if itarget <= t_size
+        idim = 1i32
+        while idim <= 12i32
+            @inbounds CUDA.@atomic out[idim, itarget] += UJ[idim]
+            idim += 1i32
+        end
+    end
+    return
+end
+
+# Each thread handles a single target and uses local GPU memory
+# Sources divided into multiple columns and influence is computed by multiple threads
+# p - no. of targets in a block
+# q - no. of threads handling a single target (should be factor of r)
+# r - no. of sources in a tile
+# rectangular - true: rectangular tile, false: square tile
+function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
+    t_size::Int32 = size(t, 2)
+    s_size::Int32 = size(s, 2)
+
+    ithread::Int32 = threadIdx().x
+
+    # Row and column indices of threads in a block
+    row::Int32 = (ithread-1i32) % p + 1i32
+    col::Int32 = floor(Int32, (ithread-1i32)/p) + 1i32
+
+    itarget::Int32 = row + (blockIdx().x-1i32)*p
+    if itarget <= t_size
+        @inbounds tx = t[1i32, itarget]
+        @inbounds ty = t[2i32, itarget]
+        @inbounds tz = t[3i32, itarget]
+    end
+
+    n_tiles::Int32 = rectangular ? CUDA.ceil(Int32, s_size / r) : CUDA.ceil(Int32, s_size / p)
+
+    bodies_per_col::Int32 = rectangular ? CUDA.ceil(Int32, r / q) : CUDA.ceil(Int32, p / q)
+
+    sh_mem_size = rectangular ? r : p
+    sh_mem = CuDynamicSharedArray(eltype(t), (7, sh_mem_size))
+
+    # Variable initialization
+    UJ = @MVector zeros(eltype(t), 12)
+    idim::Int32 = 0
+    isource::Int32 = 0
+    i::Int32 = 0
+
+    # For shared memory copying by blocks
+    shblk::Int32 = 0
+    shmem_idx::Int32 = 0
+    n_shblks = CUDA.ceil(Int32, r / blockDim().x)
+
+    itile::Int32 = 1
+    while itile <= n_tiles
+        # Each thread will copy source coordinates corresponding to its index into shared memory. This will be done for each tile.
+        shblk = 1i32
+        if rectangular
+            while shblk <= n_shblks
+                shmem_idx = ithread + (shblk-1i32)*blockDim().x
+                idim = 1i32
+                if shmem_idx <= r
+                    isource = shmem_idx + (itile-1i32)*r
+                    if isource <= s_size
+                        while idim <= 7i32
+                            @inbounds sh_mem[idim, shmem_idx] = s[idim, isource]
+                            idim += 1i32
+                        end
+                    else
+                        while idim <= 7i32
+                            @inbounds sh_mem[idim, shmem_idx] = zero(eltype(s))
+                            idim += 1i32
+                        end
+                    end
+                end
+                shblk += 1i32
+            end
+        else
+            if (col == 1i32)
+                isource = row + (itile-1i32)*p
+                idim = 1i32
+                if isource <= s_size
+                    while idim <= 7i32
+                        @inbounds sh_mem[idim, row] = s[idim, isource]
+                        idim += 1i32
+                    end
+                else
+                    while idim <= 7i32
+                        @inbounds sh_mem[idim, row] = zero(eltype(s))
+                        idim += 1i32
+                    end
+                end
+            end
+        end
+        sync_threads()
+
+        # Each thread will compute the influence of all the sources in the shared memory on the target corresponding to its index
         i = 1i32
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1i32)
@@ -426,15 +541,6 @@ function gpu_reduction_direct!(out, s, t, num_cols, kernel)
         end
     end
 
-    return
-end
-
-function expand_indices!(expanded_indices, indices)
-    i = 1
-    for index in indices
-        expanded_indices[i:i+length(index)-1] .= index
-        i += length(index)
-    end
     return
 end
 

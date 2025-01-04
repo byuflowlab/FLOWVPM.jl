@@ -134,11 +134,7 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        if rectangular
-            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, kernel)
-        else
-            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, kernel)
-        end
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
         view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
         view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
@@ -194,11 +190,7 @@ function fmm.nearfield_device!(
 
                 # Compute interactions using GPU
                 kernel = source_systems.kernel.g_dgdr
-                if rectangular
-                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, Int32(p), Int32(q), Int32(r), kernel)
-                else
-                    @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
-                end
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
                 UJ_d_list[igpu] = UJ_d
 
