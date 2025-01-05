@@ -80,26 +80,10 @@ function fmm.nearfield_device!(
     # Square or Rectangular tile kernel
     rectangular = true
 
-    # Sort the direct_list by targets
-    # This is to avoid race conditions when parallelized with multiple gpus
-    sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
-
-    # The gpu kernel requires the source indices to be expanded to a single array
-    target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
-    leaf_count = length(target_sources)
-
-    # Check if direct interaction is required for the entire domain
-    fully_direct = (leaf_count == 8) && is_fully_direct(target_sources)
-
-    ngpus = length(CUDA.devices())
-
     # Sets precision for computations on GPU
     T = Float64
 
-    # Dummy initialization so that UJ_d is defined in all lower scopes
-    UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
-
-    if fully_direct && ngpus == 1
+    if length(direct_list) == 1
         ns = get_np(source_systems)
 
         # Copy source particles from CPU to GPU
@@ -134,14 +118,28 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
         view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
         view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
 
         # Clear GPU array to avoid GC pressure
         CUDA.unsafe_free!(UJ_d)
+
     else
+
+        # Sort the direct_list by targets
+        # This is to avoid race conditions when parallelized with multiple gpus
+        sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
+
+        # The gpu kernel requires the source indices to be expanded to a single array
+        target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
+        leaf_count = length(target_sources)
+
+        # Dummy initialization so that UJ_d is defined in all lower scopes
+        ngpus = length(CUDA.devices())
+        UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+
         ileaf = 1
         while ileaf <= leaf_count
             leaf_remaining = leaf_count-ileaf+1
@@ -190,7 +188,7 @@ function fmm.nearfield_device!(
 
                 # Compute interactions using GPU
                 kernel = source_systems.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
                 UJ_d_list[igpu] = UJ_d
 
