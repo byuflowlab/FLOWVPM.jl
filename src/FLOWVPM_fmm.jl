@@ -84,6 +84,10 @@ function fmm.nearfield_device!(
     T = Float64
 
     if length(direct_list) == 1
+        # This means the entire particle field has to be used for
+        # computing nearfield interactions on the gpu
+
+        rectangular = false
         ns = get_np(source_systems)
 
         # Copy source particles from CPU to GPU
@@ -257,6 +261,9 @@ function fmm.nearfield_device!(
     nstreams = nstreams_per_gpu * ngpus
     streams = Vector{CuStream}(undef, nstreams)
 
+    # Square or Rectangular tile kernel
+    rectangular = true
+
     # Sets precision for computations on GPU
     T = Float64
 
@@ -302,19 +309,19 @@ function fmm.nearfield_device!(
             # Get p, q for optimal GPU kernel launch configuration
             # p is no. of targets in a block
             # q is no. of columns per block
-            p, q = get_launch_config(Int32(t_size))
+            p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
 
             # Compute no. of threads, no. of blocks and shared memory
             threads = p*q
             blocks = cld(t_size, p)
-            shmem = int32(sizeof(T)) * 7 * p
+            shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
             # Check if GPU shared memory is sufficient
             check_shared_memory(dev, shmem)
 
             # Compute interactions using GPU
             kernel = source_systems.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
             UJ_d_list[istream] = UJ_d
 
