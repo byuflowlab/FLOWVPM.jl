@@ -77,26 +77,17 @@ function fmm.nearfield_device!(
         source_tree::fmm.Tree,
         direct_list) where {PS,VS,GS}
 
-    # Sort the direct_list by targets
-    # This is to avoid race conditions when parallelized with multiple gpus
-    sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
-
-    # The gpu kernel requires the source indices to be expanded to a single array
-    target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
-    leaf_count = length(target_sources)
-
-    # Check if direct interaction is required for the entire domain
-    fully_direct = (leaf_count == 8) && is_fully_direct(target_sources)
-
-    ngpus = length(CUDA.devices())
+    # Square or Rectangular tile kernel
+    rectangular = true
 
     # Sets precision for computations on GPU
     T = Float64
 
-    # Dummy initialization so that UJ_d is defined in all lower scopes
-    UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+    if length(direct_list) == 1
+        # This means the entire particle field has to be used for
+        # computing nearfield interactions on the gpu
 
-    if fully_direct && ngpus == 1
+        rectangular = false
         ns = get_np(source_systems)
 
         # Copy source particles from CPU to GPU
@@ -118,12 +109,12 @@ function fmm.nearfield_device!(
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q = get_launch_config(t_size; max_threads_per_block=512)
+        p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
 
         # Compute no. of threads, no. of blocks and shared memory
         threads = p*q
         blocks = cld(t_size, p)
-        shmem = sizeof(T) * 7 * p
+        shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
         # Check if GPU shared memory is sufficient
         dev = CUDA.device()
@@ -131,14 +122,28 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
         view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
         view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
 
         # Clear GPU array to avoid GC pressure
         CUDA.unsafe_free!(UJ_d)
+
     else
+
+        # Sort the direct_list by targets
+        # This is to avoid race conditions when parallelized with multiple gpus
+        sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
+
+        # The gpu kernel requires the source indices to be expanded to a single array
+        target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
+        leaf_count = length(target_sources)
+
+        # Dummy initialization so that UJ_d is defined in all lower scopes
+        ngpus = length(CUDA.devices())
+        UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
+
         ileaf = 1
         while ileaf <= leaf_count
             leaf_remaining = leaf_count-ileaf+1
@@ -175,19 +180,19 @@ function fmm.nearfield_device!(
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q = get_launch_config(t_size; max_threads_per_block=512)
+                p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
 
                 # Compute no. of threads, no. of blocks and shared memory
-                threads::Int32 = p*q
-                blocks::Int32 = cld(t_size, p)
-                shmem = sizeof(T) * 7 * p
+                threads = p*q
+                blocks = cld(t_size, p)
+                shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
                 # Check if GPU shared memory is sufficient
                 check_shared_memory(dev, shmem)
 
                 # Compute interactions using GPU
                 kernel = source_systems.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
                 UJ_d_list[igpu] = UJ_d
 
@@ -256,6 +261,9 @@ function fmm.nearfield_device!(
     nstreams = nstreams_per_gpu * ngpus
     streams = Vector{CuStream}(undef, nstreams)
 
+    # Square or Rectangular tile kernel
+    rectangular = true
+
     # Sets precision for computations on GPU
     T = Float64
 
@@ -301,19 +309,19 @@ function fmm.nearfield_device!(
             # Get p, q for optimal GPU kernel launch configuration
             # p is no. of targets in a block
             # q is no. of columns per block
-            p, q = get_launch_config(t_size; max_threads_per_block=512)
+            p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
 
             # Compute no. of threads, no. of blocks and shared memory
-            threads::Int32 = p*q
-            blocks::Int32 = cld(t_size, p)
-            shmem = sizeof(T) * 7 * p
+            threads = p*q
+            blocks = cld(t_size, p)
+            shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
             # Check if GPU shared memory is sufficient
             check_shared_memory(dev, shmem)
 
             # Compute interactions using GPU
             kernel = source_systems.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_direct!(UJ_d, s_d, t_d, Int32(p), Int32(q), kernel)
+            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
 
             UJ_d_list[istream] = UJ_d
 
