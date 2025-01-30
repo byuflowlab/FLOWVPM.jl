@@ -28,6 +28,8 @@ end
     σ = get_sigma(particle_field, i)[]
     Γx, Γy, Γz = get_Gamma(particle_field, i)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    Γ < 10*eps() && (return zero(Γ))
+
     ρ_σ = solve_ρ_over_σ(σ, Γ, ε_tol)
 
     return ρ_σ * σ
