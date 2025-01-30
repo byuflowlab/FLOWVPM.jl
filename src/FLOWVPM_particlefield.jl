@@ -210,6 +210,11 @@ iterator(args...; optargs...) = get_particleiterator(args...; optargs...)
 "Alias for `get_particleiterator`"
 iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
+const X_INDEX = 1:3
+const GAMMA_INDEX = 4:6
+
+const J_INDEX = 16:24
+
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
 # maps the indices of each particle's fields
@@ -248,7 +253,8 @@ get_vol(pfield::ParticleField, i::Int) = get_vol(get_particle(pfield, i))
 get_circulation(pfield::ParticleField, i::Int) = get_circulation(get_particle(pfield, i))
 get_U(pfield::ParticleField, i::Int) = get_U(get_particle(pfield, i))
 get_vorticity(pfield::ParticleField, i::Int) = get_vorticity(get_particle(pfield, i))
-get_J(pfield::ParticleField, i::Int) = get_J(get_particle(pfield, i))
+# get_J(pfield::ParticleField, i::Int) = get_J(get_particle(pfield, i))
+get_J(pfield::ParticleField, i::Int) = view(pfield.particles, J_INDEX, i)
 get_PSE(pfield::ParticleField, i::Int) = get_PSE(get_particle(pfield, i))
 get_W(pfield::ParticleField, i::Int) = get_W(get_particle(pfield, i))
 get_M(pfield::ParticleField, i::Int) = get_M(get_particle(pfield, i))
@@ -265,7 +271,12 @@ set_vol(P, val) = get_vol(P) .= val
 set_circulation(P, val) = get_circulation(P) .= val
 set_U(P, val) = get_U(P) .= val
 set_vorticity(P, val) = get_vorticity(P) .= val
-set_J(P, val) = get_J(P) .= val
+# set_J(P, val) = get_J(P) .= val
+function set_J(P, val)
+    for (ii,i) in enumerate(J_INDEX)
+        P[i] = val[ii]
+    end
+end
 set_M(P, val) = get_M(P) .= val
 set_C(P, val) = get_C(P) .= val
 set_static(P, val) = get_static(P) .= val
@@ -280,7 +291,12 @@ set_vol(pfield::ParticleField, i::Int, val) = set_vol(get_particle(pfield, i), v
 set_circulation(pfield::ParticleField, i::Int, val) = set_circulation(get_particle(pfield, i), val)
 set_U(pfield::ParticleField, i::Int, val) = set_U(get_particle(pfield, i), val)
 set_vorticity(pfield::ParticleField, i::Int, val) = set_vorticity(get_particle(pfield, i), val)
-set_J(pfield::ParticleField, i::Int, val) = set_J(get_particle(pfield, i), val)
+# set_J(pfield::ParticleField, i::Int, val) = set_J(get_particle(pfield, i), val)
+function set_J(pfield::ParticleField, i::Int, val)
+    for (jj,j) in enumerate(J_INDEX)
+        pfield.particles[j,i] = val[jj]
+    end
+end
 set_M(pfield::ParticleField, i::Int, val) = set_M(get_particle(pfield, i), val)
 set_C(pfield::ParticleField, i::Int, val) = set_C(get_particle(pfield, i), val)
 set_static(pfield::ParticleField, i::Int, val) = set_static(get_particle(pfield, i), val)
