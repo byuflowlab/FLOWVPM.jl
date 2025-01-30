@@ -212,26 +212,34 @@ iterate(args...; optargs...) = get_particleiterator(args...; optargs...)
 
 const X_INDEX = 1:3
 const GAMMA_INDEX = 4:6
-
+const SIGMA_INDEX = 7
+const VOL_INDEX = 8
+const CIRCULATION_INDEX = 9
+const U_INDEX = 10:12
+const VORTICITY_INDEX = 13:15
 const J_INDEX = 16:24
+const PSE_INDEX = 25:27
+const M_INDEX = 28:36
+const C_INDEX = 37:39
+const SFS_INDEX = 40:42
+const STATIC_INDEX = 43
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
 # maps the indices of each particle's fields
-get_X(P) = view(P, 1:3)
-get_Gamma(P) = view(P, 4:6)
-get_sigma(P) = view(P, 7)
-get_vol(P) = view(P, 8)
-get_circulation(P) = view(P, 9)
-get_U(P) = view(P, 10:12)
-get_vorticity(P) = view(P, 13:15)
-# get_J(P) = view(P, 16:24)
+get_X(P) = view(P, X_INDEX)
+get_Gamma(P) = view(P, GAMMA_INDEX)
+get_sigma(P) = view(P, SIGMA_INDEX)
+get_vol(P) = view(P, VOL_INDEX)
+get_circulation(P) = view(P, CIRCULATION_INDEX)
+get_U(P) = view(P, U_INDEX)
+get_vorticity(P) = view(P, VORTICITY_INDEX)
 get_J(P) = view(P, J_INDEX)
-get_PSE(P) = view(P, 25:27)
-get_M(P) = view(P, 28:36)
-get_C(P) = view(P, 37:39)
-get_SFS(P) = view(P, 40:42)
-get_static(P) = view(P, 43)
+get_PSE(P) = view(P, PSE_INDEX)
+get_M(P) = view(P, M_INDEX)
+get_C(P) = view(P, C_INDEX)
+get_SFS(P) = view(P, SFS_INDEX)
+get_static(P) = view(P, STATIC_INDEX)
 
 is_static(P) = Bool(P[43])
 
@@ -247,62 +255,51 @@ get_SFS2(P) = get_SFS(P)[2]
 get_SFS3(P) = get_SFS(P)[3]
 
 "Get functions for particles in ParticleField"
-get_X(pfield::ParticleField, i::Int) = get_X(get_particle(pfield, i))
-get_Gamma(pfield::ParticleField, i::Int) = get_Gamma(get_particle(pfield, i))
-get_sigma(pfield::ParticleField, i::Int) = get_sigma(get_particle(pfield, i))
-get_vol(pfield::ParticleField, i::Int) = get_vol(get_particle(pfield, i))
-get_circulation(pfield::ParticleField, i::Int) = get_circulation(get_particle(pfield, i))
-get_U(pfield::ParticleField, i::Int) = get_U(get_particle(pfield, i))
-get_vorticity(pfield::ParticleField, i::Int) = get_vorticity(get_particle(pfield, i))
-# get_J(pfield::ParticleField, i::Int) = get_J(get_particle(pfield, i))
+get_X(pfield::ParticleField, i::Int) = view(pfield.particles, X_INDEX, i)
+get_Gamma(pfield::ParticleField, i::Int) = view(pfield.particles, GAMMA_INDEX, i)
+get_sigma(pfield::ParticleField, i::Int) = view(pfield.particles, SIGMA_INDEX, i)
+get_vol(pfield::ParticleField, i::Int) = view(pfield.particles, VOL_INDEX, i)
+get_circulation(pfield::ParticleField, i::Int) = view(pfield.particles, CIRCULATION_INDEX, i)
+get_U(pfield::ParticleField, i::Int) = view(pfield.particles, U_INDEX, i)
+get_vorticity(pfield::ParticleField, i::Int) = view(pfield.particles, VORTICITY_INDEX, i)
 get_J(pfield::ParticleField, i::Int) = view(pfield.particles, J_INDEX, i)
-get_PSE(pfield::ParticleField, i::Int) = get_PSE(get_particle(pfield, i))
+get_PSE(pfield::ParticleField, i::Int) = view(pfield.particles, PSE_INDEX, i)
 get_W(pfield::ParticleField, i::Int) = get_W(get_particle(pfield, i))
-get_M(pfield::ParticleField, i::Int) = get_M(get_particle(pfield, i))
-get_C(pfield::ParticleField, i::Int) = get_C(get_particle(pfield, i))
-get_static(pfield::ParticleField, i::Int) = get_static(get_particle(pfield, i))
-
-is_static(pfield::ParticleField, i::Int) = is_static(get_particle(pfield, i))
+get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
+get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
+get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
+get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
 
 "Set functions for particles"
-set_X(P, val) = get_X(P) .= val
-set_Gamma(P, val) = get_Gamma(P) .= val
-set_sigma(P, val) = get_sigma(P) .= val
-set_vol(P, val) = get_vol(P) .= val
-set_circulation(P, val) = get_circulation(P) .= val
-set_U(P, val) = get_U(P) .= val
-set_vorticity(P, val) = get_vorticity(P) .= val
-# set_J(P, val) = get_J(P) .= val
-function set_J(P, val)
-    for (ii,i) in enumerate(J_INDEX)
-        P[i] = val[ii]
-    end
-end
-set_M(P, val) = get_M(P) .= val
-set_C(P, val) = get_C(P) .= val
-set_static(P, val) = get_static(P) .= val
-set_PSE(P, val) = get_PSE(P) .= val
-set_SFS(P, val) = get_SFS(P) .= val
+function set_X(P, val) P[X_INDEX] .= val end
+function set_Gamma(P, val) P[GAMMA_INDEX] .= val end
+function set_sigma(P, val) P[SIGMA_INDEX] = val end
+function set_vol(P, val) P[VOL_INDEX] = val end
+function set_circulation(P, val) P[CIRCULATION_INDEX] = val end
+function set_U(P, val) P[U_INDEX] .= val end
+function set_vorticity(P, val) P[VORTICITY_INDEX] .= val end
+function set_J(P, val) P[J_INDEX] .= val end
+function set_M(P, val) P[M_INDEX] .= val end
+function set_C(P, val) P[C_INDEX] .= val end
+function set_static(P, val) P[STATIC_INDEX] = val end
+function set_PSE(P, val) P[PSE_INDEX] .= val end
+function set_SFS(P, val) P[SFS_INDEX] .= val end
+
 
 "Set functions for particles in ParticleField"
-set_X(pfield::ParticleField, i::Int, val) = set_X(get_particle(pfield, i), val)
-set_Gamma(pfield::ParticleField, i::Int, val) = set_Gamma(get_particle(pfield, i), val)
-set_sigma(pfield::ParticleField, i::Int, val) = set_sigma(get_particle(pfield, i), val)
-set_vol(pfield::ParticleField, i::Int, val) = set_vol(get_particle(pfield, i), val)
-set_circulation(pfield::ParticleField, i::Int, val) = set_circulation(get_particle(pfield, i), val)
-set_U(pfield::ParticleField, i::Int, val) = set_U(get_particle(pfield, i), val)
-set_vorticity(pfield::ParticleField, i::Int, val) = set_vorticity(get_particle(pfield, i), val)
-# set_J(pfield::ParticleField, i::Int, val) = set_J(get_particle(pfield, i), val)
-function set_J(pfield::ParticleField, i::Int, val)
-    for (jj,j) in enumerate(J_INDEX)
-        pfield.particles[j,i] = val[jj]
-    end
-end
-set_M(pfield::ParticleField, i::Int, val) = set_M(get_particle(pfield, i), val)
-set_C(pfield::ParticleField, i::Int, val) = set_C(get_particle(pfield, i), val)
-set_static(pfield::ParticleField, i::Int, val) = set_static(get_particle(pfield, i), val)
-set_PSE(pfield::ParticleField, i::Int, val) = set_PSE(get_particle(pfield, i), val)
-set_SFS(pfield::ParticleField, i::Int, val) = set_SFS(get_particle(pfield, i), val)
+function set_X(pfield::ParticleField, i::Int, val) pfield.particles[X_INDEX, i] .= val end
+function set_Gamma(pfield::ParticleField, i::Int, val) pfield.particles[GAMMA_INDEX, i] .= val end
+function set_sigma(pfield::ParticleField, i::Int, val) pfield.particles[SIGMA_INDEX, i] = val end
+function set_vol(pfield::ParticleField, i::Int, val) pfield.particles[VOL_INDEX, i] = val end
+function set_circulation(pfield::ParticleField, i::Int, val) pfield.particles[CIRCULATION_INDEX, i] = val end
+function set_U(pfield::ParticleField, i::Int, val) pfield.particles[U_INDEX, i] .= val end
+function set_vorticity(pfield::ParticleField, i::Int, val) pfield.particles[VORTICITY_INDEX, i] .= val end
+function set_J(pfield::ParticleField, i::Int, val) pfield.particles[J_INDEX, i] .= val end
+function set_M(pfield::ParticleField, i::Int, val) pfield.particles[M_INDEX, i] .= val end
+function set_C(pfield::ParticleField, i::Int, val) pfield.particles[C_INDEX, i] .= val end
+function set_static(pfield::ParticleField, i::Int, val) pfield.particles[STATIC_INDEX, i] = val end
+function set_PSE(pfield::ParticleField, i::Int, val) pfield.particles[PSE_INDEX, i] .= val end
+function set_SFS(pfield::ParticleField, i::Int, val) pfield.particles[SFS_INDEX, i] .= val end
 
 """
     `isinviscid(pfield::ParticleField)`

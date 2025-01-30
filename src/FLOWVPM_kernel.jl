@@ -48,28 +48,37 @@ dgdr_sing(r) = 0.0
 @inline g_dgdr_sing(r) = (1.0, 0.0)
 
 # erf Gaussian kernel
-zeta_gauserf(r) = const1*exp(-r^2/2)
-g_gauserf(r) = custom_erf(r/sqr2) - const2*r*exp(-r^2/2)
-dgdr_gauserf(r) = const2*r^2*exp(-r^2/2)
+zeta_gauserf(r) = const1*exp(-r*r/2)
+g_gauserf(r) = custom_erf(r/sqr2) - const2*r*exp(-r*r/2)
+dgdr_gauserf(r) = const2*r*r*exp(-r*r/2)
 @inline function g_dgdr_gauserf(r)
-  aux = const2*r*exp(-r^2/2)
+  aux = const2*r*exp(-r*r/2)
   return custom_erf(r/sqr2)-aux, r*aux
 end
 
 # Gaussian kernel
-zeta_gaus(r) = const3*exp(-r^3)
-g_gaus(r) = 1-exp(-r^3)
-dgdr_gaus(r) = 3*r^2*exp(-r^3)
+zeta_gaus(r) = const3*exp(-r*r*r)
+g_gaus(r) = 1-exp(-r*r*r)
+dgdr_gaus(r) = 3*r*r*exp(-r*r*r)
 @inline function g_dgdr_gaus(r)
-  aux = exp(-r^3)
-  return 1-aux, 3*r^2*aux
+  aux = exp(-r*r*r)
+  return 1-aux, 3*r*r*aux
 end
 
 # Winckelmans algebraic kernel
-zeta_wnklmns(r) = const4 * 7.5 / (r^2 + 1)^3.5
-g_wnklmns(r) = r^3 * (r^2 + 2.5) / (r^2 + 1)^2.5
-dgdr_wnklmns(r) = 7.5 * r^2 / (r^2 + 1)^3.5
+function zeta_wnklmns(r)
+  temp = r*r + 1
+  temp2 = temp*temp*temp
+  temp = temp2*temp2*temp
+  return const4 * 7.5 / sqrt(temp)
+end
+g_wnklmns(r) = r*r*r * (r*r + 2.5) / (r*r + 1)^2.5
+dgdr_wnklmns(r) = 7.5 * r*r / (r*r + 1)^3.5
 @inline function g_dgdr_wnklmns(r)
-  aux0 = (r^2 + 1)^2.5
-  return r^3 * (r^2 + 2.5) / aux0, 7.5 * r^2 / (aux0*(r^2 + 1))
+  # aux0 = (r*r + 1)^2.5
+  aux0 = r*r+1
+  aux02 = aux0*aux0
+  aux0 = aux02*aux02*aux0
+  aux0 = sqrt(aux0)
+  return r*r*r * (r*r + 2.5) / aux0, 7.5 * r*r / (aux0*(r*r + 1))
 end
