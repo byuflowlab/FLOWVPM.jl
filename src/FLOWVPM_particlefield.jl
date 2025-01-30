@@ -44,21 +44,23 @@ Parameters for FMM solver.
                 smoothing radius; at φ = 0.25, P2P is done on cells closer than
                 four times the smoothing radius.
 """
-mutable struct FMM
+mutable struct FMM{TEPS}
   # Optional user inputs
   p::Int64                        # Multipole expansion order
   ncrit::Int64                    # Max number of particles per leaf
   theta::FLOAT_TYPE                  # Neighborhood criterion
   nonzero_sigma::Bool
-  relative_error::Float64
+  ε_tol::TEPS
+end
 
-  FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, relative_error=0.25) = new(p, ncrit, theta, nonzero_sigma, relative_error)
+function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=nothing)
+    return FMM{typeof(ε_tol)}(p, ncrit, theta, nonzero_sigma, ε_tol)
 end
 
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -80,7 +82,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
-    fmm::FMM                                    # Fast-multipole settings
+    fmm::FMM{TEPS}                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
 
     # Internal memory for computation
@@ -96,7 +98,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         viscous::V=Inviscid(),
         np=0, nt=0, t=zero(R),
         transposed=true,
-        fmm=FMM(),
+        fmm::FMM{TEPS}=FMM(),
         M=zeros(R, 4),
         toggle_rbf=false, toggle_sfs=false,
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
@@ -104,7 +106,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
-    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
+    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR, TEPS}
 
     # create particle field
     # particles = [zero(Particle{R}) for _ in 1:maxparticles]
@@ -115,7 +117,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     #     P.index[1] = i
     # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,

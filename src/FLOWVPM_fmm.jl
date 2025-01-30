@@ -3,9 +3,43 @@
 ################################################################################
 
 Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)[]
+
+# smoothing radius
+function upper_bound(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
+end
+
+function residual(ρ_σ, σ, ω, ε)
+    t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
+    t2 = erf(ρ_σ / sqrt(2))
+    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    return t1 + t2 - t3 - 1.0
+end
+
+function solve_ρ_over_σ(σ, ω, ε)
+    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+end
+
+@inline function fmm_radius(particle_field::ParticleField, i, ε_tol::Nothing)
+    return get_sigma(particle_field, i)[]
+end
+
+@inline function fmm_radius(particle_field::ParticleField, i, ε_tol)
+    σ = get_sigma(particle_field, i)[]
+    Γx, Γy, Γz = get_Gamma(particle_field, i)
+    Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, ε_tol)
+
+    return ρ_σ * σ
+end
+
+function Base.getindex(particle_field::ParticleField, i, ::fmm.Radius)
+    ε_tol = particle_field.fmm.ε_tol
+    return fmm_radius(particle_field, i, ε_tol)
+end
+
 #Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
+Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Strength) = get_Gamma(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
 Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
@@ -21,7 +55,7 @@ Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = 
 fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
 Base.length(particle_field::ParticleField) = get_np(particle_field) # currently called internally by the version of the FMM I'm using. this will need to be changed to work with ImplicitAD, which probably just means getting the latest FMM version. that's on hold because there are a bunch of other breaking changes I'll need to deal with to get correct derivative again.
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
 
 fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
 

@@ -22,6 +22,8 @@ import BSON
 import Dates
 import Printf
 import DataStructures: OrderedDict
+import Roots
+import SpecialFunctions: erf
 # import Base: getindex, setindex! # for compatibility with FastMultipole
 using ReverseDiff
 using StaticArrays
