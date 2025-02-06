@@ -24,13 +24,12 @@ import Printf
 import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
-# import Base: getindex, setindex! # for compatibility with FastMultipole
+import Base: getindex, setindex! # for compatibility with FastMultipole
 using ReverseDiff
 using StaticArrays
 using CUDA
 using CUDA: i32
 using Primes
-using Base.Threads
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM

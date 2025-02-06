@@ -479,7 +479,7 @@ function fmm.direct!(
         end
     else
 
-        Threads.@threads for j_target in target_index
+        for j_target in target_index
             r = zero(eltype(source_system))  # Moved inside loop for thread-safety
             target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
 
