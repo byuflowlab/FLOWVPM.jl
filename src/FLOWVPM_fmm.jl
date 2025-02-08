@@ -483,10 +483,14 @@ function fmm.direct!(
             r = zero(eltype(source_system))  # Moved inside loop for thread-safety
             target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
 
-            for source_particle in eachcol(view(source_system.particles, :, source_index))
-                gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
-                source_x, source_y, source_z = get_X(source_particle)
-                sigma = get_sigma(source_particle)[]
+            # for source_particle in eachcol(view(source_system.particles, :, source_index))
+            for i_source_particle in source_index
+                # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
+                gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source_particle)
+                # source_x, source_y, source_z = get_X(source_particle)
+                source_x, source_y, source_z = get_X(source_system, i_source_particle)
+                # sigma = get_sigma(source_particle)[]
+                sigma = get_sigma(source_system, i_source_particle)[]
                 dx = target_x - source_x
                 dy = target_y - source_y
                 dz = target_z - source_z
@@ -497,49 +501,55 @@ function fmm.direct!(
                     g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
 
                     # K × Γp
-                    crss1 = -const4 / r^3 * ( dy*gamma_z - dz*gamma_y )
-                    crss2 = -const4 / r^3 * ( dz*gamma_x - dx*gamma_z )
-                    crss3 = -const4 / r^3 * ( dx*gamma_y - dy*gamma_x )
+                    r3inv = one(r) / (r2 * r)
+                    crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
+                    crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
+                    crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
 
-                    # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-                    Ux = g_sgm * crss1
-                    Uy = g_sgm * crss2
-                    Uz = g_sgm * crss3
-                    # get_U(target_particle) .+= Ux, Uy, Uz
-                    Ux0, Uy0, Uz0 = target_system[j_target, fmm.VELOCITY]
-                    target_system[j_target, fmm.VELOCITY] = Ux+Ux0, Uy+Uy0, Uz+Uz0
+                    if VS
+                        # U = ∑g_σ(x-xp) * K(x-xp) × Γp
+                        Ux = g_sgm * crss1
+                        Uy = g_sgm * crss2
+                        Uz = g_sgm * crss3
+                        # get_U(target_particle) .+= Ux, Uy, Uz
+                        Ux0, Uy0, Uz0 = target_system[j_target, fmm.VELOCITY]
+                        target_system[j_target, fmm.VELOCITY] = Ux+Ux0, Uy+Uy0, Uz+Uz0
+                    end
 
-                    # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
-                    # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-                    aux = dg_sgmdr/(sigma*r) - 3*g_sgm /r^2
-                    # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
-                    # Adds the Kronecker delta term
-                    aux2 = -const4 * g_sgm / r^3
-                    # j=1
-                    du1x1 = aux * crss1 * dx
-                    du2x1 = aux * crss2 * dx - aux2 * gamma_z
-                    du3x1 = aux * crss3 * dx + aux2 * gamma_y
-                    # j=2
-                    du1x2 = aux * crss1 * dy + aux2 * gamma_z
-                    du2x2 = aux * crss2 * dy
-                    du3x2 = aux * crss3 * dy - aux2 * gamma_x
-                    # j=3
-                    du1x3 = aux * crss1 * dz - aux2 * gamma_y
-                    du2x3 = aux * crss2 * dz + aux2 * gamma_x
-                    du3x3 = aux * crss3 * dz
+                    if GS
+                        # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
+                        # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
+                        aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
+                        # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
+                        # Adds the Kronecker delta term
+                        aux2 = -const4 * g_sgm * r3inv
+                        # j=1
+                        du1x1 = aux * crss1 * dx
+                        du2x1 = aux * crss2 * dx - aux2 * gamma_z
+                        du3x1 = aux * crss3 * dx + aux2 * gamma_y
+                        # j=2
+                        du1x2 = aux * crss1 * dy + aux2 * gamma_z
+                        du2x2 = aux * crss2 * dy
+                        du3x2 = aux * crss3 * dy - aux2 * gamma_x
+                        # j=3
+                        du1x3 = aux * crss1 * dz - aux2 * gamma_y
+                        du2x3 = aux * crss2 * dz + aux2 * gamma_x
+                        du3x3 = aux * crss3 * dz
 
-                    du1x10, du2x10, du3x10, du1x20, du2x20, du3x20, du1x30, du2x30, du3x30 = target_system[j_target, fmm.VELOCITY_GRADIENT]
-                    target_system[j_target, fmm.VELOCITY_GRADIENT] = SMatrix{3,3}(
-                                                                                  du1x10 + du1x1,
-                                                                                  du2x10 + du2x1,
-                                                                                  du3x10 + du3x1,
-                                                                                  du1x20 + du1x2,
-                                                                                  du2x20 + du2x2,
-                                                                                  du3x20 + du3x2,
-                                                                                  du1x30 + du1x3,
-                                                                                  du2x30 + du2x3,
-                                                                                  du3x30 + du3x3
-                                                                                 )
+                        du1x10, du2x10, du3x10, du1x20, du2x20, du3x20, du1x30, du2x30, du3x30 = target_system[j_target, fmm.VELOCITY_GRADIENT]
+                        val = SMatrix{3,3}(
+                                                                                      du1x10 + du1x1,
+                                                                                      du2x10 + du2x1,
+                                                                                      du3x10 + du3x1,
+                                                                                      du1x20 + du1x2,
+                                                                                      du2x20 + du2x2,
+                                                                                      du3x20 + du3x2,
+                                                                                      du1x30 + du1x3,
+                                                                                      du2x30 + du2x3,
+                                                                                      du3x30 + du3x3
+                                                                                     )
+                        target_system[j_target, fmm.VELOCITY_GRADIENT] = val
+                    end
                 end
 
                 # include self-induced contribution to SFS
