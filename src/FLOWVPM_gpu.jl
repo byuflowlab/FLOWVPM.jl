@@ -323,7 +323,7 @@ function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
 
     bodies_per_col::Int32 = rectangular ? CUDA.ceil(Int32, r / q) : CUDA.ceil(Int32, p / q)
 
-    sh_mem_size = rectangular ? r : p
+    sh_mem_size::Int32 = rectangular ? r : p
     sh_mem = CuDynamicSharedArray(eltype(t), (7, sh_mem_size))
 
     # Variable initialization
