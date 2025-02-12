@@ -554,6 +554,7 @@ function fmm.direct!(
 
                 # include self-induced contribution to SFS
                 if source_system.toggle_sfs
+                    source_particle = get_particle(source_system, i_source_particle)
                     Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
                 end
             end
