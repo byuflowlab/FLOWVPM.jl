@@ -9,9 +9,9 @@ function check_launch(n, p, q,
     if q > p; throw_error && error("q must be less than or equal to p"); return false; end
     if n % p != 0; throw_error && error("n must be divisible by p"); return false; end
     if p % q != 0; throw_error && error("p must be divisible by q"); return false; end
-    if p*q >= 32
-        if p*q % 32 != 0; throw_error && error("pq must be multiple of 32"); return false; end
-    end
+    # if p*q >= 32
+    #     if p*q % 32 != 0; throw_error && error("pq must be multiple of 32"); return false; end
+    # end
 
     return true
 end
@@ -27,9 +27,9 @@ function check_launch(nt, ns, p, q, r,
     # if p % q != 0; throw_error && error("p must be divisible by q"); return false; end
     if ns % r != 0; throw_error && error("ns must be divisible by p"); return false; end
     if r % q != 0; throw_error && error("r must be divisible by q"); return false; end
-    if p*q >= 32
-        if p*q % 32 != 0; throw_error && error("pq must be multiple of 32"); return false; end
-    end
+    # if p*q >= 32
+    #     if p*q % 32 != 0; throw_error && error("pq must be multiple of 32"); return false; end
+    # end
 
     return true
 end
