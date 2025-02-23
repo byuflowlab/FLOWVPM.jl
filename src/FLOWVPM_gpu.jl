@@ -279,7 +279,7 @@ function gpu_atomic_square!(out, s, t, p, q, kernel)
         i = 1i32
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1i32)
-            if isource <= s_size
+            if isource <= p
                 if itarget <= t_size
                     gpu_interaction!(UJ, tx, ty, tz, sh_mem, isource, kernel)
                 end
@@ -390,7 +390,7 @@ function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
         i = 1i32
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1i32)
-            if isource <= s_size
+            if isource <= sh_mem_size
                 if itarget <= t_size
                     gpu_interaction!(UJ, tx, ty, tz, sh_mem, isource, kernel)
                 end
