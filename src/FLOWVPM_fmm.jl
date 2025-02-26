@@ -2,8 +2,6 @@
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
 
-Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
-
 # smoothing radius
 function upper_bound(σ, ω, ε)
     return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
@@ -20,545 +18,178 @@ function solve_ρ_over_σ(σ, ω, ε)
     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
 end
 
-@inline function fmm_radius(particle_field::ParticleField, i, ε_tol::Nothing)
+@inline function fmm_radius(particle_field::ParticleField, i, ε_abs::Nothing)
     return get_sigma(particle_field, i)[]
 end
 
-@inline function fmm_radius(particle_field::ParticleField, i, ε_tol)
+@inline function fmm_radius(particle_field::ParticleField, i, ε_abs)
     σ = get_sigma(particle_field, i)[]
     Γx, Γy, Γz = get_Gamma(particle_field, i)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
     Γ < 10*eps() && (return zero(Γ))
 
-    ρ_σ = solve_ρ_over_σ(σ, Γ, ε_tol)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, ε_abs)
 
     return ρ_σ * σ
 end
 
-function Base.getindex(particle_field::ParticleField, i, ::fmm.Radius)
-    ε_tol = particle_field.fmm.ε_tol
-    return fmm_radius(particle_field, i, ε_tol)
+function upper_bound(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
 
-#Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Strength) = get_Gamma(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
-Base.getindex(particle_field::ParticleField, i, ::fmm.Body) = get_particle(particle_field, i)
+function residual(ρ_σ, σ, ω, ε)
+    t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
+    t2 = erf(ρ_σ / sqrt(2))
+    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    return t1 + t2 - t3 - 1.0
+end
 
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Body) = get_particle(particle_field, i) .= val
+function solve_ρ_over_σ(σ, ω, ε)
+    if ω < 10*eps()
+        ω = zero(ω)
+    end
+    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+end
 
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
-#Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = set_U(particle_field, i, val)
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = set_J(particle_field, i, vec(val))
+function solve_ρ_over_σ(σ, ω, ε::Nothing)
+    return one(σ)
+end
 
-fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
-Base.length(particle_field::ParticleField) = get_np(particle_field) # currently called internally by the version of the FMM I'm using. this will need to be changed to work with ImplicitAD, which probably just means getting the latest FMM version. that's on hold because there are a bunch of other breaking changes I'll need to deal with to get correct derivative again.
+function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
+    σ = system.particles[SIGMA_INDEX, i_body]
+    Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
+    Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_abs)
+    buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
+    buffer[4, i_buffer] = ρ_σ * σ
+    buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
+    buffer[8, i_buffer] = σ
+end
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+function fmm.data_per_body(system::ParticleField)
+    return 8
+end
+#--- getters ---#
 
-fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
+function fmm.get_position(system::ParticleField, i)
+    return SVector{3}(system.particles[j,i] for j in X_INDEX)
+end
 
-fmm.body_to_multipole!(system::ParticleField, args...) = fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
+function fmm.strength_dims(system::ParticleField)
+    return 3
+end
 
-@inline function vorticity_direct(target_system::ParticleField, target_index, source_system, source_index)
-    for j_target in target_index
-        target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
-        Wx = zero(eltype(target_system))
-        Wy = zero(eltype(target_system))
-        Wz = zero(eltype(target_system))
-        for i_source in source_index
-            gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source)
-            source_x, source_y, source_z = get_X(source_system, i_source)
-            sigma = get_sigma(source_system, i_source)[]
+fmm.get_n_bodies(system::ParticleField) = system.np
+
+function fmm.body_to_multipole!(system::ParticleField, args...)
+    return fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
+end
+
+@inline function bound_induced_velocity_fmm(r1, r2, core_size=1e-3)
+    # parameters
+    nr1 = norm(r1)
+    nr2 = norm(r2)
+    nr1nr2 = nr1*nr2
+    rcross = cross(r1, r2)
+    rdot = dot(r1, r2)
+    # check if evaluation point is colinear with the bound vortex
+    #if norm(rcross) < epsilon # colinear if true
+    if isapprox(rdot, -nr1nr2; atol=eps(rdot)*100) # at the midpoint, so return zero
+        return zero(typeof(r1))
+    else # coincident with the filament so use the finite core model
+        r1s, r2s, εs = nr1^2, nr2^2, core_size*core_size
+        f1 = rcross/(r1s*r2s - rdot^2 + εs*(r1s + r2s - 2*nr1nr2))
+        f2 = (r1s - rdot)/sqrt(r1s + εs) + (r2s - rdot)/sqrt(r2s + εs)
+        l = norm(r2 .- r1)
+        σ = l * 0.1
+        one_over_σ = 1 / σ
+        f3 = 1 .- exp(-(get_distance(r1,r2)*one_over_σ)^3)
+        Vhat = (f1*f2*f3)/(4*pi)
+        return Vhat
+    end
+end
+
+function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS}
+
+    for i_source_particle in source_index
+
+        # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
+        gamma_x, gamma_y, gamma_z = fmm.get_strength(source_buffer, source_system, i_source_particle)
+        # source_x, source_y, source_z = get_X(source_particle)
+        source_x, source_y, source_z = fmm.get_position(source_buffer, i_source_particle)
+        # sigma = get_sigma(source_particle)[]
+        sigma = source_buffer[8, i_source_particle]
+
+        for j_target in target_index
+
+            target_x, target_y, target_z = fmm.get_position(target_buffer, j_target)
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z
-            r2 = dx*dx + dy*dy + dz*dz # sqrt hahs an undefined derivative at r=0, so AD gets NaNs introduced without this check.
-            if r2 > 0
+            r2 = dx*dx + dy*dy + dz*dz
+
+            if !iszero(r2)
                 r = sqrt(r2)
-                zeta = source_system.zeta(r/sigma)/(sigma*sigma*sigma)
-                Wx += zeta * gamma_x
-                Wy += zeta * gamma_y
-                Wz += zeta * gamma_z
-            end
-        end
-        get_vorticity(target_system, j_target) .+= Wx, Wy, Wz
-    end
-end
 
-@inline function vorticity_direct(target_system, target_index, source_system, source_index)
-    return nothing
-end
+                # Regularizing function and deriv
+                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
 
-@inline function Estr_direct(target_system::ParticleField, j_target, source_particle, r, zeta, transposed)
-    Estr_direct(target_system[j_target, fmm.BODY], source_particle, r, zeta, transposed)
-end
+                # K × Γp
+                r3inv = one(r) / (r2 * r)
+                crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
+                crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
+                crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
 
-@inline function Estr_direct(target_system, j_target, source_particle, r, zeta, transposed)
-    return nothing
-end
+                if VS
+                    # U = ∑g_σ(x-xp) * K(x-xp) × Γp
+                    Ux = g_sgm * crss1
+                    Uy = g_sgm * crss2
+                    Uz = g_sgm * crss3
+                    # get_U(target_particle) .+= Ux, Uy, Uz
+                    Ux0, Uy0, Uz0 = fmm.get_velocity(target_buffer, j_target)
 
-# GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
-# Uses all available GPUs and single stream
-# Each leaf is loaded on to a gpu and the kernel is launched. Results are copied back after
-# all available gpus are launched asynchronously.
-function fmm.nearfield_device!(
-        target_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 1},
-        target_tree::fmm.Tree,
-        derivatives_switches::fmm.DerivativesSwitch{PS,VS,GS},
-        source_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 1},
-        source_tree::fmm.Tree,
-        direct_list) where {PS,VS,GS}
-
-    # Square or Rectangular tile kernel
-    rectangular = true
-
-    # Sets precision for computations on GPU
-    T = Float64
-
-    if length(direct_list) == 1
-        # This means the entire particle field has to be used for
-        # computing nearfield interactions on the gpu
-
-        rectangular = false
-        ns = get_np(source_systems)
-
-        # Copy source particles from CPU to GPU
-        s_d = CuArray{T}(view(source_systems.particles, 1:7, 1:ns))
-
-        # Pad target array to nearest multiple of 32 (warp size)
-        # for efficient p, q launch config
-        t_padding = 0
-        nt = ns
-        if mod(nt, 32) != 0
-            t_padding = 32*cld(nt, 32) - nt
-        end
-        t_size = nt + t_padding
-
-        # Copy target particles from CPU to GPU
-        t_d = s_d
-        UJ_d = CUDA.zeros(T, 12, nt)
-
-        # Get p, q for optimal GPU kernel launch configuration
-        # p is no. of targets in a block
-        # q is no. of columns per block
-        p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
-
-        # Compute no. of threads, no. of blocks and shared memory
-        threads = p*q
-        blocks = cld(t_size, p)
-        shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
-
-        # Check if GPU shared memory is sufficient
-        dev = CUDA.device()
-        check_shared_memory(dev, shmem)
-
-        # Compute interactions using GPU
-        kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
-
-        view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
-        view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
-
-        # Clear GPU array to avoid GC pressure
-        CUDA.unsafe_free!(UJ_d)
-
-    else
-
-        # Sort the direct_list by targets
-        # This is to avoid race conditions when parallelized with multiple gpus
-        sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
-
-        # The gpu kernel requires the source indices to be expanded to a single array
-        target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
-        leaf_count = length(target_sources)
-
-        # Dummy initialization so that UJ_d is defined in all lower scopes
-        ngpus = length(CUDA.devices())
-        UJ_d_list = Vector{CuArray{T, 2}}(undef, ngpus)
-
-        ileaf = 1
-        while ileaf <= leaf_count
-            leaf_remaining = leaf_count-ileaf+1
-
-            ileaf_gpu = ileaf
-            # Copy data to GPU and launch kernel
-            for igpu in min(ngpus, leaf_remaining):-1:1
-
-                # Set gpu
-                dev = CUDA.device!(igpu-1)
-
-                # Compute number of sources
-                source_indices = expand_source_indices(target_sources[ileaf_gpu], source_tree.branches)
-                ns = length(source_indices)
-
-
-                # Copy source particles from CPU to GPU
-                s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
-
-                # Pad target array to nearest multiple of 32 (warp size)
-                # for efficient p, q launch config
-                t_padding = 0
-                target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
-                nt = length(target_index_range)
-                if mod(nt, 32) != 0
-                    t_padding = 32*cld(nt, 32) - nt
+                    val = SVector{3}(Ux, Uy, Uz)
+                    fmm.set_velocity!(target_buffer, j_target, val)
                 end
 
-                # Copy target particles from CPU to GPU
-                t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
-                UJ_d = CUDA.zeros(T, 12, nt)
-                t_size = nt + t_padding
+                if GS
+                    # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
+                    # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
+                    aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
+                    # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
+                    # Adds the Kronecker delta term
+                    aux2 = -const4 * g_sgm * r3inv
+                    # j=1
+                    du1x1 = aux * crss1 * dx
+                    du2x1 = aux * crss2 * dx - aux2 * gamma_z
+                    du3x1 = aux * crss3 * dx + aux2 * gamma_y
+                    # j=2
+                    du1x2 = aux * crss1 * dy + aux2 * gamma_z
+                    du2x2 = aux * crss2 * dy
+                    du3x2 = aux * crss3 * dy - aux2 * gamma_x
+                    # j=3
+                    du1x3 = aux * crss1 * dz - aux2 * gamma_y
+                    du2x3 = aux * crss2 * dz + aux2 * gamma_x
+                    du3x3 = aux * crss3 * dz
+                    # @show aux, aux2, crss1, crss2, crss3, dx, dy, dz
+                    # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
 
-                # Get p, q for optimal GPU kernel launch configuration
-                # p is no. of targets in a block
-                # q is no. of columns per block
-                p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
-
-                # Compute no. of threads, no. of blocks and shared memory
-                threads = p*q
-                blocks = cld(t_size, p)
-                shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
-
-                # Check if GPU shared memory is sufficient
-                check_shared_memory(dev, shmem)
-
-                # Compute interactions using GPU
-                kernel = source_systems.kernel.g_dgdr
-                @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
-
-                UJ_d_list[igpu] = UJ_d
-
-                ileaf_gpu += 1
-            end
-
-            ileaf_gpu = ileaf
-            for igpu in min(ngpus, leaf_remaining):-1:1
-                # Set gpu
-                CUDA.device!(igpu-1)
-
-                target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
-
-                # Copy results back from GPU to CPU
-                UJ_d = UJ_d_list[igpu]
-                view(target_systems.particles, 10:12, target_index_range) .= Array(view(UJ_d, 1:3, :))
-                view(target_systems.particles, 16:24, target_index_range) .= Array(view(UJ_d, 4:12, :))
-
-                # Clear GPU array to avoid GC pressure
-                CUDA.unsafe_free!(UJ_d)
-
-                ileaf_gpu += 1
-            end
-
-            ileaf = ileaf_gpu
-        end
-    end
-
-    # SFS contribution
-    if source_systems.toggle_sfs
-        r = zero(eltype(source_systems))
-        for (target_index, source_index) in zip(target_indices, source_indices)
-            for j_target in target_index
-                for source_particle in eachcol(view(source_systems.particles, :, source_index))
-                    # include self-induced contribution to SFS
-                    Estr_direct(target_systems, j_target, source_particle, r, source_systems.kernel.zeta, source_systems.transposed)
+                    val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
+                    fmm.set_velocity_gradient!(target_buffer, j_target, val)
                 end
             end
         end
     end
+
     return nothing
 end
 
-# GPU kernel for Reals that uses atomic reduction (incompatible with ForwardDiff.Duals but faster)
-# Uses all available GPUs and mulitple streams per gpu
-# Each leaf is loaded on to a gpu and the kernel is launched. Results are copied back after
-# all available gpus are launched asynchronously.
-function fmm.nearfield_device!(
-        target_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
-        target_tree::fmm.Tree,
-        derivatives_switches::fmm.DerivativesSwitch{PS,VS,GS},
-        source_systems::ParticleField{<:Real,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any, 2},
-        source_tree::fmm.Tree,
-        direct_list) where {PS,VS,GS}
-
-    # Sort the direct_list by targets
-    # This is to avoid race conditions when parallelized with multiple gpus
-    sorted_direct_list = fmm.sort_by_target(direct_list, target_tree.branches)
-
-    # The gpu kernel requires the source indices to be expanded to a single array
-    target_sources = combine_source_indices(sorted_direct_list, source_tree.branches)
-    leaf_count = length(target_sources)
-
-    ngpus = length(CUDA.devices())
-    nstreams_per_gpu = 2
-    nstreams = nstreams_per_gpu * ngpus
-    streams = Vector{CuStream}(undef, nstreams)
-
-    # Square or Rectangular tile kernel
-    rectangular = true
-
-    # Sets precision for computations on GPU
-    T = Float64
-
-    # Dummy initialization so that UJ_d is defined in all lower scopes
-    UJ_d_list = Vector{CuArray{T, 2}}(undef, nstreams)
-
-    ileaf = 1
-    while ileaf <= leaf_count
-        leaf_remaining = leaf_count-ileaf+1
-
-        ileaf_stream = ileaf
-        igpu = 1
-        # Copy data to GPU and launch kernel
-        for istream in min(nstreams, leaf_remaining):-1:1
-
-            # Set gpu and stream
-            dev = CUDA.device!(igpu-1)
-            streams[istream] = CuStream()
-
-            # Compute number of sources
-            source_indices = expand_source_indices(target_sources[ileaf_stream], source_tree.branches)
-            ns = length(source_indices)
-
-            # Copy source particles from CPU to GPU
-            s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
-
-            # Pad target array to nearest multiple of 32 (warp size)
-            # for efficient p, q launch config
-            t_padding = 0
-            target_index_range = target_tree.branches[target_sources[ileaf_stream][1]].bodies_index
-            nt = length(target_index_range)
-            if mod(nt, 32) != 0
-                t_padding = 32*cld(nt, 32) - nt
-            end
-
-            # Copy target particles from CPU to GPU
-            t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
-            t_size = nt + t_padding
-
-            # Initialize output array
-            UJ_d = CUDA.zeros(T, 12, nt)
-
-            # Get p, q for optimal GPU kernel launch configuration
-            # p is no. of targets in a block
-            # q is no. of columns per block
-            p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
-
-            # Compute no. of threads, no. of blocks and shared memory
-            threads = p*q
-            blocks = cld(t_size, p)
-            shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
-
-            # Check if GPU shared memory is sufficient
-            check_shared_memory(dev, shmem)
-
-            # Compute interactions using GPU
-            kernel = source_systems.kernel.g_dgdr
-            @cuda threads=threads blocks=blocks stream=streams[istream] shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
-
-            UJ_d_list[istream] = UJ_d
-
-            ileaf_stream += 1
-            igpu = (igpu % ngpus) + 1  # Cycle igpu over 1:ngpus
-        end
-
-        ileaf_stream = ileaf
-        istream = 1
-        igpu = 1
-        for istream in min(nstreams, leaf_remaining):-1:1
-            # Set gpu and stream
-            CUDA.device!(igpu-1)
-            stream!(streams[istream]) do
-
-                target_index_range = target_tree.branches[target_sources[ileaf_stream][1]].bodies_index
-
-                # Copy results back from GPU to CPU
-                UJ_d = UJ_d_list[istream]
-                view(target_systems.particles, 10:12, target_index_range) .= Array(view(UJ_d, 1:3, :))
-                view(target_systems.particles, 16:24, target_index_range) .= Array(view(UJ_d, 4:12, :))
-
-                # Clear GPU array to avoid GC pressure
-                CUDA.unsafe_free!(UJ_d)
-            end
-
-            ileaf_stream += 1
-            igpu = (igpu % ngpus) + 1  # Cycle igpu over 1:ngpus
-        end
-
-        ileaf = ileaf_stream
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
+    target_system.particles[U_INDEX, i_target] .+= fmm.get_velocity(target_buffer, i_buffer)
+    j = fmm.get_velocity_gradient(target_buffer, i_buffer)
+    for i = 1:9
+        target_system.particles[J_INDEX[i], i_target] += j[i]
     end
-
-    # SFS contribution
-    if source_systems.toggle_sfs
-        r = zero(eltype(source_systems))
-        for (target_index, source_index) in zip(target_indices, source_indices)
-            for j_target in target_index
-                for source_particle in eachcol(view(source_systems.particles, :, source_index))
-                    # include self-induced contribution to SFS
-                    Estr_direct(target_systems, j_target, source_particle, r, source_systems.kernel.zeta, source_systems.transposed)
-                end
-            end
-        end
-    end
-    return nothing
 end
 
-# GPU kernel for ForwardDiff.Duals that uses parallel reduction
-# function fmm.direct!(
-#         target_system::ParticleField{TFT,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-#         target_index,
-#         derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
-#         source_system::ParticleField{TFS,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,true},
-#         source_index) where {TFT,TFS,PS,VS,GS}
-#
-#     if source_system.toggle_rbf
-#         vorticity_direct(target_system, target_index, source_system, source_index)
-#     else
-#         # Sets precision for computations on GPU
-#         # This is currently not being used for compatibility with Duals while Broadcasting
-#         T = Float64
-#
-#         # Copy data from CPU to GPU
-#         s_d = CuArray{TFS}(view(source_system.particles, 1:7, source_index))
-#         t_d = CuArray{TFT}(view(target_system.particles, 1:24, target_index))
-#
-#         # Get p, q for optimal GPU kernel launch configuration
-#         # p is no. of targets in a block
-#         # q is no. of columns per block
-#         p, q = get_launch_config(length(target_index); max_threads_per_block=512)
-#
-#         # Compute no. of threads, no. of blocks and shared memory
-#         threads::Int32 = p*q
-#         blocks::Int32 = cld(length(target_index), p)
-#         shmem = sizeof(TFT) * 12 * p # XYZ + Γ123 + σ = 7 variables but (12*p) to handle UJ summation for each target
-#
-#         # Check if GPU shared memory is sufficient
-#         dev = CUDA.device()
-#         dev_shmem = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
-#         if shmem > dev_shmem
-#             error("Shared memory requested ($shmem B), exceeds available space ($dev_shmem B) on GPU.
-#                   Try using more GPUs or reduce Chunk size if using ForwardDiff.")
-#         end
-#
-#         # Compute interactions using GPU
-#         kernel = source_system.kernel.g_dgdr
-#         @cuda threads=threads blocks=blocks shmem=shmem gpu_reduction_direct!(s_d, t_d, q, kernel)
-#
-#         # Copy back data from GPU to CPU
-#         view(target_system.particles, 10:12, target_index) .= Array(t_d[10:12, :])
-#         view(target_system.particles, 16:24, target_index) .= Array(t_d[16:24, :])
-#
-#         # SFS contribution
-#         r = zero(eltype(source_system))
-#         for j_target in target_index
-#             for source_particle in eachcol(view(source_system.particles, :, source_index))
-#                 # include self-induced contribution to SFS
-#                 if source_system.toggle_sfs
-#                     Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
-#                 end
-#             end
-#         end
-#     end
-#
-#
-#     return nothing
-# end
-
-# CPU kernel
-function fmm.direct!(
-        target_system, target_index,
-        derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS},
-        source_system::ParticleField, source_index) where {PS,VS,GS}
-
-    if source_system.toggle_rbf
-        for target_index in target_indices
-            vorticity_direct(target_system, target_index, source_system, source_index)
-        end
-    else
-
-        for j_target in target_index
-            r = zero(eltype(source_system))  # Moved inside loop for thread-safety
-            target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
-
-            # for source_particle in eachcol(view(source_system.particles, :, source_index))
-            for i_source_particle in source_index
-                # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
-                gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source_particle)
-                # source_x, source_y, source_z = get_X(source_particle)
-                source_x, source_y, source_z = get_X(source_system, i_source_particle)
-                # sigma = get_sigma(source_particle)[]
-                sigma = get_sigma(source_system, i_source_particle)[]
-                dx = target_x - source_x
-                dy = target_y - source_y
-                dz = target_z - source_z
-                r2 = dx*dx + dy*dy + dz*dz
-                if !iszero(r2)
-                    r = sqrt(r2)
-                    # Regularizing function and deriv
-                    g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-
-                    # K × Γp
-                    r3inv = one(r) / (r2 * r)
-                    crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
-                    crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
-                    crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
-
-                    if VS
-                        # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-                        Ux = g_sgm * crss1
-                        Uy = g_sgm * crss2
-                        Uz = g_sgm * crss3
-                        # get_U(target_particle) .+= Ux, Uy, Uz
-                        Ux0, Uy0, Uz0 = target_system[j_target, fmm.VELOCITY]
-                        target_system[j_target, fmm.VELOCITY] = Ux+Ux0, Uy+Uy0, Uz+Uz0
-                    end
-
-                    if GS
-                        # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
-                        # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-                        aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
-                        # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
-                        # Adds the Kronecker delta term
-                        aux2 = -const4 * g_sgm * r3inv
-                        # j=1
-                        du1x1 = aux * crss1 * dx
-                        du2x1 = aux * crss2 * dx - aux2 * gamma_z
-                        du3x1 = aux * crss3 * dx + aux2 * gamma_y
-                        # j=2
-                        du1x2 = aux * crss1 * dy + aux2 * gamma_z
-                        du2x2 = aux * crss2 * dy
-                        du3x2 = aux * crss3 * dy - aux2 * gamma_x
-                        # j=3
-                        du1x3 = aux * crss1 * dz - aux2 * gamma_y
-                        du2x3 = aux * crss2 * dz + aux2 * gamma_x
-                        du3x3 = aux * crss3 * dz
-
-                        du1x10, du2x10, du3x10, du1x20, du2x20, du3x20, du1x30, du2x30, du3x30 = target_system[j_target, fmm.VELOCITY_GRADIENT]
-                        val = SMatrix{3,3}(
-                                                                                      du1x10 + du1x1,
-                                                                                      du2x10 + du2x1,
-                                                                                      du3x10 + du3x1,
-                                                                                      du1x20 + du1x2,
-                                                                                      du2x20 + du2x2,
-                                                                                      du3x20 + du3x2,
-                                                                                      du1x30 + du1x3,
-                                                                                      du2x30 + du2x3,
-                                                                                      du3x30 + du3x3
-                                                                                     )
-                        target_system[j_target, fmm.VELOCITY_GRADIENT] = val
-                    end
-                end
-
-                # include self-induced contribution to SFS
-                if source_system.toggle_sfs
-                    source_particle = get_particle(source_system, i_source_particle)
-                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
-                end
-            end
-        end
-    end
-    return nothing
-end
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF

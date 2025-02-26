@@ -50,11 +50,11 @@ mutable struct FMM{TEPS}
   ncrit::Int64                    # Max number of particles per leaf
   theta::FLOAT_TYPE                  # Neighborhood criterion
   nonzero_sigma::Bool
-  ε_tol::TEPS
+  ε_abs::TEPS
 end
 
-function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=nothing)
-    return FMM{typeof(ε_tol)}(p, ncrit, theta, nonzero_sigma, ε_tol)
+function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_abs=nothing)
+    return FMM{typeof(ε_abs)}(p, ncrit, theta, nonzero_sigma, ε_abs)
 end
 
 ################################################################################

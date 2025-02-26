@@ -482,6 +482,40 @@ Evaluates the basis function that the field exerts on itself through
 the FMM neglecting the far field, saving the results under P.W.
 """
 function zeta_fmm(pfield)
-    UJ_fmm(pfield; rbf=true)
+    fmm_options = pfield.fmm
+    leaf_size=fmm_options.ncrit
+    shrink_recenter=fmm_options.nonzero_sigma
+    multipole_threshold = fmm_options.theta
+    zeta = pfield.kernel.zeta
+
+    # create tree
+    tree = FastMultipole.Tree((pfield,); leaf_size, shrink_recenter)
+    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_threshold, false, true, true)
+    sort_index = tree.sort_index_list[1]
+
+    # loop over direct list
+    for (i_target, i_source) in direct_list
+        target_branch = tree.branches[i_target]
+        source_branch = tree.branches[i_source]
+        for i_source_particle in source_branch.bodies_index[1]
+            Pi = get_particle(pfield, sort_index[i_source_particle])
+
+            for i_target_particle in target_branch.bodies_index[1]
+                Pj = get_particle(pfield, sort_index[i_target_particle])
+
+                dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+                dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+                dX3 = get_X(Pi)[3] - get_X(Pj)[3]
+                r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+                zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
+
+                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+            end
+        end
+    end
 end
+
 ################################################################################

@@ -71,7 +71,6 @@ function UJ_fmm(
         transposed_sfs::Bool=true, # unused
         reset::Bool=true,
         reset_sfs::Bool=false,
-        sort::Bool=true
     ) where {useGPU}
 
     # reset # TODO should this really have an elseif in between?
@@ -82,20 +81,26 @@ function UJ_fmm(
         _reset_particles_sfs(pfield)
     end
 
-    # define P2P function
-    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
-    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
-
     # extract FMM options
     fmm_options = pfield.fmm
-    farfield = !rbf
-    #@show typeof(pfield)
 
-    # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0))
-    # This should be concurrent_direct=(pfield.useGPU > 0)
-    # But until multithread_direct!() works for the target_indices argument,
-    # we'll leave it true
+    if rbf
+        # calculate vorticity
+        zeta_fmm(pfield)
+    else
+        # Calculate FMM of vector potential
+        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_abs), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_abs=fmm_options.ε_abs, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        target_tree, source_tree, m2l_list, direct_list, derivatives_switches, leaf_size_source, expansion_order, error_success = args
+
+        # This should be concurrent_direct=(pfield.useGPU > 0)
+        # But until multithread_direct!() works for the target_indices argument,
+        # we'll leave it true
+
+        # now calculate SFS contribution
+        # NOTE: this must be performed after velocity gradients are calculated, and
+        #       therefore cannot be included in the direct function of the FMM
+        sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
+    end
 
     return nothing
 end
