@@ -474,9 +474,49 @@ function fmm.direct!(
         source_system::ParticleField, source_index) where {PS,VS,GS}
 
     if source_system.toggle_rbf
+
         for target_index in target_indices
             vorticity_direct(target_system, target_index, source_system, source_index)
         end
+    #--- SFS contributions ---#
+
+    elseif source_system.toggle_sfs
+
+        r = zero(eltype(source_system))  # Moved inside loop for thread-safety
+        # for source_particle in eachcol(view(source_system.particles, :, source_index))
+        for i_source_particle in source_index
+
+            # unpack source particle
+            gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source_particle)
+            source_x, source_y, source_z = get_X(source_system, i_source_particle)
+            sigma = get_sigma(source_system, i_source_particle)[]
+            source_particle = get_particle(source_system, i_source_particle)
+
+            # loop over targets
+            for j_target in target_index
+                # target location
+                target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
+
+                # distance
+                dx = target_x - source_x
+                dy = target_y - source_y
+                dz = target_z - source_z
+                r2 = dx*dx + dy*dy + dz*dz
+
+                if !iszero(r2)
+                    r = sqrt(r2)
+                    # Regularizing function and deriv
+                    g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
+
+                    # include self-induced contribution to SFS ? (not in this implementation)
+                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+
+                end
+            end
+        end
+
+    #--- vector potential ψ⃗ contributions ---#
+
     else
 
         for j_target in target_index
@@ -552,11 +592,6 @@ function fmm.direct!(
                     end
                 end
 
-                # include self-induced contribution to SFS
-                if source_system.toggle_sfs
-                    source_particle = get_particle(source_system, i_source_particle)
-                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
-                end
             end
         end
     end

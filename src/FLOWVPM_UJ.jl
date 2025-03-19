@@ -84,7 +84,6 @@ function UJ_fmm(
 
     # define P2P function
     pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
-    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # extract FMM options
     fmm_options = pfield.fmm
@@ -92,7 +91,17 @@ function UJ_fmm(
     #@show typeof(pfield)
 
     # Calculate FMM of vector potential
+    pfield.toggle_sfs = false
     fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0))
+
+    # SFS contribution
+    if sfs
+        pfield.toggle_sfs = true
+        fmm.fmm!(pfield; expansion_order=fmm_options.p-1, leaf_size=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, nearfield=true, farfield=false, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0))
+        pfield.toggle_sfs = false
+    end
+
+
     # This should be concurrent_direct=(pfield.useGPU > 0)
     # But until multithread_direct!() works for the target_indices argument,
     # we'll leave it true
