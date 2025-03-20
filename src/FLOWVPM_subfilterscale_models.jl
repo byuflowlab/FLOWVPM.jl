@@ -9,57 +9,42 @@
   * Created   : Sep 2021
 =###############################################################################
 
-
 """
     Model of vortex-stretching SFS contributions evaluated with direct
 particle-to-particle interactions. See 20210901 notebook for derivation.
 """
-function Estr_direct(pfield::ParticleField)
-  return Estr_direct(   iterator(pfield; include_static=true),
-                        iterator(pfield; include_static=true),
-                        pfield.kernel.zeta, pfield.transposed)
-end
+@inline function Estr_direct(target_particle, source_particle, r, zeta, transposed)
+    GS = get_Gamma(source_particle)
+    JS = get_J(source_particle)
+    JT = get_J(target_particle)
 
-function Estr_direct(sources, targets, zeta, transposed)
-
-    for p in targets
-        for q in sources
-
-            # Stretching term
-            if transposed
-                # Transposed scheme (Γq⋅∇')(Up - Uq)
-                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[2,1] - q.J[2,1])*q.Gamma[2]+(p.J[3,1] - q.J[3,1])*q.Gamma[3]
-                S2 = (p.J[1,2] - q.J[1,2])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[3,2] - q.J[3,2])*q.Gamma[3]
-                S3 = (p.J[1,3] - q.J[1,3])*q.Gamma[1]+(p.J[2,3] - q.J[2,3])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
-            else
-                # Classic scheme (Γq⋅∇)(Up - Uq)
-                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[1,2] - q.J[1,2])*q.Gamma[2]+(p.J[1,3] - q.J[1,3])*q.Gamma[3]
-                S2 = (p.J[2,1] - q.J[2,1])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[2,3] - q.J[2,3])*q.Gamma[3]
-                S3 = (p.J[3,1] - q.J[3,1])*q.Gamma[1]+(p.J[3,2] - q.J[3,2])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
-            end
-
-            dX1 = p.X[1] - q.X[1]
-            dX2 = p.X[2] - q.X[2]
-            dX3 = p.X[3] - q.X[3]
-            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
-
-            zeta_sgm = zeta(r/q.sigma[1]) / q.sigma[1]^3
-
-            # Add ζ_σ (Γq⋅∇)(Up - Uq)
-            add_SFS1(p, zeta_sgm*S1)
-            add_SFS2(p, zeta_sgm*S2)
-            add_SFS3(p, zeta_sgm*S3)
-        end
+    # Stretching term
+    if transposed
+        # Transposed scheme (Γq⋅∇')(Up - Uq)
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[2] - JS[2])*GS[2]+(JT[3] - JS[3])*GS[3]
+        S2 = (JT[4] - JS[4])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[6] - JS[6])*GS[3]
+        S3 = (JT[7] - JS[7])*GS[1]+(JT[8] - JS[8])*GS[2]+(JT[9] - JS[9])*GS[3]
+    else
+        # Classic scheme (Γq⋅∇)(Up - Uq)
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[4] - JS[4])*GS[2]+(JT[7] - JS[7])*GS[3]
+        S2 = (JT[2] - JS[2])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[8] - JS[8])*GS[3]
+        S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
-end
 
+    zeta_sgm = zeta(r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
+
+    # Add ζ_σ (Γq⋅∇)(Up - Uq)
+    get_SFS(target_particle)[1] += zeta_sgm*S1
+    get_SFS(target_particle)[2] += zeta_sgm*S2
+    get_SFS(target_particle)[3] += zeta_sgm*S3
+end
 
 """
     Model of vortex-stretching SFS contributions evaluated with fast multipole
 method. See 20210901 notebook for derivation.
 """
 function Estr_fmm(pfield::ParticleField; reset_sfs=true, optargs...)
-    call_FLOWExaFMM(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs=reset_sfs,
+    UJ_fmm(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs,
                             transposed_sfs=pfield.transposed, optargs...)
 end
 
