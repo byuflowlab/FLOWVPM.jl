@@ -25,10 +25,10 @@ import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
-using ReverseDiff
+# using ReverseDiff
 using StaticArrays
-using CUDA
-using CUDA: i32
+# using CUDA
+# using CUDA: i32
 using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
@@ -49,9 +49,10 @@ const FLOAT_TYPE = Float64
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
-                    "particlefield", "gpu_erf", "gpu", "fmm",
+                    "particlefield", "fmm",
+                    # "particlefield", "gpu_erf", "gpu", "fmm",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils", "rrules"]
+                    "monitors", "utils"]# , "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
