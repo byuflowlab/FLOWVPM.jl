@@ -2,37 +2,6 @@
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
 
-# smoothing radius
-function upper_bound(σ, ω, ε)
-    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
-end
-
-function residual(ρ_σ, σ, ω, ε)
-    t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
-    t2 = erf(ρ_σ / sqrt(2))
-    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
-    return t1 + t2 - t3 - 1.0
-end
-
-function solve_ρ_over_σ(σ, ω, ε)
-    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
-end
-
-@inline function fmm_radius(particle_field::ParticleField, i, ε_abs::Nothing)
-    return get_sigma(particle_field, i)[]
-end
-
-@inline function fmm_radius(particle_field::ParticleField, i, ε_abs)
-    σ = get_sigma(particle_field, i)[]
-    Γx, Γy, Γz = get_Gamma(particle_field, i)
-    Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    Γ < 10*eps() && (return zero(Γ))
-
-    ρ_σ = solve_ρ_over_σ(σ, Γ, ε_abs)
-
-    return ρ_σ * σ
-end
-
 function upper_bound(σ, ω, ε)
     return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
@@ -59,7 +28,7 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_abs)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
     buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)

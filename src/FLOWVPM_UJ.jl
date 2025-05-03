@@ -89,8 +89,8 @@ function UJ_fmm(
         zeta_fmm(pfield)
     else
         # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_abs), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_abs=fmm_options.ε_abs, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
-        target_tree, source_tree, m2l_list, direct_list, derivatives_switches, leaf_size_source, expansion_order, error_success = args
+        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)
         # But until multithread_direct!() works for the target_indices argument,
