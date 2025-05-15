@@ -194,10 +194,10 @@ custom_erf(x::Float64) = custom_erf64(x)
 custom_erf(x::Float32) = custom_erf32(x)
 
 # For ForwardDiff compatibility
-using ForwardDiff
-custom_erf(x::ForwardDiff.Dual{<:Any, Float64, <:Any}) = custom_erf64(x)
-custom_erf(x::ForwardDiff.Dual{<:Any, Float32, <:Any}) = custom_erf32(x)
+# using ForwardDiff
+# custom_erf(x::ForwardDiff.Dual{<:Any, Float64, <:Any}) = custom_erf64(x)
+# custom_erf(x::ForwardDiff.Dual{<:Any, Float32, <:Any}) = custom_erf32(x)
 
-# NVIDIA CUDA variants of erf()
-@inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
-@inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)
+# # NVIDIA CUDA variants of erf()
+# @inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
+# @inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)

@@ -35,6 +35,15 @@ using Primes
 # import FLOWExaFMM
 # const fmm = FLOWExaFMM
 import FastMultipole
+
+#------------- exports --------------------------------------------------------
+
+export ParticleField,
+       ClassicVPM, ReformulatedVPM,
+       NoSFS, ConstantSFS, DynamicSFS,
+       U_INDEX, J_INDEX,
+       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX
+
 const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
@@ -46,11 +55,19 @@ const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utiliti
 # Determine the floating point precision of ExaFMM
 const FLOAT_TYPE = Float64
 
+# miscellaneous constants
+const const1 = 1/(2*pi)^1.5
+const const2 = sqrt(2/pi)
+const const3 = 3/(4*pi)
+const const4 = 1/(4*pi)
+const sqr2 = sqrt(2)
+
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
                     "particlefield", "fmm",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
+                    "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]# , "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))

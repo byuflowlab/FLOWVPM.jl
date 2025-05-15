@@ -27,12 +27,12 @@ struct Kernel{Tz,Tg,Tdg,Tgdg}
     g_dgdr::Tgdg                          # Efficient evaluation of g and dgdr
 end
 
-# Constant values
-const const1 = 1/(2*pi)^1.5
-const const2 = sqrt(2/pi)
-const const3 = 3/(4*pi)
-const const4 = 1/(4*pi)
-const sqr2 = sqrt(2)
+# # Constant values
+# const const1 = 1/(2*pi)^1.5
+# const const2 = sqrt(2/pi)
+# const const3 = 3/(4*pi)
+# const const4 = 1/(4*pi)
+# const sqr2 = sqrt(2)
 
 # Newtonian velocity kernel
 # Knew(X) = -const4 * X / norm(X)^3

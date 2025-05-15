@@ -1,7 +1,7 @@
 ################################################################################
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
-
+const const4 = 1/(4*pi)
 function upper_bound(σ, ω, ε)
     return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
@@ -52,30 +52,6 @@ fmm.get_n_bodies(system::ParticleField) = system.np
 
 function fmm.body_to_multipole!(system::ParticleField, args...)
     return fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
-end
-
-@inline function bound_induced_velocity_fmm(r1, r2, core_size=1e-3)
-    # parameters
-    nr1 = norm(r1)
-    nr2 = norm(r2)
-    nr1nr2 = nr1*nr2
-    rcross = cross(r1, r2)
-    rdot = dot(r1, r2)
-    # check if evaluation point is colinear with the bound vortex
-    #if norm(rcross) < epsilon # colinear if true
-    if isapprox(rdot, -nr1nr2; atol=eps(rdot)*100) # at the midpoint, so return zero
-        return zero(typeof(r1))
-    else # coincident with the filament so use the finite core model
-        r1s, r2s, εs = nr1^2, nr2^2, core_size*core_size
-        f1 = rcross/(r1s*r2s - rdot^2 + εs*(r1s + r2s - 2*nr1nr2))
-        f2 = (r1s - rdot)/sqrt(r1s + εs) + (r2s - rdot)/sqrt(r2s + εs)
-        l = norm(r2 .- r1)
-        σ = l * 0.1
-        one_over_σ = 1 / σ
-        f3 = 1 .- exp(-(get_distance(r1,r2)*one_over_σ)^3)
-        Vhat = (f1*f2*f3)/(4*pi)
-        return Vhat
-    end
 end
 
 function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS}
