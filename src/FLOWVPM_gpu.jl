@@ -48,51 +48,130 @@ function check_shared_memory(dev, shmem_required, throw_error=true)
     return
 end
 
-@inline function get_launch_config(nt; p_max=0, q_max=0,
-        max_threads_per_block=default_max_threads_per_block)
+# @inline function get_launch_config(nt; p_max=0, q_max=0,
+#         max_threads_per_block=default_max_threads_per_block)
 
-    p_max = (p_max == 0) ? max_threads_per_block : p_max
-    q_max = (q_max == 0) ? p_max : q_max
+#     p_max = (p_max == 0) ? max_threads_per_block : p_max
+#     q_max = (q_max == 0) ? p_max : q_max
 
-    divs_n = sort(divisors(nt))
-    p = 1
-    q = 1
-    r = 1  # r is returned only for consistency with the other get_launch_config()
-    ip = 1
-    for (i, div) in enumerate(divs_n)
-        if div <= p_max
-            p = div
-            ip = i
-        else
+#     divs_n = sort(divisors(nt))
+#     p = 1
+#     q = 1
+#     r = 1  # r is returned only for consistency with the other get_launch_config()
+#     ip = 1
+#     for (i, div) in enumerate(divs_n)
+#         if div <= p_max
+#             p = div
+#             ip = i
+#         else
+#             break
+#         end
+#     end
+
+#     # Decision algorithm 1: Creates a matrix using indices and finds max of
+#     # weighted sum of indices
+
+#     i_weight = 0
+#     j_weight = 1-i_weight
+
+#     max_ij = i_weight*ip + j_weight*1
+#     isgood = true
+#     for i in 1:ip
+#         for j in 1:ip
+#             isgood = check_launch(nt, divs_n[i], divs_n[j], max_threads_per_block)
+#             if isgood && (divs_n[i] <= p_max)
+#                 # Check if this is the max achievable ij value
+#                 # in the p, q choice matrix
+#                 obj_val = i_weight*i+j_weight*j
+#                 if (obj_val >= max_ij) && (divs_n[j] <= q_max)
+#                     max_ij = obj_val
+#                     p = divs_n[i]
+#                     q = divs_n[j]
+#                 end
+#             end
+#         end
+#     end
+
+#     return p, q, r
+# end
+
+include("divs_512.jl")
+function closest_tuple_32(p, q;
+        productmax=default_max_threads_per_block, dist_threshold=10)
+
+    if productmax == 512
+        dist_min = 1000
+        popt = p
+        qopt = q
+        for i in 1:size(divs_512, 2)
+            dist = (divs_512[1, i]-p)^2 + (divs_512[2, i]-q)^2
+            if dist <= dist_threshold && dist <= dist_min
+                dist_min = dist
+                popt = divs_512[1, i]
+                qopt = divs_512[2, i]
+            end
+        end
+    else
+        @error """
+        This function is hardcoded for productmax=512.
+        This rarely needs to be changed.
+        Make sure you know what this does.
+        """
+    end
+    return popt, qopt
+end
+
+# Returns heuristic score to obtain optimal launch configuration
+function get_score(pin, qin;
+        p_max=default_max_threads_per_block, q_max=8, α=0.0, β=0.0)
+
+    p = log(pin)/log(p_max)
+    q = qin/q_max
+    α = abs(α) < 1e-6 ? 0.1 : α
+    β = abs(β) < 1e-6 ? 0.5 : β
+
+    score = -(p-(0.7-α*q))^2 + 1 + (β*q)
+    return score
+end
+
+@inline function get_launch_config(nt;
+        p_max=default_max_threads_per_block, q_max=8,
+        max_threads_per_block=default_max_threads_per_block, multiple32=true,
+        α=0.0, β=0.0)
+
+    divs = divisiors(n)
+    npad = 0
+
+    for k=1:10
+        if length(divs) > 8
             break
+        else
+            npad = k
+            divs = divisors(n+k)
         end
     end
+    divs = sort(divs)
 
-    # Decision algorithm 1: Creates a matrix using indices and finds max of
-    # weighted sum of indices
-
-    i_weight = 0
-    j_weight = 1-i_weight
-
-    max_ij = i_weight*ip + j_weight*1
-    isgood = true
-    for i in 1:ip
-        for j in 1:ip
-            isgood = check_launch(nt, divs_n[i], divs_n[j], max_threads_per_block)
-            if isgood && (divs_n[i] <= p_max)
-                # Check if this is the max achievable ij value
-                # in the p, q choice matrix
-                obj_val = i_weight*i+j_weight*j
-                if (obj_val >= max_ij) && (divs_n[j] <= q_max)
-                    max_ij = obj_val
-                    p = divs_n[i]
-                    q = divs_n[j]
-                end
+    popt = 1
+    qopt = 1
+    scoremax = 0
+    for p in divs, q in divs
+        prod = p*q
+        if p <= p_max && q <= q_max && prod <= max_threads_per_block && p >= q
+            score = get_score(p, q; p_max=p_max, q_max=q_max, α=α, β=β)
+            if score >= scoremax
+                popt, qopt = p, q
+                scoremax = score
             end
         end
     end
+    # find closest pair multiple of 32
+    if multiple32
+        popt, qopt = closest_tuple_32(popt, qopt; productmax=max_threads_per_block)
+    end
 
-    return p, q, r
+    ropt = 1 # For compatibility with the other get_launch_config function
+    return popt, qopt, ropt
 end
 
 @inline function get_launch_config(nt, ns; p_max=0, q_max=0, r_max=875,
