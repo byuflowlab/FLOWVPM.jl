@@ -139,7 +139,7 @@ end
         max_threads_per_block=default_max_threads_per_block, multiple32=true,
         α=0.0, β=0.0)
 
-    divs = divisiors(n)
+    divs = divisors(n)
     npad = 0
 
     for k=1:10
