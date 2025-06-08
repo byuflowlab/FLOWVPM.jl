@@ -139,7 +139,7 @@ end
         max_threads_per_block=default_max_threads_per_block, multiple32=true,
         α=0.0, β=0.0)
 
-    divs = divisors(n)
+    divs = divisors(nt)
     npad = 0
 
     for k=1:10
@@ -147,7 +147,7 @@ end
             break
         else
             npad = k
-            divs = divisors(n+k)
+            divs = divisors(nt+k)
         end
     end
     divs = sort(divs)
