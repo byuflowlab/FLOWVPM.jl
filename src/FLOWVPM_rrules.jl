@@ -1,5 +1,4 @@
 
-
 # functions to provide ChainRules pullbacks for:
 
 # direct!
@@ -26,10 +25,9 @@ using CatViews
 ϵ(a,b::Number, c::Number) = (a == b || b == c || c == a) ? 0 : (mod(b-a,3) == 1 ? 1 : -1) # no error checks in this implementation, since that would significantly increase the cost of it
 
 # @eric what if target_system is not the same as source_system- would that break anything with ReverseDiff?
-function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}
+function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,PS,VPS,VS,GS}
     # need: target xyz vectors, target J matrices, source gamma vectors, source xyz vectors, source sigma vectors, source kernel, target U vectors
     # also, for the SFS self-interactions, I need target J matrices, source J matrices, source gamma vectors, source sigma vectors, and target S vectors.
-
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
 
     if source_system.toggle_rbf
@@ -314,6 +312,8 @@ function ChainRulesCore.rrule(::typeof(FastMultipole.direct!), xyz_target, J_tar
 
         # Contributions from S̄
 
+        # S_a^i = S_a^i' + ∑_jζ(r_ij/σ_j)/σ_j^3 (J_ab^i - J_ab^j)Γ_b^j
+
         # Return the whole list of input cotangents
 
         function_bar = NoTangent() # not a closure
@@ -348,19 +348,18 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
     # reformat inputs into vectors
     np = get_np(pfield)
 
-    M1 = reshape(view(pfield.particles,28:30,:),3*np) # first column of M
-    X = reshape(view(pfield.particles,1:3,:),3*np)
-    U = reshape(view(pfield.particles,10:12,:),3*np)
-    M2 = reshape(view(pfield.particles,31:33,:),3*np) # second column of M
+    #@show size(pfield.particles)
+    M1 = reshape(view(pfield.particles,28:30,1:np),3*np) # first column of M
+    X = reshape(view(pfield.particles,1:3,1:np),3*np)
+    U = reshape(view(pfield.particles,10:12,1:np),3*np)
+    M2 = reshape(view(pfield.particles,31:33,1:np),3*np) # second column of M
     M23 = view(pfield.particles,35,:) # 8th entry/entry [2,3] of M
-    J = reshape(view(pfield.particles,16:24,:),9*np)
-    sigma = view(pfield.particles,7,:)
-    Gamma = reshape(view(pfield.particles,4:6,:),3*np)
-    C = view(pfield.particles,37,:) # the second and third C fields aren't used here
-    S = reshape(view(pfield.particles,40:42,:),3*np)
-
+    J = reshape(view(pfield.particles,16:24,1:np),9*np)
+    sigma = view(pfield.particles,7,1:np)
+    Gamma = reshape(view(pfield.particles,4:6,1:np),3*np)
+    C = view(pfield.particles,37,1:np) # the second and third C fields aren't used here
+    S = reshape(view(pfield.particles,40:42,1:np),3*np)
     states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
-
     # this next section could be done without the loop now
     for i=1:pfield.np
         iidx = 3*(i-1)
@@ -402,7 +401,6 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 end
 
 function _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
-
     np = length(sigma)
     J_mat = zeros(eltype(J),(3,3))
     for i=1:np
@@ -435,9 +433,9 @@ end
 function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
 
     states = _update_particle_states(M1,X,U,Uinf,M2,M23,J,sigma,Gamma,C,S,MM,a,b,dt,f,g,zeta0)
-
     # Properly documenting the mathematics of this pullback requires markdown or Latex (due to a profusion of super/subscripts, special symbols, and implied summations).
     function state_pullback(state_bar)
+        #error("this actually runs")
         A = (f+g)/(1+3*f)
         B = f/(1+3*f)
         B2 = B/zeta0
@@ -558,3 +556,4 @@ end
                                                                       S::AbstractArray{<:ReverseDiff.TrackedReal},
                                                                       MM::AbstractArray{<:ReverseDiff.TrackedReal},
                                                                       a,b,dt,f,g,zeta0)=#
+

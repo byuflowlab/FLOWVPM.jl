@@ -65,7 +65,7 @@ end
     return nothing
 end
 
-function fmm.direct!(target_system, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField, source_index) where {PS,VPS,VS,GS}
+function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,PS,VPS,VS,GS}
     if source_system.toggle_rbf
 
         vorticity_direct(target_system, target_index, source_system, source_index)

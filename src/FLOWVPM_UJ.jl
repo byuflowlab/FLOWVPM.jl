@@ -90,7 +90,7 @@ function UJ_fmm(pfield::ParticleField;
     farfield = !rbf
     #@show typeof(pfield)
     # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, n_per_branch=fmm_options.ncrit, multipole_acceptance_criterion=fmm_options.theta, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
+    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
 
     return nothing
 end
