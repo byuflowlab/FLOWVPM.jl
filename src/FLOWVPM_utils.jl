@@ -145,15 +145,17 @@ Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
-function save(self::ParticleField, file_name::String; path::String="",
+function save(
+        self::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
+        file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
-                overwrite_time=nothing)
+                overwrite_time=nothing) where TF
 
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
-        dummy_pfield = ParticleField(1, eltype(self.particles); nt=self.nt, t=self.t,
+        dummy_pfield = ParticleField(1, TF; nt=self.nt, t=self.t,
                                             formulation=formulation_classic,
-                                            relaxation=Relaxation(relax_pedrizzetti, 1, eltype(self.particles)(0.3)))
+                                            relaxation=Relaxation(relax_pedrizzetti, 1, TF(0.3)))
         add_particle(dummy_pfield, (0,0,0), (0,0,0), 0)
         return save(dummy_pfield, file_name;
                     path=path, add_num=add_num, num=num, createpath=createpath,
@@ -193,6 +195,9 @@ function save(self::ParticleField, file_name::String; path::String="",
     h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
     # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
     h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_x"] = [get_J(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_y"] = [get_J(P)[i] for i in 4:6, P in iterate(self; include_static=true)]
+    h5["velocity_gradient_z"] = [get_J(P)[i] for i in 7:9, P in iterate(self; include_static=true)]
     h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
 
     if isLES(self)
@@ -264,6 +269,27 @@ function save(self::ParticleField, file_name::String; path::String="",
                 print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
                             " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
                             h5fname, ":velocity</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient x
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient x\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_x</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient y
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient y\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_y</DataItem>\n")
+              print(xmf, "\t\t\t\t</Attribute>\n")
+
+              # Attribute: velocity gradient z
+              print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"velocity gradient z\" Type=\"Vector\">\n")
+                print(xmf, "\t\t\t\t\t<DataItem DataType=\"Float\"",
+                            " Dimensions=\"", np, " ", 3, "\" Format=\"HDF\" Precision=\"8\">",
+                            h5fname, ":velocity_gradient_z</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
               # Attribute: vorticity
@@ -410,7 +436,7 @@ function generate_particlefield(settings_fname::String;
                                         check_userfun=true)
 
     # Open settings file
-    setfname = settings_fname * (settings_fname[end-3:end]==".jld" ? "" : ".jld")
+    setfname = settings_fname * (settings_fname[end-4:end]==".bson" ? "" : ".bson")
     settings = read_settings(setfname; path=path)
 
     # Overwrite settings requested by user
@@ -442,7 +468,7 @@ end
 
 Reads an HDF5 file containing a particle field created with `save(pfield)`.
 """
-function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
+function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
                                         path::String="",
                                         overwrite::Bool=true,
                                         load_time::Bool=true) where{R<:Real, F, V}

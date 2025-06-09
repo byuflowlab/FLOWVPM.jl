@@ -19,18 +19,31 @@ module FLOWVPM
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
 import BSON
-import SpecialFunctions
 import Dates
 import Printf
 import DataStructures: OrderedDict
-# import Base: getindex, setindex! # for compatibility with FastMultipole
-using ReverseDiff
+import Roots
+import SpecialFunctions: erf
+import Base: getindex, setindex! # for compatibility with FastMultipole
+# using ReverseDiff
 using StaticArrays
+# using CUDA
+# using CUDA: i32
+using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
 # const fmm = FLOWExaFMM
 import FastMultipole
+
+#------------- exports --------------------------------------------------------
+
+export ParticleField,
+       ClassicVPM, ReformulatedVPM,
+       NoSFS, ConstantSFS, DynamicSFS,
+       U_INDEX, J_INDEX,
+       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX
+
 const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
@@ -42,12 +55,21 @@ const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utiliti
 # Determine the floating point precision of ExaFMM
 const FLOAT_TYPE = Float64
 
+# miscellaneous constants
+const const1 = 1/(2*pi)^1.5
+const const2 = sqrt(2/pi)
+const const3 = 3/(4*pi)
+const const4 = 1/(4*pi)
+const sqr2 = sqrt(2)
+
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
                     "particlefield", "fmm",
+                    # "particlefield", "gpu_erf", "gpu", "fmm",
+                    "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils", "rrules"]
+                    "monitors", "utils"]# , "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
@@ -108,6 +130,8 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 const pseudo3level_beforeUJ = dynamicprocedure_pseudo3level_beforeUJ
 const pseudo3level_afterUJ = dynamicprocedure_pseudo3level_afterUJ
 const pseudo3level_positive_afterUJ(args...; optargs...) = pseudo3level_afterUJ(args...; force_positive=true, optargs...)
+const pseudo3level = (pseudo3level_beforeUJ, pseudo3level_afterUJ)
+const pseudo3level_positive = (pseudo3level_beforeUJ, pseudo3level_positive_afterUJ)
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes

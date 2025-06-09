@@ -5,18 +5,16 @@ version = "3.0.2"
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
-CatViews = "81a5f4ea-a946-549a-aa7e-2a7f63a27d31"
-ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-ChainRulesTestUtils = "cdddcdb0-9152-4a09-a978-84456f9df70a"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+EllipticFunctions = "6a4e32cb-b31a-4929-85af-fb29d9a80738"
 FastMultipole = "ce07d0d3-2b9f-49ba-89eb-12c800257c85"
-ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
-ImplicitAD = "e7cbb90b-9b31-4eb2-a8c8-45099c074ee1"
+Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
@@ -26,13 +24,13 @@ WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 julia = "1.6"
 
 [extras]
-Cubature = "667455a9-e2ce-5579-9412-b964f529a492"
 DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
-Elliptic = "b305315f-e792-5b7a-8f41-49f472929428"
+EllipticFunctions = "6a4e32cb-b31a-4929-85af-fb29d9a80738"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Roots", "Cubature", "Elliptic", "LinearAlgebra", "DifferentialEquations", "ForwardDiff"]
+test = ["Test", "Roots", "HCubature", "EllipticFunctions", "LinearAlgebra", "DifferentialEquations", "ForwardDiff"]

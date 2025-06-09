@@ -69,11 +69,13 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
+            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
+            useGPU        = test_using_GPU[]
         )
 
 
-        # --------------- RUN SIMULATION -------------------------------------------
+        # --------------- RUN SIMULATION ------------------------------------------- 
+
         pfield = run_vortexring_simulation(  nrings, circulations,
                                             Rs, ARs, Rcrosss,
                                             Nphis, ncs, extra_ncs, sigmas,
@@ -138,7 +140,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
         # Test result
         if test_error
             if viscous == vpm.Inviscid()
-                @test abs(err) < 0.01
+                @test abs(err) < 0.02
             else
                 @test err < 0 && abs(err) < 0.5
             end

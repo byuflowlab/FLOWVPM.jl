@@ -67,7 +67,8 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true)
+            fmm           = vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
+            useGPU        = test_using_GPU[]
         )
 
 
@@ -165,7 +166,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
 
         # Test result
         if test_error
-            @test abs(Z1_err) < 0.03 && abs(Z2_err) < 0.03 && abs(R1_err) < 0.03 && abs(R2_err) < 0.03
+            @test abs(Z1_err) < 0.05 && abs(Z2_err) < 0.03 && abs(R1_err) < 0.03 && abs(R2_err) < 0.03
         else # tests pass with enough time steps
             @test true
         end

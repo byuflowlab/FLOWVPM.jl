@@ -100,7 +100,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
 
         # Integrate vorticity radially over annulus segment
         # NOTE: This line implicitely assumes AR=1.0
-        Wint, err = Cubature.hquadrature(W, rlo, rup; reltol=1e-8, abstol=0, maxevals=1000)
+        Wint, err = HCubature.hquadrature(W, rlo, rup; rtol=1e-8, atol=0, maxevals=1000)
 
         circulation = Wint*dz + 1e-12       # Annulus circulation
         Wmean = Wint / (rup-rlo)            # Mean vorticity

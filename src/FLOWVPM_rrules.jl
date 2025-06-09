@@ -25,7 +25,11 @@ using CatViews
 ϵ(a,b::Number, c::Number) = (a == b || b == c || c == a) ? 0 : (mod(b-a,3) == 1 ? 1 : -1) # no error checks in this implementation, since that would significantly increase the cost of it
 
 # @eric what if target_system is not the same as source_system- would that break anything with ReverseDiff?
+<<<<<<< HEAD
 function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,PS,VPS,VS,GS}
+=======
+function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,TGPU}, target_index, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,TGPU}, source_index) where {R<:ReverseDiff.TrackedReal,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,TGPU}
+>>>>>>> upgrade-fastmultipole
     # need: target xyz vectors, target J matrices, source gamma vectors, source xyz vectors, source sigma vectors, source kernel, target U vectors
     # also, for the SFS self-interactions, I need target J matrices, source J matrices, source gamma vectors, source sigma vectors, and target S vectors.
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
@@ -340,7 +344,7 @@ ReverseDiff.@grad_from_chainrules fmm.direct!(xyz_target::AbstractArray{<:Revers
                                                   source_index_count,
                                                   toggle_sfs)
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
 
     if pfield.transposed == false
         error("Time step pullback for non-transposed scheme not implemented yet! Please set transposed to true.")

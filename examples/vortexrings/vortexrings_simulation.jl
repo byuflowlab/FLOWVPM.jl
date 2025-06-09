@@ -16,8 +16,10 @@ reference ring `nref` would take to travel a distance of `Rtot` radii in
 isolation and inviscid flow (calculated through the function `Uring(...)`).
 The time step `dt` is then calculated as `dt = (Rtot/Uring) / nsteps`
 """
-function run_vortexring_simulation(pfield::vpm.ParticleField, nsteps::Int,
-                                        dt::Real,
+function run_vortexring_simulation(
+        pfield::vpm.ParticleField{R, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
+                                        nsteps::Int,
+                                        dt,
                                         nrings::Int,
                                         Nphis, ncs, extra_ncs;
                                         # ------- SIMULATION OPTIONS -----------
@@ -34,7 +36,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField, nsteps::Int,
                                         monitor_others=(args...; optargs...) -> false,
                                         ringmon_optargs=[],
                                         optargs...
-                                        )
+                                        ) where R
 
 
     # -------------- SETUP -----------------------------------------------------
@@ -42,11 +44,10 @@ function run_vortexring_simulation(pfield::vpm.ParticleField, nsteps::Int,
         vpm.create_path(save_path, prompt)
     end
 
-
     # Generate monitors
     if calc_monitors
         monitor_enstrophy_this(args...; optargs...) = mon_enstrophy(args...; save_path=save_path, optargs...)
-        monitor_vortexring = generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs; save_path=save_path,
+        monitor_vortexring = generate_monitor_vortexring(nrings, Nphis, ncs, extra_ncs; TF=R, save_path=save_path,
                                                                         fname_pref=run_name, ringmon_optargs...)
     end
 
@@ -72,12 +73,14 @@ function run_vortexring_simulation(pfield::vpm.ParticleField, nsteps::Int,
                                         optargs...
                                         )
 
+
     return pfield
 end
 
 
 
-function run_vortexring_simulation(pfield::vpm.ParticleField,
+function run_vortexring_simulation(
+        pfield::vpm.ParticleField{TF,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any},
                                         nrings, circulations,
                                         Rs, ARs, Rcrosss,
                                         Nphis, ncs, extra_ncs, sigmas,
@@ -101,7 +104,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
                                         monvort_optargs=[(:nprobes, 1000)],
                                         monitor_others=(args...; optargs...) -> false,
                                         optargs...
-                                        )
+                                        ) where TF
 
 
     # -------------- SETUP -----------------------------------------------------
@@ -199,7 +202,7 @@ function run_vortexring_simulation(pfield::vpm.ParticleField,
 
     monitor_ringvorticity = !use_monitor_ringvorticity ? (args...; optargs...) -> false :
                                 generate_monitor_ringvorticity(nrings, Nphis,
-                                                            ncs, extra_ncs;
+                                                            ncs, extra_ncs, TF=TF;
                                                             save_path=save_path,
                                                             monvort_optargs...)
 
@@ -220,7 +223,7 @@ function run_vortexring_simulation(nrings::Int, circulations,
                                         Rs, ARs, Rcrosss,
                                         Nphis, ncs, extra_ncs, args...;
                                         maxparticles="automatic", pfieldargs=(),
-                                        nref=1, Re=nothing, optargs...)
+                                        nref=1, Re=nothing, R=Float64, optargs...)
 
     if maxparticles == "automatic"
         maxp = sum( ri -> number_particles(Nphis[ri], ncs[ri]; extra_nc=extra_ncs[ri]), 1:nrings)
@@ -229,7 +232,7 @@ function run_vortexring_simulation(nrings::Int, circulations,
     end
 
     # Start particle field with the target maximum number of particles
-    pfield = vpm.ParticleField(maxp; pfieldargs...)
+    pfield = vpm.ParticleField(maxp, R; pfieldargs...)
 
     # Overwrite kinematic viscosity with the requested Reynolds number
     if Re != nothing && vpm.isinviscid(pfield.viscous) == false

@@ -1,112 +1,114 @@
 ################################################################################
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
+const const4 = 1/(4*pi)
+function upper_bound(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
+end
 
-Base.getindex(particle_field::ParticleField, i, ::fmm.Position) = get_X(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Radius) = get_sigma(particle_field, i)[]
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.VectorPotential) where R = SVector{3,R}(0.0,0.0,0.0) # If this breaks AD: replace with 'zeros(3,R)'
-Base.getindex(particle_field::ParticleField{R,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any}, i, ::fmm.ScalarPotential) where R = zero(R)
-Base.getindex(particle_field::ParticleField, i, ::fmm.VectorStrength) = get_Gamma(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.Velocity) = get_U(particle_field, i)
-Base.getindex(particle_field::ParticleField, i, ::fmm.VelocityGradient) = reshape(get_J(particle_field, i), (3, 3))
-Base.getindex(particle_field::ParticleField, i, ::fmm.Body) = get_particle(particle_field, i)
+function residual(ρ_σ, σ, ω, ε)
+    t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
+    t2 = erf(ρ_σ / sqrt(2))
+    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    return t1 + t2 - t3 - 1.0
+end
 
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Body) = get_particle(particle_field, i) .= val
+function solve_ρ_over_σ(σ, ω, ε)
+    if ω < 10*eps()
+        ω = zero(ω)
+    end
+    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+end
 
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.ScalarPotential) = nothing
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VectorPotential) = nothing
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.Velocity) = set_U(particle_field, i, val)
-Base.setindex!(particle_field::ParticleField, val, i, ::fmm.VelocityGradient) = set_J(particle_field, i, vec(val))
+function solve_ρ_over_σ(σ, ω, ε::Nothing)
+    return one(σ)
+end
 
-fmm.get_n_bodies(particle_field::ParticleField) = get_np(particle_field)
-Base.length(particle_field::ParticleField) = get_np(particle_field) # currently called internally by the version of the FMM I'm using. this will need to be changed to work with ImplicitAD, which probably just means getting the latest FMM version. that's on hold because there are a bunch of other breaking changes I'll need to deal with to get correct derivative again.
+function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
+    σ = system.particles[SIGMA_INDEX, i_body]
+    Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
+    Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
+    buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
+    buffer[4, i_buffer] = ρ_σ * σ
+    buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
+    buffer[8, i_buffer] = σ
+end
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+function fmm.data_per_body(system::ParticleField)
+    return 8
+end
+#--- getters ---#
 
-fmm.buffer_element(system::ParticleField) = zeros(eltype(system.particles), size(system.particles, 1))
+function fmm.get_position(system::ParticleField, i)
+    return SVector{3}(system.particles[j,i] for j in X_INDEX)
+end
 
-fmm.B2M!(system::ParticleField, args...) = fmm.B2M!_vortexpoint(system, args...)
+function fmm.strength_dims(system::ParticleField)
+    return 3
+end
 
-@inline function vorticity_direct(target_system::ParticleField, target_index, source_system, source_index)
-    for j_target in target_index
-        target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
-        Wx = zero(eltype(target_system))
-        Wy = zero(eltype(target_system))
-        Wz = zero(eltype(target_system))
-        for i_source in source_index
-            gamma_x, gamma_y, gamma_z = get_Gamma(source_system, i_source)
-            source_x, source_y, source_z = get_X(source_system, i_source)
-            sigma = get_sigma(source_system, i_source)[]
+<<<<<<< HEAD
+function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,PS,VPS,VS,GS}
+    if source_system.toggle_rbf
+=======
+fmm.get_n_bodies(system::ParticleField) = system.np
+
+function fmm.body_to_multipole!(system::ParticleField, args...)
+    return fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
+end
+
+function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS}
+
+    for i_source_particle in source_index
+>>>>>>> upgrade-fastmultipole
+
+        # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
+        gamma_x, gamma_y, gamma_z = fmm.get_strength(source_buffer, source_system, i_source_particle)
+        # source_x, source_y, source_z = get_X(source_particle)
+        source_x, source_y, source_z = fmm.get_position(source_buffer, i_source_particle)
+        # sigma = get_sigma(source_particle)[]
+        sigma = source_buffer[8, i_source_particle]
+
+        for j_target in target_index
+
+            target_x, target_y, target_z = fmm.get_position(target_buffer, j_target)
             dx = target_x - source_x
             dy = target_y - source_y
             dz = target_z - source_z
-            r2 = dx*dx + dy*dy + dz*dz # sqrt hahs an undefined derivative at r=0, so AD gets NaNs introduced without this check.
-            if r2 > 0
+            r2 = dx*dx + dy*dy + dz*dz
+
+            if !iszero(r2)
                 r = sqrt(r2)
-                zeta = source_system.zeta(r/sigma)/(sigma*sigma*sigma)
-                Wx += zeta * gamma_x
-                Wy += zeta * gamma_y
-                Wz += zeta * gamma_z
-            end
-        end
-        get_vorticity(target_system, j_target) .+= Wx, Wy, Wz
-    end
-end
 
-@inline function vorticity_direct(target_system, target_index, source_system, source_index)
-    return nothing
-end
+                # Regularizing function and deriv
+                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
 
-@inline function Estr_direct(target_system::ParticleField, j_target, source_particle, r, zeta, transposed)
-    Estr_direct(target_system[j_target, fmm.BODY], source_particle, r, zeta, transposed)
-end
+                # K × Γp
+                r3inv = one(r) / (r2 * r)
+                crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
+                crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
+                crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
 
-@inline function Estr_direct(target_system, j_target, source_particle, r, zeta, transposed)
-    return nothing
-end
-
-function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VPS,VS,GS}, source_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR}, source_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TR,PS,VPS,VS,GS}
-    if source_system.toggle_rbf
-
-        vorticity_direct(target_system, target_index, source_system, source_index)
-    else
-        r = zero(eltype(source_system))
-
-        for j_target in target_index
-            target_x, target_y, target_z = target_system[j_target, fmm.POSITION]
-
-            for source_particle in eachcol(view(source_system.particles, :, source_index))
-                gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
-                source_x, source_y, source_z = get_X(source_particle)
-                sigma = get_sigma(source_particle)[]
-                dx = target_x - source_x
-                dy = target_y - source_y
-                dz = target_z - source_z
-                r2 = dx*dx + dy*dy + dz*dz
-                if !iszero(r2)
-                    r = sqrt(r2)
-                    # Regularizing function and deriv
-                    g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-
-                    # K × Γp
-                    crss1 = -const4 / r^3 * ( dy*gamma_z - dz*gamma_y )
-                    crss2 = -const4 / r^3 * ( dz*gamma_x - dx*gamma_z )
-                    crss3 = -const4 / r^3 * ( dx*gamma_y - dy*gamma_x )
-
+                if VS
                     # U = ∑g_σ(x-xp) * K(x-xp) × Γp
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
                     # get_U(target_particle) .+= Ux, Uy, Uz
-                    Ux0, Uy0, Uz0 = target_system[j_target, fmm.VELOCITY]
-                    target_system[j_target, fmm.VELOCITY] = Ux+Ux0, Uy+Uy0, Uz+Uz0
+                    Ux0, Uy0, Uz0 = fmm.get_velocity(target_buffer, j_target)
 
+                    val = SVector{3}(Ux, Uy, Uz)
+                    fmm.set_velocity!(target_buffer, j_target, val)
+                end
+
+                if GS
                     # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                     # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-                    aux = dg_sgmdr/(sigma*r) - 3*g_sgm /r^2
+                    aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
                     # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
                     # Adds the Kronecker delta term
-                    aux2 = -const4 * g_sgm / r^3
+                    aux2 = -const4 * g_sgm * r3inv
                     # j=1
                     du1x1 = aux * crss1 * dx
                     du2x1 = aux * crss2 * dx - aux2 * gamma_z
@@ -119,26 +121,25 @@ function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tint
                     du1x3 = aux * crss1 * dz - aux2 * gamma_y
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
+                    # @show aux, aux2, crss1, crss2, crss3, dx, dy, dz
+                    # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
 
-                    du1x10, du2x10, du3x10, du1x20, du2x20, du3x20, du1x30, du2x30, du3x30 = target_system[j_target, fmm.VELOCITY_GRADIENT]
-                    target_system[j_target, fmm.VELOCITY_GRADIENT] = SMatrix{3,3}(
-                        du1x10 + du1x1,
-                        du2x10 + du2x1,
-                        du3x10 + du3x1,
-                        du1x20 + du1x2,
-                        du2x20 + du2x2,
-                        du3x20 + du3x2,
-                        du1x30 + du1x3,
-                        du2x30 + du2x3,
-                        du3x30 + du3x3
-                    )
-                end
-
-                # include self-induced contribution to SFS
-                if source_system.toggle_sfs
-                    Estr_direct(target_system, j_target, source_particle, r, source_system.kernel.zeta, source_system.transposed)
+                    val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
+                    fmm.set_velocity_gradient!(target_buffer, j_target, val)
                 end
             end
         end
     end
+
+    return nothing
 end
+
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
+    target_system.particles[U_INDEX, i_target] .+= fmm.get_velocity(target_buffer, i_buffer)
+    j = fmm.get_velocity_gradient(target_buffer, i_buffer)
+    for i = 1:9
+        target_system.particles[J_INDEX[i], i_target] += j[i]
+    end
+end
+
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF

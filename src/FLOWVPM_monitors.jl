@@ -133,7 +133,7 @@ function monitor_Cd(pfield, t, dt; save_path=nothing, run_name="",
             mean += abs(get_C(P)[1])
         end
 
-        if P.static[1]
+        if is_static(P)
             Nstatic += 1
         end
     end

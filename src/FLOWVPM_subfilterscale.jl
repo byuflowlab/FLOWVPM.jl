@@ -186,6 +186,8 @@ DynamicSFS(model::Tmodel, procedure_beforeUJ::Tpb=dynamicprocedure_pseudo3level_
         DynamicSFS{FLOAT_TYPE,Tmodel,Tpb,Tpa,Tcontrols,Tclippings}(model, procedure_beforeUJ, procedure_afterUJ;
             controls=controls, clippings=clippings, optargs...)
 
+DynamicSFS(model, procedures::Tuple; kwargs...) = DynamicSFS(model, procedures...; kwargs...)
+
 function (SFS::DynamicSFS)(pfield, ::BeforeUJ; a=1, b=1)
 
     # Recognize Euler step or Runge-Kutta's first substep
@@ -291,9 +293,10 @@ function control_magnitude(P, pfield)
 
         # f_p filter criterion
         if aux > 0
-            add_SFS1(P, -aux*get_Gamma(P)[1])
-            add_SFS2(P, -aux*get_Gamma(P)[2])
-            add_SFS3(P, -aux*get_Gamma(P)[3])
+            get_SFS(P) .+= -aux .* get_Gamma(P)
+            # add_SFS1(P, -aux*get_Gamma(P)[1])
+            # add_SFS2(P, -aux*get_Gamma(P)[2])
+            # add_SFS3(P, -aux*get_Gamma(P)[3])
         end
     end
 end

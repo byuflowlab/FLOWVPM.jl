@@ -9,10 +9,12 @@
 =###############################################################################
 
 """
-Steps the field forward in time by dt in a first-order Euler integration scheme.
+    _euler(pfield, dt; relax=false)
+
+Convects the `::ParticleField` by timestep `dt` using a forward Euler step.
+
 """
-function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
-                                dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V}
+function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
 
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
@@ -22,10 +24,22 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale
     else
         custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
     end
+
+    _euler(pfield, dt; relax)
+
+    return nothing
+end
+
+"""
+Steps the field forward in time by dt in a first-order Euler integration scheme.
+"""
+function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},
+                                dt; relax::Bool=false) where {R, V}
+
     pfield.SFS(pfield, AfterUJ())
 
     # Calculate freestream
-    Uinf::Array{<:Real, 1} = pfield.Uinf(pfield.t)
+    Uinf = pfield.Uinf(pfield.t)
 
     zeta0::R = pfield.kernel.zeta(0)
 
@@ -66,10 +80,7 @@ function euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
 
-    return nothing
 end
-
-
 
 
 
@@ -81,16 +92,9 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
-                              dt::Real; relax::Bool=false, custom_UJ=nothing) where {R, V, R2}
-    # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
-    pfield.SFS(pfield, BeforeUJ())
-    if isnothing(custom_UJ)
-        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-    else
-        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-    end
+function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},
+                               dt::Real; relax::Bool=false) where {R, V, R2}
+
     pfield.SFS(pfield, AfterUJ())
 
     # Calculate freestream
@@ -104,7 +108,7 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFi
     zeta0::R = pfield.kernel.zeta(0)
 
     # Update the particle field: convection and stretching
-    for p in iterator(pfield)
+    for (i_p,p) in enumerate(iterator(pfield))
 
         C::R = get_C(p)[1]
 
@@ -147,23 +151,17 @@ function euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFi
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
         get_sigma(p)[] -= dt * ( get_sigma(p)[] * MM[4] )
 
-        # Relaxation: Alig vectorial circulation to local vorticity
+        # Relaxation: Align vectorial circulation to local vorticity
+
         if relax
             pfield.relaxation(p)
         end
-
     end
 
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
 
-    return nothing
 end
-
-
-
-
-
 
 
 
@@ -175,7 +173,7 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},
                             dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
@@ -190,7 +188,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
     for p in iterator(pfield); get_M(p) .= zeroR; end;
 
     # Runge-Kutta inner steps
-    for (a,b) in (R.((0, 1/3)), R.((-5/9, 15/16)), R.((-153/128, 8/15)))
+    for (a,b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
 
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
@@ -283,7 +281,7 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},
                      dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R2, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
@@ -408,8 +406,8 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 end
 
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
-    #error("needs to be updated to match new memory format.")
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
+
     for p in iterator(pfield)
 
         C::R = get_C(p)[1]
@@ -462,6 +460,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
             get_sigma(p)[] += b*M[8]
 
     end
+
     return nothing
 
 end
