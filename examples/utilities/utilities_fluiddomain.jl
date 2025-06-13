@@ -53,6 +53,8 @@ field can also be saved using the optional argument `add_J=true`.
         field, but rather they only include the fields induced by the particles.
         To add the freestream to `U`, use the optional argument `add_Uinf=true`.
 """
+
+# TODO: This function is extremely slow and allocates a lot of memory.
 function computefluiddomain(pfield::vpm.ParticleField,
                                     grids::Array{<:gt.AbstractGrid};
                                     # PROCESSING OPTIONS
