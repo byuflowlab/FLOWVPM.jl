@@ -15,7 +15,7 @@ end
 
 function solve_ρ_over_σ(σ, ω, ε)
     if ω < 10*eps()
-        ω = zero(ω)
+        return zero(eltype(ω))
     end
     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
 end
