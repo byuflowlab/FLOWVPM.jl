@@ -484,6 +484,7 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
 
     # Open HDF5 file
     h5fname = h5_fname * (h5_fname[end-2:end]==".h5" ? "" : ".h5")
+
     h5 = HDF5.h5open(joinpath(path, h5fname), "r")
 
     # Number of particles in field
@@ -502,31 +503,33 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
     end
 
     # Read HDF5 fields
-    X = h5["X"][:, :]
-    Gamma = h5["Gamma"][:, :]
-    sigma = h5["sigma"][:]
-    vol = h5["vol"][:]
-    circulation = h5["circulation"][:]
+    X::Matrix{eltype(R)} = h5["X"][:, :]
+    Gamma::Matrix{eltype(R)} = h5["Gamma"][:, :]
+    sigma::Vector{eltype(R)} = h5["sigma"][:]
+    vol::Vector{eltype(R)} = h5["vol"][:]
+    circulation::Vector{eltype(R)} = h5["circulation"][:]
 
-    # Hash to optional arguments of add_particles(...)
-    hash_optargs = [(:circulation, i->circulation[i]), (:vol, i->vol[i])]
-    gen_optargs(i) = ((sym, fun(i)) for (sym, fun) in hash_optargs)
-
+    static_bool = false
+    C_bool = false
     if "static" in keys(h5)
-        static = h5["static"][:]
-        push!( hash_optargs, (:static, i->static[i]) )
+        static::Vector{Bool} = h5["static"][:]
+        static_bool = true
     end
     if "C" in keys(h5)
-        C = h5["C"][:, :]
-        push!( hash_optargs, (:C, i->view(C, 1:3, i)) )
+        C::Matrix{eltype(R)} = h5["C"][:, :]
+        C_bool = true
     end
 
     # Load particles
     for i in 1:np
-        optargs = gen_optargs(i)
         add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                                                                     optargs...)
+                                    circulation=circulation[i],
+                                    vol=vol[i],
+                                    static = static_bool ? static[i] : false,
+                                    C = C_bool ? view(C, 1:3, i) : 0)
     end
+
+    close(h5)
 
     return pfield
 end

@@ -406,8 +406,8 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    for particle in iterate(pfield)
-        _reset_particle(particle)
+    for i in 1:pfield.np
+        _reset_particle(get_particle(pfield, i))
     end
 end
 
@@ -422,8 +422,8 @@ end
 _reset_particle(pfield::ParticleField, i::Int) = _reset_particle(get_particle(pfield, i))
 
 function _reset_particles_sfs(pfield::ParticleField)
-    for particle in iterate(pfield)
-        _reset_particle_sfs(particle)
+    for i in 1:pfield.np
+        _reset_particle_sfs(get_particle(pfield, i))
     end
 end
 

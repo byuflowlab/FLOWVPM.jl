@@ -130,7 +130,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 end
 
 function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
-    target_system.particles[U_INDEX, i_target] .+= fmm.get_velocity(target_buffer, i_buffer)
+    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_velocity(target_buffer, i_buffer)
     j = fmm.get_velocity_gradient(target_buffer, i_buffer)
     for i = 1:9
         target_system.particles[J_INDEX[i], i_target] += j[i]
