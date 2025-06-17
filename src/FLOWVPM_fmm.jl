@@ -15,6 +15,7 @@ end
 
 function solve_ρ_over_σ(σ, ω, ε)
     if ω < 10*eps()
+        # ω = zero(ω)
         return zero(eltype(ω))
     end
     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
@@ -91,10 +92,10 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
                     # get_U(target_particle) .+= Ux, Uy, Uz
-                    Ux0, Uy0, Uz0 = fmm.get_velocity(target_buffer, j_target)
+                    Ux0, Uy0, Uz0 = fmm.get_gradient(target_buffer, j_target)
 
                     val = SVector{3}(Ux, Uy, Uz)
-                    fmm.set_velocity!(target_buffer, j_target, val)
+                    fmm.set_gradient!(target_buffer, j_target, val)
                 end
 
                 if GS
@@ -120,7 +121,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
-                    fmm.set_velocity_gradient!(target_buffer, j_target, val)
+                    fmm.set_hessian!(target_buffer, j_target, val)
                 end
             end
         end
@@ -130,8 +131,8 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 end
 
 function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
-    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_velocity(target_buffer, i_buffer)
-    j = fmm.get_velocity_gradient(target_buffer, i_buffer)
+    target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
+    j = fmm.get_hessian(target_buffer, i_buffer)
     for i = 1:9
         target_system.particles[J_INDEX[i], i_target] += j[i]
     end
