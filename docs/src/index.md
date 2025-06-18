@@ -1,11 +1,4 @@
-<p align="center">
-  <img src="docs/media/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
-  <br>
-  <i><b>Meshless large eddy simulation through the reformulated vortex particle method</b></i>
-</p>
-
----
-
+# FLOWVPM.jl
 FLOWVPM implements the reformulated vortex particle method (rVPM) developed in E. J. Alvarez' doctoral dissertation *Reformulated Vortex Particle Method and Meshless Large Eddy Simulation of Multirotor Aircraft*, 2022 [[PDF]](https://scholarsarchive.byu.edu/cgi/viewcontent.cgi?article=10598&context=etd)[[VIDEO]](https://www.nas.nasa.gov/pubs/ams/2022/08-09-22.html).
 The rVPM is a meshless CFD method solving the LES-filtered incompressible Navier-Stokes equations in their vorticity form.
 It uses a Lagrangian scheme, which not only avoids the hurdles of mesh generation, but it also conserves vortical structures over long distances with minimal numerical dissipation while being orders of magnitude faster than conventional mesh-based CFD.
