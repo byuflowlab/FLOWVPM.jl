@@ -84,7 +84,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     flags::Array{Bool, 1}                 # Convergence flags
 
     CoreSpreading{R,Tzeta,Trbf}(
-                        nu, sgm0, zeta::Tzeta;
+                        nu, sgm0, zeta::Tzeta=zeta_fmm;
                         beta=R(1.5),
                         itmax=R(15), tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
