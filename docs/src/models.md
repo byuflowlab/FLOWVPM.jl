@@ -19,7 +19,7 @@ FLOWVPM is centered around the ParticleField struct that contains all of the par
 
 `transposed`: Determines how the vortex stretching is stored. Defaults to `true`. (There is no need for the user to modify this value.)
 
-`fmm`: FMM settings. Defaults to FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, $\varepsilon\_tol$=nothing). `p` is the maximum order of the multipole expansion, higher values result in higher accuracy. `ncrit` is the maximum leaf size. `theta` is the neighborhood criterion. `nonzero_sigma` should always be true as vortex particles have a nonzero radius. $\varepsilon\_tol$ is the maximum error allowed in the FMM calculations, by setting this value the multipole expansion is optimzed to use the least number of terms to achieve the desired error tolerance. See `Fastmultipole.jl` for more details.
+`fmm`: FMM settings. Defaults to `FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=nothing)`. `p` is the maximum order of the multipole expansion, higher values result in higher accuracy. `ncrit` is the maximum leaf size. `theta` is the neighborhood criterion. `nonzero_sigma` should always be true as vortex particles have a nonzero radius. `ε_tol` (varepsilon) is the maximum error allowed in the FMM calculations, by setting this value the multipole expansion is optimzed to use the least number of terms to achieve the desired error tolerance. See `Fastmultipole.jl` for more details.
 
 `M`: Auxiliary storage for particle computations, users should never modify the default.
 
