@@ -118,7 +118,6 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
         for i in 1:3
             X[i] += dt*(U[i] + Uinf[i])
         end
-        # get_X(p) .+= dt*(get_U(p) .+ Uinf)
 
         # Store stretching S under MM[1:3]
         J = get_J(p)
@@ -136,9 +135,14 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
         end
 
         # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-        MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
-        MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
-        MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
+        Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
+        if Gnorm2 > zero(Gnorm2)
+            MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
+            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
+            MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
+        else
+            MM[4] = zero(Gnorm2)
+        end
 
         # Update vectorial circulation ΔΓ = Δt*(S - 3ZΓ - Cϵ)
         SFS = get_SFS(p)
@@ -146,6 +150,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
         for i in 1:3
             G[i] += dt * (MM[i] - 3*MM[4]*G[i] - C*SFS[i]*sigma3/zeta0)
         end
+
         # G .+= dt * (MM[1:3] - 3*MM[4]*G - C*get_SFS(p)*get_sigma(p)[]^3/zeta0)
 
         # Update cross-sectional area of the tube σ = -Δt*σ*Z
@@ -438,9 +443,14 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
             end
 
             # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-            MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
-            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
-            MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
+            Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
+            if Gnorm2 > zero(Gnorm2)
+                MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
+                MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
+                MM[4] /= Gnorm2
+            else
+                MM[4] = zero(Gnorm2)
+            end
 
             # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
             # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
