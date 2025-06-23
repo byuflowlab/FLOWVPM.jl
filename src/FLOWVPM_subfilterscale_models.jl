@@ -41,32 +41,53 @@ end
 
 function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
 
-    # evaluate
-    for (i_target, i_source) in direct_list
-        target_index = target_tree.branches[i_target].bodies_index[1]
-        source_index = source_tree.branches[i_source].bodies_index[1]
+    # total number of interactions
+    n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
+    n_threads = Threads.nthreads()
 
-        # loop over source particles
-        for i_source in source_index
-            source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+    # interactions per thread
+    n_per_thread, rem = divrem(n_interactions, n_threads)
+    rem > 0 && (n_per_thread += 1)
 
-            # source position
-            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+    # create assignments
+    assignments = Vector{UnitRange{Int64}}(undef,n_threads)
+    for i in eachindex(assignments)
+        assignments[i] = 1:0
+    end
+    FastMultipole.make_direct_assignments!(assignments, 1, target_tree.branches, 1, source_tree.branches, direct_list, n_threads, n_per_thread, nothing)
 
-            # loop over target particles
-            for i_target in target_index
-                target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+    Threads.@threads for i_task in eachindex(assignments)
+        assignment = assignments[i_task]
 
-                # target position
-                tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+        # evaluate
+        for i_interaction in assignment
+            i_target, i_source = direct_list[i_interaction]
+            
+            target_index = target_tree.branches[i_target].bodies_index[1]
+            source_index = source_tree.branches[i_source].bodies_index[1]
 
-                # separation distance
-                dx, dy, dz = sx - tx, sy - ty, sz - tz
-                r = sqrt(dx * dx + dy * dy + dz * dz)
+            # loop over source particles
+            for i_source in source_index
+                source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
 
-                # add Estr contribution
-                Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+                # source position
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
+                # loop over target particles
+                for i_target in target_index
+                    target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+
+                    # target position
+                    tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+
+                    # separation distance
+                    dx, dy, dz = sx - tx, sy - ty, sz - tz
+                    r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                    # add Estr contribution
+                    Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+
+                end
             end
         end
     end
