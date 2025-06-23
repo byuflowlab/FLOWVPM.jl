@@ -11,7 +11,6 @@ makedocs(sitename="FLOWVPM.jl",
         pages=[
         "Introduction" => "index.md",
         "Reformulation" => "rVPM.md",
-        "Particle Field" => "models.md",
         ],
         checkdocs=:none
     )
