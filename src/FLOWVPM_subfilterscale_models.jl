@@ -48,6 +48,7 @@ function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, t
     # interactions per thread
     n_per_thread, rem = divrem(n_interactions, n_threads)
     rem > 0 && (n_per_thread += 1)
+    n_per_thread < 100 && (n_per_thread = 100)
 
     # create assignments
     assignments = Vector{UnitRange{Int64}}(undef,n_threads)
