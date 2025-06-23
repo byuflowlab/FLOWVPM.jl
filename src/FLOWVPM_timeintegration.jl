@@ -9,7 +9,7 @@
 =###############################################################################
 
 """
-    _euler(pfield, dt; relax=false)
+    euler(pfield, dt; relax=false)
 
 Convects the `::ParticleField` by timestep `dt` using a forward Euler step.
 

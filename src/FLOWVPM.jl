@@ -42,7 +42,8 @@ export ParticleField,
        ClassicVPM, ReformulatedVPM,
        NoSFS, ConstantSFS, DynamicSFS,
        U_INDEX, J_INDEX,
-       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX
+       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX,
+       add_particle, remove_particle, run_vpm!
 
 const fmm = FastMultipole
 
@@ -81,12 +82,38 @@ const formulation_classic = ClassicVPM{FLOAT_TYPE}()
 const formulation_cVPM = ReformulatedVPM{FLOAT_TYPE}(0, 0)
 const formulation_rVPM = ReformulatedVPM{FLOAT_TYPE}(0, 1/5)
 
+"""
+    `formulation_tube_continuity`
+    
+Alias for mass conserving tube formulation. Enforces conservation of mass 
+for a vortex tube (f=1/2, g=0)
+"""
 const formulation_tube_continuity = ReformulatedVPM{FLOAT_TYPE}(1/2, 0)
+
+"""
+    `formulation_tube_momentum`
+    
+Alias for momentum conserving tube formulation. Enforces conservation 
+of momentum for a vortex tube (f=1/4, g=1/4)
+"""
 const formulation_tube_momentum = ReformulatedVPM{FLOAT_TYPE}(1/4, 1/4)
 const formulation_sphere_momentum = ReformulatedVPM{FLOAT_TYPE}(0, 1/5 + 1e-8)
 
 # Formulation aliases
+"""
+    `cVPM`
+    
+Alias for the classic VPM formulation.
+"""
 const cVPM = formulation_cVPM
+
+"""
+    `rVPM`
+    
+Alias for the reformulated VPM formulation. Enforces conservation of mass 
+and momentum for a spherical fluid element and is the default formulation 
+(f=0, g=1/5)
+"""
 const rVPM = formulation_rVPM
 const formulation_default = formulation_rVPM
 
@@ -104,9 +131,32 @@ const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_
 const kernel_default = kernel_gaussianerf
 
 # Kernel aliases
+"""
+    `singular`
+
+Alias for the singular kernel.
+"""
 const singular = kernel_singular
+
+"""
+    `gaussian`
+
+Alias for the Gaussian kernel.
+"""
 const gaussian = kernel_gaussian
+
+"""
+    `gaussianerf`
+
+Alias for the Gaussian error function kernel.
+"""
 const gaussianerf = kernel_gaussianerf
+
+"""
+    `winckelmans`
+
+Alias for the Winckelmans kernel.
+"""
 const winckelmans = kernel_winckelmans
 
 const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
@@ -118,8 +168,26 @@ const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, FLOAT_TYPE(0.3))
 const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, FLOAT_TYPE(0.3))
 
 # Relaxation aliases
+"""
+    `pedrizzetti`
+    
+Alias for the Pedrizzetti relaxation scheme.
+"""
 const pedrizzetti = relaxation_pedrizzetti
+
+"""
+    `correctedpedrizzetti`
+    
+Alias for the corrected Pedrizzetti relaxation scheme. Is a modification 
+to the pedrizzetti relaxation that preserves the vortex strength magnitude.
+"""
 const correctedpedrizzetti = relaxation_correctedpedrizzetti
+
+"""
+    `norelaxation`
+
+Alias for the no relaxation scheme.
+"""
 const norelaxation = relaxation_none
 const relaxation_default = pedrizzetti
 
@@ -136,11 +204,36 @@ const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
 const SFS_none = NoSFS{FLOAT_TYPE}()
+
+"""
+    `SFS_Cs_nobackscatter`
+
+Alias for the Constant SFS model with no backscatter.
+"""
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=(clipping_backscatter,))
+
+"""
+    `SFS_Cd_twolevel_nobackscatter`
+
+Alias for the Dynamic SFS model with two levels and no backscatter.
+This is the recommended SFS model for high fidelity modeling.
+"""
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
+
+"""
+    `SFS_Cd_threelevel_nobackscatter`
+
+Alias for the Dynamic SFS model with three levels and no backscatter.
+This is similar to the two level version but uses a lower value of alpha (0.667).
+"""
 const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.667, clippings=(clipping_backscatter,))
 
 # SFS aliases
+"""
+    `noSFS`
+
+    Alias for the no subfilter-scale model.
+"""
 const noSFS = SFS_none
 const SFS_default = SFS_none
 
@@ -155,7 +248,8 @@ const nofreestream(t) = SVector{3,Float64}(0,0,0)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
-const runtime_default = monitor_enstrophy
+# const runtime_default = monitor_enstrophy
+const runtime_default(pfield, t, dt; vprintln=nothing) = false
 const static_particles_default(pfield, t, dt) = nothing
 
 

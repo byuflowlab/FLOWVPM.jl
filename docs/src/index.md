@@ -24,7 +24,7 @@ FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programm
   * SFS model coefficient computed dynamically or prescribed
   * Viscous diffusion through core spreading
 
-  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady), [SUAVE](https://suave.stanford.edu/), and
+  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and
   [VortexLattice](https://github.com/byuflowlab/VortexLattice)
 
   This is an open-source project.

@@ -93,6 +93,41 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 end
 
+"""
+    `ParticleField(maxparticles::Int, R=FLOAT_TYPE; <keyword arguments>)`
+
+Create a new particle field with `maxparticles` particles. The particle field
+is created with the default values for the other parameters.
+
+# Arguments
+- `maxparticles::Int`           : Maximum number of particles in the field.
+- `R=FLOAT_TYPE`                : Type of the particle field. Default is `FLOAT_TYPE`.
+- `formulation`                 : VPM formulation. Default is `rVPM`.
+- `viscous::ViscousScheme`      : Viscous scheme. Default is `Inviscid()`. With `rVPM` formulation,
+                                    a viscous scheme is not required for numerical stability.
+- `np::Int`                     : Number of particles currently in the field. Default is 0. (user should not modify)
+- `nt::Int`                     : Current time step number. Default is 0. (user should not modify)
+- `t::Real`                     : Current time. Default is 0.
+- `transposed::Bool`            : If true, the transposed scheme is recommended for stability.
+                                Default is true. (user should not modify)
+- `fmm::FMM{TEPS}`              : Fast-multipole settings. Default is `FMM()`.
+- `M::Array{R, 1}`              : Memory for computations. Default is `zeros(R, 4)`. (user should not modify)
+- `toggle_rbf::Bool`            : If true, the FMM computes the vorticity field rather than velocity field.
+                                    This is used as an internal switch for the FMM.
+                                    Default is false. (user should not modify)
+- `toggle_sfs::Bool`            : If true, the FMM computes the stretching term for the SFS model.
+                                    This is used as an internal switch for the FMM.
+                                    Default is false. (user should not modify)
+- `SFS::S`                      : Subfilter-scale contributions scheme. Default is `noSFS`.
+- `kernel::Tkernel`             : Vortex particle kernel. Default is `gaussianerf`.
+- `UJ::TUJ`                     : Particle-to-particle calculation. Default is `UJ_fmm`.
+- `Uinf::TUinf`                 : Uniform freestream function Uinf(t). Default is no freestream.
+- `relaxation::TR`              : Relaxation scheme. Default is `pedrizzetti`.
+- `integration::Tintegration`   : Time integration scheme. Default is `rungekutta3`. The only other
+                                    option is `euler`.
+- `useGPU::Int`                 : Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not 
+                                    accelerate SFS calculations)
+"""
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
@@ -134,9 +169,19 @@ isLES(pfield::ParticleField) = isSFSenabled(pfield.SFS)
 
 ##### FUNCTIONS ################################################################
 """
-  `add_particle(pfield::ParticleField, X, Gamma, sigma; vol=0)`
+  `add_particle(pfield::ParticleField, X, Gamma, sigma; <keyword arguments>)`
 
 Add a particle to the field.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to add the particle to.
+- `X`                      : Position of the particle.
+- `Gamma`                  : Strength of the particle.
+- `sigma`                 : Smoothing radius of the particle.
+- `vol`                   : Volume of the particle. Default is 0.
+- `circulation`           : Circulation of the particle. Default is 1.
+- `C`                     : SFS parameter of the particle. Default is 0.
+- `static`                : If true, the particle is static. Default is false.
 """
 function add_particle(pfield::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
@@ -389,7 +434,16 @@ end
 """
   `nextstep(pfield::ParticleField, dt; relax=false)`
 
-Steps the particle field in time by a step `dt`.
+Steps the particle field in time by a step `dt`. Modifies the pfield in place.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to step.
+- `dt::Real`                : Time step to step the field.
+- `relax::Bool`             : If true, the relaxation scheme is applied to the
+                                particles. Default is false.
+
+# Returns
+- The time step number of the particle field.
 """
 function nextstep(pfield::ParticleField, dt::Real; optargs...)
 

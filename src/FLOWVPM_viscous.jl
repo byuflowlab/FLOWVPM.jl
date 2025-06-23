@@ -41,6 +41,11 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
+"""
+    Inviscid()
+
+Creates an inviscid scheme with zero kinematic viscosity.
+"""
 Inviscid() = Inviscid{FLOAT_TYPE}()
 
 """
@@ -106,7 +111,32 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreading(nu, sgm0, zeta::Tzeta; rbf::Trbf=rbf_conjugategradient, optargs...
+"""
+    `CoreSpreading(nu, sgm0, zeta::Tzeta=zeta_fmm; <keyword arguments>)`
+
+Creates a core spreading viscous scheme with the given parameters.
+
+# Arguments
+- `nu`::Real Kinematic viscosity.
+- `sgm0`::Real Core size after reset.
+- `zeta::Function = zeta_fmm` Basis function evaluation method.
+- `beta::Real = 1.5` Maximum core size growth σ/σ_0.
+- `itmax::Int = 15` Maximum number of RBF iterations.
+- `tol::Real = 1e-3` RBF interpolation tolerance.
+- `iterror::Bool = true` Throw error if RBF didn't converge.
+- `verbose::Bool = false` Verbose on RBF interpolation.
+- `v_lvl::Int = 2` Verbose printing tab level.
+- `debug::Bool = false` Print verbose for debugging.
+- `rbf::Function = rbf_conjugategradient` RBF function.
+- `rr0s::Array{R, 1} = zeros(R, 3)` Initial field residuals.
+- `rrs::Array{R, 1} = zeros(R, 3)` Current field residuals.
+- `prev_rrs::Array{R, 1} = zeros(R, 3)` Previous field residuals.
+- `pAps::Array{R, 1} = zeros(R, 3)` pAp product.
+- `alphas::Array{R, 1} = zeros(R, 3)` Alpha coefficients.
+- `betas::Array{R, 1} = zeros(R, 3)`
+- `flags::Array{Bool, 1} = zeros(Bool, 3)`
+"""
+CoreSpreading(nu, sgm0, zeta::Tzeta=zeta_fmm; rbf::Trbf=rbf_conjugategradient, optargs...
                     ) where {Tzeta,Trbf} = CoreSpreading{FLOAT_TYPE,Tzeta,Trbf}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), zeta; rbf, optargs...)
 
 """
@@ -212,6 +242,15 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
                                 )
 end
 
+"""
+    `ParticleStrengthExchange(nu; <keyword arguments>)`
+
+Creates a particle strength exchange viscous scheme with the given parameters.
+
+# Arguments
+- `nu`::Real Kinematic viscosity.
+- `recalculate_vols::Bool = true` Whether to recalculate particle volumes.
+"""
 ParticleStrengthExchange(nu, args...; optargs...
                         ) = ParticleStrengthExchange{FLOAT_TYPE}(FLOAT_TYPE(nu), args...; optargs...)
 

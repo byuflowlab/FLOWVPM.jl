@@ -10,7 +10,8 @@ makedocs(sitename="FLOWVPM.jl",
         assets=String[]),
         pages=[
         "Introduction" => "index.md",
-        "Reformulation" => "rVPM.md",
+        "Quick Start" => "quickstart.md",
+        "Theory" => "rVPM.md",
         ],
         checkdocs=:none
     )
