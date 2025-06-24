@@ -303,7 +303,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); get_M(p) .= zeroR; end;
+    for i in 1:pfield.np; get_M(pfield,i) .= zeroR; end;
 
     # Runge-Kutta inner steps
     for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
@@ -413,8 +413,9 @@ end
 
 function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
 
-    for p in iterator(pfield)
-
+    for i_p in 1:pfield.np
+        p = get_particle(pfield, i_p)
+        
         C::R = get_C(p)[1]
 
             # Low-storage RK step

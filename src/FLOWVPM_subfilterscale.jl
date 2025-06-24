@@ -367,8 +367,8 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] *= alpha
+    for i in 1:pfield.np
+        get_sigma(pfield,i)[] *= alpha
     end
 
     # Calculate UJ with test filter
@@ -376,35 +376,40 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # Empty temporal memory
     zeroR::R = zero(R)
-    for p in iterator(pfield); set_M(p,zeroR); end;
+    # for p in iterator(pfield); set_M(p,zeroR); end;
+    for i in 1:pfield.np; set_M(pfield,i,zeroR); end;
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        M = get_M(p)
+        J = get_J(p)
+        Gamma = get_Gamma(p)
 
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            get_M(p)[1] = get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[2]*get_Gamma(p)[2]+get_J(p)[3]*get_Gamma(p)[3]
-            get_M(p)[2] = get_J(p)[4]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[6]*get_Gamma(p)[3]
-            get_M(p)[3] = get_J(p)[7]*get_Gamma(p)[1]+get_J(p)[8]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] = J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            M[2] = J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            M[3] = J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
         else
             # Classic scheme (Γ⋅∇)U
-            get_M(p)[1] = get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[4]*get_Gamma(p)[2]+get_J(p)[7]*get_Gamma(p)[3]
-            get_M(p)[2] = get_J(p)[2]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[8]*get_Gamma(p)[3]
-            get_M(p)[3] = get_J(p)[3]*get_Gamma(p)[1]+get_J(p)[6]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] = J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            M[2] = J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            M[3] = J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
-        get_M(p)[4] = get_SFS1(p)
-        get_M(p)[5] = get_SFS2(p)
-        get_M(p)[6] = get_SFS3(p)
+        M[4] = get_SFS1(p)
+        M[5] = get_SFS2(p)
+        M[6] = get_SFS3(p)
     end
 
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] /= alpha
+    for i in 1:pfield.np
+        get_sigma(pfield,i)[] /= alpha
     end
 
     return nothing
@@ -428,27 +433,31 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        M = get_M(p)
+        J = get_J(p)
+        Gamma = get_Gamma(p)
 
         # Calculate stretching with domain filter and substract from test filter
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            get_M(p)[1] -= get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[2]*get_Gamma(p)[2]+get_J(p)[3]*get_Gamma(p)[3]
-            get_M(p)[2] -= get_J(p)[4]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[6]*get_Gamma(p)[3]
-            get_M(p)[3] -= get_J(p)[7]*get_Gamma(p)[1]+get_J(p)[8]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] -= J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            M[2] -= J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            M[3] -= J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
         else
             # Classic scheme (Γ⋅∇)U
-            get_M(p)[1] -= get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[4]*get_Gamma(p)[2]+get_J(p)[7]*get_Gamma(p)[3]
-            get_M(p)[2] -= get_J(p)[2]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[8]*get_Gamma(p)[3]
-            get_M(p)[3] -= get_J(p)[3]*get_Gamma(p)[1]+get_J(p)[6]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] -= J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            M[2] -= J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            M[3] -= J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
         # under p.M[:, 2], resulting in dEdσ
-        get_M(p)[4] -= get_SFS1(p)
-        get_M(p)[5] -= get_SFS2(p)
-        get_M(p)[6] -= get_SFS3(p)
+        M[4] -= get_SFS1(p)
+        M[5] -= get_SFS2(p)
+        M[6] -= get_SFS3(p)
     end
 
 
