@@ -30,7 +30,7 @@ Parameters for FMM solver.
                 that have overlap; at θ=0.5, P2P is done on cells that their
                 distance is less than double R1+R2; at θ=0.25, P2P is done on
                 cells that their distance is less than four times R1+R2; at
-                θ=0, P2P is done on cells all cells.
+                θ=0, P2P is done on all cells.
 * `phi`     : Regularizing neighborhood criterion. This criterion avoid
                 approximating interactions with the singular-FMM between
                 regularized particles that are sufficiently close to each other
