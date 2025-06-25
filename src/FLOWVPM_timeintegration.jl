@@ -44,7 +44,8 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     zeta0::R = pfield.kernel.zeta(0)
 
     # Update the particle field: convection and stretching
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
 
         C::R = get_C(p)[1]
 
