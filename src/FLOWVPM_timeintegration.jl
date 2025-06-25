@@ -190,7 +190,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); get_M(p) .= zeroR; end;
+    for i in 1:pfield.np; set_M(pfield,i,zeroR); end;
 
     # Runge-Kutta inner steps
     for (a,b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
@@ -206,7 +206,8 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
-        for p in iterator(pfield)
+        for i in 1:pfield.np
+            p = get_particle(pfield, i)
 
             C::R = get_C(p)[1]
 
@@ -261,7 +262,8 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       by not calculating UJ again.
         pfield.UJ(pfield)
 
-        for p in iterator(pfield)
+        for i in 1:pfield.np
+            p = get_particle(pfield, i)
             # Align particle strength
             pfield.relaxation(p)
         end
@@ -303,7 +305,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for i in 1:pfield.np; get_M(pfield,i) .= zeroR; end;
+    for i in 1:pfield.np; set_M(pfield,i,zeroR); end;
 
     # Runge-Kutta inner steps
     for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
@@ -398,7 +400,8 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         #       by not calculating UJ again.
         pfield.UJ(pfield)
 
-        for p in iterator(pfield)
+        for i in 1:pfield.np
+            p = get_particle(pfield, i)
             # Align particle strength
             pfield.relaxation(p)
         end
@@ -415,7 +418,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 
     for i_p in 1:pfield.np
         p = get_particle(pfield, i_p)
-        
+
         C::R = get_C(p)[1]
 
             # Low-storage RK step

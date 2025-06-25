@@ -210,7 +210,8 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                p = get_particle(pfield, i)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
@@ -464,32 +465,36 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     zeta0::R = pfield.kernel.zeta(0)
 
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        M = get_M(p)
+        C_p = get_C(p)
+        Gamma = get_Gamma(p)
 
         # Calculate numerator and denominator
-        nume = get_M(p)[1]*get_Gamma(p)[1] + get_M(p)[2]*get_Gamma(p)[2] + get_M(p)[3]*get_Gamma(p)[3]
+        nume = M[1]*Gamma[1] + M[2]*Gamma[2] + M[3]*Gamma[3]
         nume *= 3*alpha - 2
-        deno = get_M(p)[4]*get_Gamma(p)[1] + get_M(p)[5]*get_Gamma(p)[2] + get_M(p)[6]*get_Gamma(p)[3]
+        deno = M[4]*Gamma[1] + M[5]*Gamma[2] + M[6]*Gamma[3]
         deno /= zeta0/get_sigma(p)[]^3
 
         # Initialize denominator to something other than zero
-        if get_C(p)[3] == 0
-            get_C(p)[3] = deno
-            if get_C(p)[3] == 0
-                get_C(p)[3] = eps()
+        if C_p[3] == 0
+            C_p[3] = deno
+            if C_p[3] == 0
+                C_p[3] = eps()
             end
         end
 
         # Lagrangian average of numerator and denominator
-        nume = rlxf*nume + (1-rlxf)*get_C(p)[2]
-        deno = rlxf*deno + (1-rlxf)*get_C(p)[3]
+        nume = rlxf*nume + (1-rlxf)*C_p[2]
+        deno = rlxf*deno + (1-rlxf)*C_p[3]
 
         # Enforce maximum and minimum |C| values
         if abs(nume/deno) > maxC            # Case: C is too large
 
             # Avoid case of denominator becoming zero
-            if abs(deno) < abs(get_C(p)[3])
-                deno = sign(deno) * abs(get_C(p)[3])
+            if abs(deno) < abs(C_p[3])
+                deno = sign(deno) * abs(C_p[3])
             end
 
             # Enforce maximum value of |Cd|
@@ -505,27 +510,28 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Save numerator and denominator of model coefficient
-        get_C(p)[2] = nume
-        get_C(p)[3] = deno
+        C_p[2] = nume
+        C_p[3] = deno
 
         # Store model coefficient
-        get_C(p)[1] = get_C(p)[2] / get_C(p)[3]
+        C_p[1] = C_p[2] / C_p[3]
 
-        if isnan(get_C(p)[1])
+        if isnan(C_p[1])
             println("nume: ", nume)
             println("deno: ", deno)
-            println("M: ", get_M(p))
-            println("Gamma: ", get_Gamma(p))
+            println("M: ", M)
+            println("Gamma: ", Gamma)
             println("J: ", get_J(p))
             error("NaN in dynamicprocedure_pseudo3level_afterUJ")
         end
 
         # Force the coefficient to be positive
-        get_C(p)[1] *= sign(get_C(p)[1])^force_positive
+        C_p[1] *= sign(C_p[1])^force_positive
     end
 
     # Flush temporal memory
-    for p in iterator(pfield); set_M(p,zero(R)); end;
+    zeroR::R = zero(R)
+    for i in 1:pfield.np; set_M(pfield,i,zeroR); end;
 
     return nothing
 end
