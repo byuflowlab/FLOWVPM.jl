@@ -11,7 +11,9 @@ makedocs(sitename="FLOWVPM.jl",
         pages=[
         "Introduction" => "index.md",
         "Quick Start" => "quickstart.md",
+        "Advanced Usage" => "advanced.md",
         "Theory" => "rVPM.md",
+        "Reference" => "api.md",
         ],
         checkdocs=:none
     )

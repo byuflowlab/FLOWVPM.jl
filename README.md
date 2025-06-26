@@ -24,7 +24,7 @@ FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programm
 
 
 ## Features
-  * Fast-multipole acceleration through FastMultipole.jl
+  * Fast-multipole acceleration through [FastMultipole.jl](https://github.com/byuflowlab/FastMultipole.jl)
   * Threaded CPU parallelization through OpenMP
   * Meshless
   * Second-order spatial accuracy and third-order RK time integration
@@ -32,8 +32,9 @@ FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programm
   * Subfilter-scale (SFS) model of turbulence associated to vortex stretching
   * SFS model coefficient computed dynamically or prescribed
   * Viscous diffusion through core spreading
+  * Can be installed through the Julia registry
 
-  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and [VortexLattice](https://github.com/byuflowlab/VortexLattice)
+  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and [VortexLattice](https://github.com/byuflowlab/VortexLattice).
 
   This is an open-source project.
   Improvements and further development by the community are accepted and encouraged.

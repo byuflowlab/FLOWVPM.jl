@@ -83,7 +83,7 @@ const formulation_cVPM = ReformulatedVPM{FLOAT_TYPE}(0, 0)
 const formulation_rVPM = ReformulatedVPM{FLOAT_TYPE}(0, 1/5)
 
 """
-    `formulation_tube_continuity`
+    formulation_tube_continuity
     
 Alias for mass conserving tube formulation. Enforces conservation of mass 
 for a vortex tube (f=1/2, g=0)
@@ -91,7 +91,7 @@ for a vortex tube (f=1/2, g=0)
 const formulation_tube_continuity = ReformulatedVPM{FLOAT_TYPE}(1/2, 0)
 
 """
-    `formulation_tube_momentum`
+    formulation_tube_momentum
     
 Alias for momentum conserving tube formulation. Enforces conservation 
 of momentum for a vortex tube (f=1/4, g=1/4)
@@ -101,14 +101,14 @@ const formulation_sphere_momentum = ReformulatedVPM{FLOAT_TYPE}(0, 1/5 + 1e-8)
 
 # Formulation aliases
 """
-    `cVPM`
+    cVPM
     
 Alias for the classic VPM formulation.
 """
 const cVPM = formulation_cVPM
 
 """
-    `rVPM`
+    rVPM
     
 Alias for the reformulated VPM formulation. Enforces conservation of mass 
 and momentum for a spherical fluid element and is the default formulation 
@@ -132,28 +132,28 @@ const kernel_default = kernel_gaussianerf
 
 # Kernel aliases
 """
-    `singular`
+    singular
 
 Alias for the singular kernel.
 """
 const singular = kernel_singular
 
 """
-    `gaussian`
+    gaussian
 
 Alias for the Gaussian kernel.
 """
 const gaussian = kernel_gaussian
 
 """
-    `gaussianerf`
+    gaussianerf
 
 Alias for the Gaussian error function kernel.
 """
 const gaussianerf = kernel_gaussianerf
 
 """
-    `winckelmans`
+    winckelmans
 
 Alias for the Winckelmans kernel.
 """
@@ -169,14 +169,14 @@ const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1
 
 # Relaxation aliases
 """
-    `pedrizzetti`
+    pedrizzetti
     
 Alias for the Pedrizzetti relaxation scheme.
 """
 const pedrizzetti = relaxation_pedrizzetti
 
 """
-    `correctedpedrizzetti`
+    correctedpedrizzetti
     
 Alias for the corrected Pedrizzetti relaxation scheme. Is a modification 
 to the pedrizzetti relaxation that preserves the vortex strength magnitude.
@@ -184,7 +184,7 @@ to the pedrizzetti relaxation that preserves the vortex strength magnitude.
 const correctedpedrizzetti = relaxation_correctedpedrizzetti
 
 """
-    `norelaxation`
+    norelaxation
 
 Alias for the no relaxation scheme.
 """
@@ -206,14 +206,14 @@ const sensorfunction = dynamicprocedure_sensorfunction
 const SFS_none = NoSFS{FLOAT_TYPE}()
 
 """
-    `SFS_Cs_nobackscatter`
+    SFS_Cs_nobackscatter
 
 Alias for the Constant SFS model with no backscatter.
 """
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=(clipping_backscatter,))
 
 """
-    `SFS_Cd_twolevel_nobackscatter`
+    SFS_Cd_twolevel_nobackscatter
 
 Alias for the Dynamic SFS model with two levels and no backscatter.
 This is the recommended SFS model for high fidelity modeling.
@@ -221,7 +221,7 @@ This is the recommended SFS model for high fidelity modeling.
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
 
 """
-    `SFS_Cd_threelevel_nobackscatter`
+    SFS_Cd_threelevel_nobackscatter
 
 Alias for the Dynamic SFS model with three levels and no backscatter.
 This is similar to the two level version but uses a lower value of alpha (0.667).
@@ -230,7 +230,7 @@ const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_before
 
 # SFS aliases
 """
-    `noSFS`
+    noSFS
 
     Alias for the no subfilter-scale model.
 """
@@ -303,4 +303,12 @@ const _pfield_settings = (sym for sym in fieldnames(ParticleField)
 
 # ------------------------------------------------------------------------------
 
+
+export rVPM, cVPM,
+       formulation_tube_continuity, formulation_tube_momentum
+       singular, gaussian, gaussianerf, winckelmans,
+       pedrizzetti, correctedpedrizzetti, norelaxation, 
+       Inviscid, CoreSpreading, ParticleStrengthExchange,
+       noSFS, SFS_Cs_nobackscatter, SFS_Cd_twolevel_nobackscatter,
+       SFS_Cd_threelevel_nobackscatter, FMM
 end # END OF MODULE

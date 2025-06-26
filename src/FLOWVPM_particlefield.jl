@@ -15,7 +15,7 @@ const useGPU_default = 0
 # FMM STRUCT
 ################################################################################
 """
-    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)`
+    FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)
 
 Parameters for FMM solver.
 
@@ -94,7 +94,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
 end
 
 """
-    `ParticleField(maxparticles::Int, R=FLOAT_TYPE; <keyword arguments>)`
+    ParticleField(maxparticles::Int, R=FLOAT_TYPE; <keyword arguments>)
 
 Create a new particle field with `maxparticles` particles. The particle field
 is created with the default values for the other parameters.

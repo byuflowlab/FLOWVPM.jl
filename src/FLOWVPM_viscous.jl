@@ -112,7 +112,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
 end
 
 """
-    `CoreSpreading(nu, sgm0, zeta::Tzeta=zeta_fmm; <keyword arguments>)`
+    CoreSpreading(nu, sgm0, zeta::Tzeta=zeta_fmm; <keyword arguments>)
 
 Creates a core spreading viscous scheme with the given parameters.
 
@@ -243,7 +243,7 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
 end
 
 """
-    `ParticleStrengthExchange(nu; <keyword arguments>)`
+    ParticleStrengthExchange(nu; <keyword arguments>)
 
 Creates a particle strength exchange viscous scheme with the given parameters.
 
