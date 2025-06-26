@@ -40,6 +40,14 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
 end
 
 function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+    if Threads.nthreads() > 1
+        Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    else
+        Estr_fmm_singlethread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    end
+end
+
+function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
 
     # total number of interactions
     n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
@@ -89,6 +97,39 @@ function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, t
                     Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
 
                 end
+            end
+        end
+    end
+end
+
+function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+
+    for (i_target, i_source) in direct_list
+    
+        target_index = target_tree.branches[i_target].bodies_index[1]
+        source_index = source_tree.branches[i_source].bodies_index[1]
+
+        # loop over source particles
+        for i_source in source_index
+            source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+
+            # source position
+            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+            # loop over target particles
+            for i_target in target_index
+                target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+
+                # target position
+                tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+
+                # separation distance
+                dx, dy, dz = sx - tx, sy - ty, sz - tz
+                r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                # add Estr contribution
+                Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+
             end
         end
     end
