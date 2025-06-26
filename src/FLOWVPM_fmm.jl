@@ -49,6 +49,10 @@ function fmm.strength_dims(system::ParticleField)
     return 3
 end
 
+function fmm.has_vector_potential(system::ParticleField)
+    return true
+end
+
 fmm.get_n_bodies(system::ParticleField) = system.np
 
 function fmm.body_to_multipole!(system::ParticleField, args...)
