@@ -35,8 +35,9 @@ function UJ_direct(pfield::ParticleField;
     pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
     pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
-    # return UJ_direct(pfield, pfield)
-    fmm.direct!(pfield)
+    # TODO: This direct call should be multithreaded but it goes through the FMM
+    fmm.direct!(pfield; scalar_potential=false, hessian=sfs)
+    sfs && Estr_direct!(pfield)
 end
 
 """
@@ -89,7 +90,15 @@ function UJ_fmm(
         zeta_fmm(pfield)
     else
         # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_acceptance=fmm_options.theta, error_tolerance=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, nearfield_device=(useGPU>0), scalar_potential=false)
+        args = fmm.fmm!(pfield; 
+                        expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), 
+                        leaf_size_source=fmm_options.ncrit, 
+                        multipole_acceptance=fmm_options.theta, 
+                        error_tolerance=fmm_options.ε_tol, 
+                        shrink_recenter=fmm_options.nonzero_sigma, 
+                        nearfield_device=(useGPU>0), 
+                        scalar_potential=false,
+                        hessian=sfs)
         _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)

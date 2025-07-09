@@ -39,6 +39,58 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
+function Estr_direct!(pfield)
+    if Threads.nthreads() > 1
+        Estr_direct_multithreaded(pfield)
+    else
+        Estr_direct_singlethreaded(pfield)
+    end
+end
+
+function Estr_direct_multithreaded(pfield::ParticleField)
+    n_per_thread, rem = divrem(pfield.np, Threads.nthreads())
+    n = n_per_thread + (rem > 0)
+    assignments = 1:n:pfield.np
+
+    Threads.@threads for i_assignment in eachindex(assignments)
+        start_idx = assignments[i_assignment]
+        end_idx = min(start_idx + n - 1, pfield.np)
+
+        # Calculate SFS contributions for the assigned particles
+        for i_target in start_idx:end_idx
+            target_particle = get_particle(pfield, i_target)
+            tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+            for i_source in 1:pfield.np
+                source_particle = get_particle(pfield, i_source)
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+                dx, dy, dz = sx - tx, sy - ty, sz - tz
+                r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
+            end
+        end
+    end
+end
+
+function Estr_direct_singlethreaded(pfield::ParticleField)
+    for i_target in 1:pfield.np
+        target_particle = get_particle(pfield, i_target)
+        tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+        for i_source in 1:pfield.np
+            source_particle = get_particle(pfield, i_source)
+            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+            dx, dy, dz = sx - tx, sy - ty, sz - tz
+            r = sqrt(dx * dx + dy * dy + dz * dz)
+
+            Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
+        end
+    end
+end
+
 function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
     if Threads.nthreads() > 1
         Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
