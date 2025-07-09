@@ -87,7 +87,7 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
                     target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
 
                     # target position
-                    tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+                    tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
                     # separation distance
                     dx, dy, dz = sx - tx, sy - ty, sz - tz
@@ -121,7 +121,7 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
                 target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
 
                 # target position
-                tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+                tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
                 # separation distance
                 dx, dy, dz = sx - tx, sy - ty, sz - tz
