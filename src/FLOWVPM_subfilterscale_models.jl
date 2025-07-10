@@ -59,10 +59,10 @@ function Estr_direct_multithreaded(pfield::ParticleField)
         # Calculate SFS contributions for the assigned particles
         for i_target in start_idx:end_idx
             target_particle = get_particle(pfield, i_target)
+            is_static(target_particle) && continue
             tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
-            for i_source in 1:pfield.np
-                source_particle = get_particle(pfield, i_source)
+            for source_particle in iterator(pfield)
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
                 dx, dy, dz = sx - tx, sy - ty, sz - tz
@@ -75,12 +75,11 @@ function Estr_direct_multithreaded(pfield::ParticleField)
 end
 
 function Estr_direct_singlethreaded(pfield::ParticleField)
-    for i_target in 1:pfield.np
-        target_particle = get_particle(pfield, i_target)
+    for target_particle in iterator(pfield)
+        is_static(target_particle) && continue
         tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
-        for i_source in 1:pfield.np
-            source_particle = get_particle(pfield, i_source)
+        for source_particle in iterator(pfield)
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
             dx, dy, dz = sx - tx, sy - ty, sz - tz

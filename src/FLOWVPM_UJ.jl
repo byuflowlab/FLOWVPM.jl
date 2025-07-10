@@ -20,7 +20,7 @@ every particle without previously emptying those properties.
 """
 function UJ_direct(pfield::ParticleField;
         rbf::Bool=false, sfs::Bool=false,
-        reset=true, reset_sfs=false,
+        reset=true, reset_sfs=false, hessian::Bool=false,
         optargs...
     )
 
@@ -36,7 +36,7 @@ function UJ_direct(pfield::ParticleField;
     pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # TODO: This direct call should be multithreaded but it goes through the FMM
-    fmm.direct!(pfield; scalar_potential=false, hessian=sfs)
+    fmm.direct!(pfield; scalar_potential=false, hessian=(sfs || hessian))
     sfs && Estr_direct!(pfield)
 end
 
@@ -72,15 +72,19 @@ function UJ_fmm(
         transposed_sfs::Bool=true, # unused
         reset::Bool=true,
         reset_sfs::Bool=false,
+        hessian::Bool=false,
     ) where {useGPU}
 
     # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
     end
-    if reset_sfs
+    if reset_sfs || sfs
         _reset_particles_sfs(pfield)
     end
+
+    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
+    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # extract FMM options
     fmm_options = pfield.fmm
@@ -98,7 +102,7 @@ function UJ_fmm(
                         shrink_recenter=fmm_options.nonzero_sigma, 
                         nearfield_device=(useGPU>0), 
                         scalar_potential=false,
-                        hessian=sfs)
+                        hessian=(hessian || sfs))
         _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)
