@@ -20,7 +20,7 @@ every particle without previously emptying those properties.
 """
 function UJ_direct(pfield::ParticleField;
         rbf::Bool=false, sfs::Bool=false,
-        reset=true, reset_sfs=false, hessian::Bool=false,
+        reset=true, reset_sfs=false,
         optargs...
     )
 
@@ -36,7 +36,7 @@ function UJ_direct(pfield::ParticleField;
     pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # TODO: This direct call should be multithreaded but it goes through the FMM
-    fmm.direct!(pfield; scalar_potential=false, hessian=(sfs || hessian))
+    fmm.direct!(pfield; scalar_potential=false, hessian=true)
     sfs && Estr_direct!(pfield)
 end
 
@@ -72,7 +72,6 @@ function UJ_fmm(
         transposed_sfs::Bool=true, # unused
         reset::Bool=true,
         reset_sfs::Bool=false,
-        hessian::Bool=false,
     ) where {useGPU}
 
     # reset # TODO should this really have an elseif in between?
@@ -102,7 +101,7 @@ function UJ_fmm(
                         shrink_recenter=fmm_options.nonzero_sigma, 
                         nearfield_device=(useGPU>0), 
                         scalar_potential=false,
-                        hessian=(hessian || sfs))
+                        hessian=true)
         _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)

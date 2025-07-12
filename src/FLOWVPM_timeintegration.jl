@@ -199,9 +199,9 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         if isnothing(custom_UJ)
-            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=false)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         else
-            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
@@ -259,7 +259,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       but in MyVPM I just used the J calculated in the last RK step
         #       and it worked just fine. So maybe I perhaps I can save computation
         #       by not calculating UJ again.
-        pfield.UJ(pfield; hessian=true)
+        pfield.UJ(pfield)
 
         for p in iterator(pfield)
             # Align particle strength
@@ -314,9 +314,9 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         if isnothing(custom_UJ)
-            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         else
-            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=true)
+            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
         #println("tape entries after SFS 2/before time marching: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
