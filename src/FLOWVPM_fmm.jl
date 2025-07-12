@@ -95,8 +95,6 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
-                    # get_U(target_particle) .+= Ux, Uy, Uz
-                    Ux0, Uy0, Uz0 = fmm.get_gradient(target_buffer, j_target)
 
                     val = SVector{3}(Ux, Uy, Uz)
                     fmm.set_gradient!(target_buffer, j_target, val)
