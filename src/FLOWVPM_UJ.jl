@@ -32,9 +32,6 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
-    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
-
     # TODO: This direct call should be multithreaded but it goes through the FMM
     fmm.direct!(pfield; scalar_potential=false, hessian=true)
     sfs && Estr_direct!(pfield)
@@ -81,9 +78,6 @@ function UJ_fmm(
     if reset_sfs || sfs
         _reset_particles_sfs(pfield)
     end
-
-    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
-    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # extract FMM options
     fmm_options = pfield.fmm
