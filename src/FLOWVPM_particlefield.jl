@@ -406,8 +406,12 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    for p in iterator(pfield)
-        _reset_particle(p)
+    # for p in iterator(pfield)
+    #     _reset_particle(p)
+    # end
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        !is_static(p) && _reset_particle(p)
     end
 end
 
@@ -422,8 +426,12 @@ end
 _reset_particle(pfield::ParticleField, i::Int) = _reset_particle(get_particle(pfield, i))
 
 function _reset_particles_sfs(pfield::ParticleField)
-    for p in iterator(pfield)
-        _reset_particle_sfs(p)
+    # for p in iterator(pfield)
+    #     _reset_particle_sfs(p)
+    # end
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        !is_static(p) && _reset_particle_sfs(p)
     end
 end
 

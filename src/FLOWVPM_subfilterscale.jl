@@ -210,7 +210,10 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                p = get_particle(pfield, i)
+                # Skip static particles
+                is_static(p) && continue
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
@@ -367,8 +370,9 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] *= alpha
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        !is_static(p) && (get_sigma(p)[] *= alpha)
     end
 
     # Calculate UJ with test filter
@@ -376,11 +380,17 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # Empty temporal memory
     zeroR::R = zero(R)
-    # for p in iterator(pfield); set_M(p,zeroR); end;
-    for p in iterator(pfield); set_M(p,zeroR); end;
+    for i in 1:get_np(pfield)
+        p = get_particle(pfield, i)
+        !is_static(p) && set_M(p,zeroR) # this is necessary to reset the particle's M storage memory
+    end
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        is_static(p) && continue
+
         M = get_M(p)
         J = get_J(p)
         Gamma = get_Gamma(p)
@@ -407,8 +417,9 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] /= alpha
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        !is_static(p) && (get_sigma(p)[] /= alpha)
     end
 
     return nothing
@@ -432,7 +443,10 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        is_static(p) && continue
         M = get_M(p)
         J = get_J(p)
         Gamma = get_Gamma(p)
@@ -462,7 +476,10 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     zeta0::R = pfield.kernel.zeta(0)
 
-    for p in iterator(pfield)
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        is_static(p) && continue
         M = get_M(p)
         C_p = get_C(p)
         Gamma = get_Gamma(p)
@@ -527,7 +544,10 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
     # Flush temporal memory
     zeroR::R = zero(R)
-    for p in iterator(pfield); set_M(p,zeroR); end;
+    for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        !is_static(p) && set_M(p,zeroR)
+    end
 
     return nothing
 end
