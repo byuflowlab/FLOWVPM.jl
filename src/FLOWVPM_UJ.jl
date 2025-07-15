@@ -32,7 +32,6 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    # TODO: This direct call should be multithreaded but it goes through the FMM
     fmm.direct!(pfield; scalar_potential=false, hessian=true)
     sfs && Estr_direct!(pfield)
 end
