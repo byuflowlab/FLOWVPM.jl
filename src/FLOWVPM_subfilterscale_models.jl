@@ -31,7 +31,8 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
         S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
 
-    zeta_sgm = zeta(r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
+    sigma_inv = 1.0 / get_sigma(source_particle)[]
+    zeta_sgm = zeta(r*sigma_inv) * sigma_inv * sigma_inv * sigma_inv
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
     get_SFS(target_particle)[1] += zeta_sgm*S1
