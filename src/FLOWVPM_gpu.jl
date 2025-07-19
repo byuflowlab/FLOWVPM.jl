@@ -170,7 +170,7 @@ end
     end
 
     qvals = copy(divs)
-    filter!(x -> x < qmax, qvals)
+    filter!(x -> x < q_max, qvals)
 
     popt = 1
     qopt = 1
