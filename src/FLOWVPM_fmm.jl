@@ -2,34 +2,68 @@
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
 const const4 = 1/(4*pi)
-function upper_bound(σ, ω, ε)
-    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
+const const5 = sqrt(2)
+
+function upper_bound_abs(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (const2 + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
 
-function residual(ρ_σ, σ, ω, ε)
+function upper_bound_rel()
+    return 10.0
+end
+
+function residual_abs(ρ_σ, σ, ω, ε)
     t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
-    t2 = erf(ρ_σ / sqrt(2))
-    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    t2 = erf(ρ_σ / const5)
+    t3 = const2 * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
     return t1 + t2 - t3 - 1.0
 end
 
-function solve_ρ_over_σ(σ, ω, ε)
-    if ω < 10*eps()
-        # ω = zero(ω)
-        return zero(eltype(ω))
-    end
-    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+function residual_rel(ρ_σ, ε)
+    return erf(ρ_σ / const5) - const2 * ρ_σ * exp(-ρ_σ * ρ_σ * 0.5) - 1 / (ε + 1)
 end
 
-function solve_ρ_over_σ(σ, ω, ε::Nothing)
-    return one(σ)
+function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
+    if autotune_reg_error
+        if ω < 10*eps()
+            # ω = zero(ω)
+            return zero(eltype(ω))
+        end
+        
+        if ε_rel<=eps(10.0)
+            return ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+        end
+        
+        if ε_abs<=eps(10.0)
+            return Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        end
+
+        ρ_over_σ_rel = ε_rel<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        ρ_over_σ_abs = ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+
+        return min(ρ_over_σ_rel, ρ_over_σ_abs)
+    end
+
+    return default_rho_over_sigma
 end
+
+# function solve_ρ_over_σ(σ, ω, ε)
+#     if ω < 10*eps()
+#         # ω = zero(ω)
+#         return zero(eltype(ω))
+#     end
+#     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+# end
+
+# function solve_ρ_over_σ(σ, ω, ε::Nothing)
+#     return one(σ)
+# end
 
 function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
     buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
@@ -51,6 +85,12 @@ end
 
 function fmm.has_vector_potential(system::ParticleField)
     return true
+end
+
+function fmm.get_previous_influence(system::ParticleField, i)
+    prev_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i)
+    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
 end
 
 fmm.get_n_bodies(system::ParticleField) = system.np
@@ -140,4 +180,4 @@ function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, de
     end
 end
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF

@@ -340,7 +340,7 @@ ReverseDiff.@grad_from_chainrules fmm.direct!(xyz_target::AbstractArray{<:Revers
                                                   source_index_count,
                                                   toggle_sfs)
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R <: ReverseDiff.TrackedReal, R2, V, R3}
 
     if pfield.transposed == false
         error("Time step pullback for non-transposed scheme not implemented yet! Please set transposed to true.")

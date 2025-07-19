@@ -8,19 +8,22 @@
   * Created   : Aug 2020
 =###############################################################################
 
-const nfields = 43
+const nfields = 46
 const useGPU_default = 0
 
 ################################################################################
 # FMM STRUCT
 ################################################################################
 """
-    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)`
+    `FMM(; p::Int=4, ncrit::Int=10, theta::Real=0.5, shrink_recenter::Bool=true,
+          relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-6,
+          autotune_p::Bool=true, autotune_ncrit::Bool=true,
+          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0)`
 
 Parameters for FMM solver.
 
 # Arguments
-* `p`       : Order of multipole expansion (number of terms).
+* `p`       : Order of multipole expansion.
 * `ncrit`   : Maximum number of particles per leaf.
 * `theta`   : Neighborhood criterion. This criterion defines the distance
                 where the far field starts. The criterion is that if θ*r < R1+R2
@@ -31,36 +34,36 @@ Parameters for FMM solver.
                 distance is less than double R1+R2; at θ=0.25, P2P is done on
                 cells that their distance is less than four times R1+R2; at
                 θ=0, P2P is done on all cells.
-* `phi`     : Regularizing neighborhood criterion. This criterion avoid
-                approximating interactions with the singular-FMM between
-                regularized particles that are sufficiently close to each other
-                across cell boundaries. Used together with the θ-criterion, P2P
-                is performed between two cells if φ < σ/dx, where σ is the
-                average smoothing radius in between all particles in both cells,
-                and dx is the distance between cell boundaries
-                ( dx = r-(R1+R2) ). This means that at φ = 1, P2P is done on
-                cells with boundaries closer than the average smoothing radius;
-                at φ = 0.5, P2P is done on cells closer than two times the
-                smoothing radius; at φ = 0.25, P2P is done on cells closer than
-                four times the smoothing radius.
+* `shrink_recenter` : If true, shrink and recenter multipole expansions to account for nonzero particle radius.
+* `relative_tolerance` : Relative error tolerance for FMM calls.
+* `absolute_tolerance` : Absolute error tolerance fallback for FMM calls in case relative tolerance becomes too small.
+* `autotune_p` : If true, automatically adjust p to optimize performance.
+* `autotune_ncrit` : If true, automatically adjust ncrit to optimize performance.
+* `autotune_reg_error` : If true, constrain regularization error in FMM calls.
+* `default_rho_over_sigma` : Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true).
+
 """
-mutable struct FMM{TEPS}
-  # Optional user inputs
+struct FMM
   p::Int64                        # Multipole expansion order
   ncrit::Int64                    # Max number of particles per leaf
-  theta::FLOAT_TYPE                  # Neighborhood criterion
-  nonzero_sigma::Bool
-  ε_tol::TEPS
+  theta::FLOAT_TYPE               # Neighborhood criterion
+  shrink_recenter::Bool           # If true, shrink/recenter expansions to account for nonzero radius particles
+  relative_tolerance::FLOAT_TYPE  # Relative error tolerance
+  absolute_tolerance::FLOAT_TYPE  # Absolute error tolerance fallback in case relative tolerance becomes too small
+  autotune_p::Bool                # If true, automatically adjust p to optimize performance
+  autotune_ncrit::Bool            # If true, automatically adjust ncrit to optimize performance
+  autotune_reg_error::Bool        # If true, automatically calculate rho/sigma to constrain regularization error
+  default_rho_over_sigma::FLOAT_TYPE # Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true)
 end
 
-function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=nothing)
-    return FMM{typeof(ε_tol)}(p, ncrit, theta, nonzero_sigma, ε_tol)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-6, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0)
+    return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma)
 end
 
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -82,7 +85,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
-    fmm::FMM{TEPS}                                    # Fast-multipole settings
+    fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
 
     # Internal memory for computation
@@ -98,7 +101,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         viscous::V=Inviscid(),
         np=0, nt=0, t=zero(R),
         transposed=true,
-        fmm::FMM{TEPS}=FMM(),
+        fmm::FMM=FMM(),
         M=zeros(R, 4),
         toggle_rbf=false, toggle_sfs=false,
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
@@ -106,7 +109,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
-    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR, TEPS}
+    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
     # particles = [zero(Particle{R}) for _ in 1:maxparticles]
@@ -117,7 +120,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     #     P.index[1] = i
     # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}(maxparticles, particles,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
@@ -223,6 +226,7 @@ const M_INDEX = 28:36
 const C_INDEX = 37:39
 const SFS_INDEX = 40:42
 const STATIC_INDEX = 43
+const U_PREV_INDEX = 44
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
@@ -240,6 +244,7 @@ get_M(P) = view(P, M_INDEX)
 get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
 get_static(P) = view(P, STATIC_INDEX)
+get_U_prev(P) = view(P, U_PREV_INDEX)
 
 is_static(P) = Bool(P[43])
 
@@ -269,6 +274,7 @@ get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
 get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
 get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
+get_U_prev(pfield::ParticleField, i::Int) = view(pfield.particles, U_PREV_INDEX, i)
 
 "Set functions for particles"
 function set_X(P, val) P[X_INDEX] .= val end
@@ -284,6 +290,7 @@ function set_C(P, val) P[C_INDEX] .= val end
 function set_static(P, val) P[STATIC_INDEX] = val end
 function set_PSE(P, val) P[PSE_INDEX] .= val end
 function set_SFS(P, val) P[SFS_INDEX] .= val end
+function set_U_prev(P, val) P[U_PREV_INDEX] = val end
 
 
 "Set functions for particles in ParticleField"
@@ -300,6 +307,8 @@ function set_C(pfield::ParticleField, i::Int, val) pfield.particles[C_INDEX, i] 
 function set_static(pfield::ParticleField, i::Int, val) pfield.particles[STATIC_INDEX, i] = val end
 function set_PSE(pfield::ParticleField, i::Int, val) pfield.particles[PSE_INDEX, i] .= val end
 function set_SFS(pfield::ParticleField, i::Int, val) pfield.particles[SFS_INDEX, i] .= val end
+function set_U_prev(pfield::ParticleField, i::Int, val) pfield.particles[U_PREV_INDEX, i] = val end
+
 
 """
     `isinviscid(pfield::ParticleField)`
@@ -391,11 +400,19 @@ end
 
 Steps the particle field in time by a step `dt`.
 """
-function nextstep(pfield::ParticleField, dt::Real; optargs...)
+function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs...)
 
     # Step in time
     if get_np(pfield)!=0
         pfield.integration(pfield, dt; optargs...)
+    end
+    
+    # update U_prev
+    if update_U_prev
+        for i in 1:get_np(pfield)
+            Ux, Uy, Uz = get_U(pfield, i)
+            set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+        end
     end
 
     # Updates time

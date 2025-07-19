@@ -484,7 +484,7 @@ the FMM neglecting the far field, saving the results under P.W.
 function zeta_fmm(pfield)
     fmm_options = pfield.fmm
     leaf_size=fmm_options.ncrit
-    shrink_recenter=fmm_options.nonzero_sigma
+    shrink_recenter=fmm_options.shrink_recenter
     multipole_acceptance = fmm_options.theta
     zeta = pfield.kernel.zeta
 

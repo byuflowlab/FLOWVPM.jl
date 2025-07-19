@@ -55,7 +55,7 @@ function run_leapfrog(x::Vector{TF}; useGPU=1) where TF
               transposed    = true,
               integration   = vpm.rungekutta3,
               UJ            = vpm.UJ_fmm,
-              fmm           = vpm.FMM(; p=4, ncrit=ncrit, theta=0.4, nonzero_sigma=true),
+              fmm           = vpm.FMM(; p=4, ncrit=ncrit, theta=0.4, shrink_recenter=true),
               useGPU        = useGPU
              )
 
