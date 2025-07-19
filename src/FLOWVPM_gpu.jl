@@ -54,7 +54,7 @@ end
 #     p_max = (p_max == 0) ? max_threads_per_block : p_max
 #     q_max = (q_max == 0) ? p_max : q_max
 
-#     divs_n = sort(divisors(nt))
+#     divs_n = sort(partial_divisors(nt; maxdiv=max_threads_per_block))
 #     p = 1
 #     q = 1
 #     r = 1  # r is returned only for consistency with the other get_launch_config()
@@ -134,38 +134,60 @@ function get_score(pin, qin;
     return score
 end
 
+"""
+    `partial_divisors(n; maxdiv=512)`
+
+Returns divisors of n till an upper bound of maxdiv
+"""
+function partial_divisors(n; maxdiv=512)
+    divs = []
+    sqrt_n = isqrt(n)
+    for i in 1:min(maxdiv, sqrt_n)
+        if n % i == 0
+            push!(divs, i)
+            q = div(n, i)
+            if i != q && q <= maxdiv
+                push!(divs, q)
+            end
+        end
+    end
+    return sort!(divs)
+end
+
 @inline function get_launch_config(nt;
         p_max=default_max_threads_per_block, q_max=8,
         max_threads_per_block=default_max_threads_per_block, multiple32=true,
         α=0.0, β=0.0)
 
-    divs = divisors(nt)
-    npad = 0
+    divs = partial_divisors(nt; maxdiv=max_threads_per_block)
 
     for k=1:10
         if length(divs) > 8
             break
         else
-            npad = k
-            divs = divisors(nt+k)
+            divs = partial_divisors(nt+k; maxdiv=max_threads_per_block)
         end
     end
-    divs = sort(divs)
+
+    qvals = copy(divs)
+    filter!(x -> x < qmax, qvals)
 
     popt = 1
     qopt = 1
     scoremax = 0
-    for p in divs, q in divs
+    for p in divs, q in qvals
         prod = p*q
-        if p <= p_max && q <= q_max && prod <= max_threads_per_block && p >= q
+        if prod <= max_threads_per_block && p >= q
             score = get_score(p, q; p_max=p_max, q_max=q_max, α=α, β=β)
             if score >= scoremax
-                popt, qopt = p, q
+                popt = p
+                qopt = q
                 scoremax = score
             end
         end
     end
-    # find closest pair multiple of 32
+
+    # Find closest pair multiple of 32
     if multiple32
         popt, qopt = closest_tuple_32(popt, qopt; productmax=max_threads_per_block)
     end
@@ -182,7 +204,8 @@ end
     q_max = (q_max == 0) ? max_threads_per_block : q_max
 
     # Find p
-    divs_nt = sort(divisors(nt))
+    divs_nt = partial_divisors(nt; maxdiv=max_threads_per_block)
+    sort!(divs_nt)
     p = 1
     q = 1
     ip = 1
@@ -196,7 +219,8 @@ end
     end
 
     # Find r
-    divs_ns = sort(divisors(ns))
+    divs_ns = partial_divisors(ns; maxdiv=max_threads_per_block)
+    sort!(divs_ns)
     r = 1
     ir = 1
     for (i, div) in enumerate(divs_ns)
