@@ -139,8 +139,8 @@ end
 
 Returns divisors of n till an upper bound of maxdiv
 """
-function partial_divisors(n; maxdiv=512)
-    divs = []
+function partial_divisors(n; maxdiv=default_max_threads_per_block)
+    divs = Vector{typeof(n)}()
     sqrt_n = isqrt(n)
     for i in 1:min(maxdiv, sqrt_n)
         if n % i == 0
