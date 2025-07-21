@@ -122,7 +122,7 @@ function closest_tuple_32(p, q;
 end
 
 # Returns heuristic score to obtain optimal launch configuration
-function get_score(pin, qin;
+@inline function get_score(pin, qin;
         p_max=default_max_threads_per_block, q_max=8, α=0.0, β=0.0)
 
     p = log(pin)/log(p_max)
