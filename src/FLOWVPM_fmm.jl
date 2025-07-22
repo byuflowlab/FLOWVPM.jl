@@ -100,6 +100,9 @@ function fmm.nearfield_device!(
         if mod(nt, 32) != 0
             t_padding = 32*cld(nt, 32) - nt
         end
+        ## Overriding for checking performance of new launch config selector
+        t_padding = 0
+
         t_size = nt + t_padding
 
         # Copy target particles from CPU to GPU
@@ -171,6 +174,8 @@ function fmm.nearfield_device!(
                 if mod(nt, 32) != 0
                     t_padding = 32*cld(nt, 32) - nt
                 end
+                # Overriding for checking new launch config selector
+                t_padding = 0
 
                 # Copy target particles from CPU to GPU
                 t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
