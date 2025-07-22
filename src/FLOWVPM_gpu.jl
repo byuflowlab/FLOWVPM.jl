@@ -162,7 +162,7 @@ end
     divs = partial_divisors(nt; maxdiv=max_threads_per_block)
 
     for k=1:10
-        if length(divs) > 8
+        if length(divs) >= 8
             break
         else
             divs = partial_divisors(nt+k; maxdiv=max_threads_per_block)
@@ -170,7 +170,7 @@ end
     end
 
     qvals = copy(divs)
-    filter!(x -> x < q_max, qvals)
+    filter!(x -> x <= q_max, qvals)
 
     popt = 1
     qopt = 1
