@@ -156,7 +156,7 @@ end
 
 @inline function get_launch_config(nt;
         p_max=default_max_threads_per_block, q_max=8,
-        max_threads_per_block=default_max_threads_per_block, multiple32=false,
+        max_threads_per_block=default_max_threads_per_block, multiple32=true,
         α=0.0, β=0.0)
 
     divs = partial_divisors(nt; maxdiv=max_threads_per_block)
