@@ -192,7 +192,7 @@ end
         popt, qopt = closest_tuple_32(popt, qopt; productmax=max_threads_per_block)
     end
 
-    ropt = 1 # For compatibility with the other get_launch_config function
+    ropt = popt # For compatibility with the other get_launch_config function
     return popt, qopt, ropt
 end
 
@@ -428,11 +428,11 @@ function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
         @inbounds tz = t[3i32, itarget]
     end
 
-    n_tiles::Int32 = rectangular ? CUDA.ceil(Int32, s_size / r) : CUDA.ceil(Int32, s_size / p)
+    n_tiles::Int32 = CUDA.ceil(Int32, s_size / r)
 
-    bodies_per_col::Int32 = rectangular ? CUDA.ceil(Int32, r / q) : CUDA.ceil(Int32, p / q)
+    bodies_per_col::Int32 = CUDA.ceil(Int32, r / q)
 
-    sh_mem_size::Int32 = rectangular ? r : p
+    sh_mem_size::Int32 = r
     sh_mem = CuDynamicSharedArray(eltype(t), (7, sh_mem_size))
 
     # Variable initialization

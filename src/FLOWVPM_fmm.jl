@@ -113,11 +113,14 @@ function fmm.nearfield_device!(
         # p is no. of targets in a block
         # q is no. of columns per block
         p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
+        p = Int32(p)
+        q = Int32(q)
+        r = Int32(r)
 
         # Compute no. of threads, no. of blocks and shared memory
-        threads = p*q
-        blocks = cld(t_size, p)
-        shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
+        threads::Int32 = p*q
+        blocks::Int32 = cld(t_size, p)
+        shmem::Int32 = Int32(sizeof(T)) * 7 * r
 
         # Check if GPU shared memory is sufficient
         dev = CUDA.device()
@@ -125,10 +128,17 @@ function fmm.nearfield_device!(
 
         # Compute interactions using GPU
         kernel = source_systems.kernel.g_dgdr
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
+        # CUDA.@time begin
+        # @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
+        # CUDA.@device_code_ptx
+        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, kernel)
+        # end
 
-        view(target_systems.particles, 10:12, 1:nt) .= Array(view(UJ_d, 1:3, :))
-        view(target_systems.particles, 16:24, 1:nt) .= Array(view(UJ_d, 4:12, :))
+        # Do I really need to sum this? Because, the fmm already sorts it by targets
+        @inbounds begin
+            view(target_systems.particles, 10:12, 1:nt) .+= Array(view(UJ_d, 1:3, 1:nt))
+            view(target_systems.particles, 16:24, 1:nt) .+= Array(view(UJ_d, 4:12, 1:nt))
+        end
 
         # Clear GPU array to avoid GC pressure
         CUDA.unsafe_free!(UJ_d)
