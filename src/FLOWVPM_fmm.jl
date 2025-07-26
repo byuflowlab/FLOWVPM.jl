@@ -93,33 +93,22 @@ function fmm.nearfield_device!(
         # Copy source particles from CPU to GPU
         s_d = CuArray{T}(view(source_systems.particles, 1:7, 1:ns))
 
-        # Pad target array to nearest multiple of 32 (warp size)
-        # for efficient p, q launch config
-        t_padding = 0
-        nt = ns
-        if mod(nt, 32) != 0
-            t_padding = 32*cld(nt, 32) - nt
-        end
-        ## Overriding for checking performance of new launch config selector
-        t_padding = 0
-
-        t_size = nt + t_padding
-
         # Copy target particles from CPU to GPU
         t_d = s_d
+        nt = ns
         UJ_d = CUDA.zeros(T, 12, nt)
 
         # Get p, q for optimal GPU kernel launch configuration
         # p is no. of targets in a block
         # q is no. of columns per block
-        p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
+        p, q, r = rectangular ? get_launch_config(Int32(nt), Int32(ns)) : get_launch_config(Int32(nt))
         p = Int32(p)
         q = Int32(q)
         r = Int32(r)
 
         # Compute no. of threads, no. of blocks and shared memory
         threads::Int32 = p*q
-        blocks::Int32 = cld(t_size, p)
+        blocks::Int32 = cld(nt, p)
         shmem::Int32 = Int32(sizeof(T)) * 7 * r
 
         # Check if GPU shared memory is sufficient
@@ -178,30 +167,21 @@ function fmm.nearfield_device!(
                 # Copy source particles from CPU to GPU
                 s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
 
-                # Pad target array to nearest multiple of 32 (warp size)
-                # for efficient p, q launch config
-                t_padding = 0
                 target_index_range = target_tree.branches[target_sources[ileaf_gpu][1]].bodies_index
                 nt = length(target_index_range)
-                if mod(nt, 32) != 0
-                    t_padding = 32*cld(nt, 32) - nt
-                end
-                # Overriding for checking new launch config selector
-                t_padding = 0
 
                 # Copy target particles from CPU to GPU
                 t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
                 UJ_d = CUDA.zeros(T, 12, nt)
-                t_size = nt + t_padding
 
                 # Get p, q for optimal GPU kernel launch configuration
                 # p is no. of targets in a block
                 # q is no. of columns per block
-                p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
+                p, q, r = rectangular ? get_launch_config(Int32(nt), Int32(ns)) : get_launch_config(Int32(nt))
 
                 # Compute no. of threads, no. of blocks and shared memory
                 threads = p*q
-                blocks = cld(t_size, p)
+                blocks = cld(nt, p)
                 shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
                 # Check if GPU shared memory is sufficient
@@ -307,18 +287,11 @@ function fmm.nearfield_device!(
             # Copy source particles from CPU to GPU
             s_d = CuArray{T}(view(source_systems.particles, 1:7, source_indices))
 
-            # Pad target array to nearest multiple of 32 (warp size)
-            # for efficient p, q launch config
-            t_padding = 0
             target_index_range = target_tree.branches[target_sources[ileaf_stream][1]].bodies_index
             nt = length(target_index_range)
-            if mod(nt, 32) != 0
-                t_padding = 32*cld(nt, 32) - nt
-            end
 
             # Copy target particles from CPU to GPU
             t_d = CuArray{T}(view(target_systems.particles, 1:7, target_index_range))
-            t_size = nt + t_padding
 
             # Initialize output array
             UJ_d = CUDA.zeros(T, 12, nt)
@@ -326,11 +299,11 @@ function fmm.nearfield_device!(
             # Get p, q for optimal GPU kernel launch configuration
             # p is no. of targets in a block
             # q is no. of columns per block
-            p, q, r = rectangular ? get_launch_config(Int32(t_size), Int32(ns)) : get_launch_config(Int32(t_size))
+            p, q, r = rectangular ? get_launch_config(Int32(nt), Int32(ns)) : get_launch_config(Int32(nt))
 
             # Compute no. of threads, no. of blocks and shared memory
             threads = p*q
-            blocks = cld(t_size, p)
+            blocks = cld(nt, p)
             shmem = rectangular ? Int32(sizeof(T)) * 7 * r : Int32(sizeof(T)) * 7 * p
 
             # Check if GPU shared memory is sufficient
