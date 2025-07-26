@@ -409,9 +409,8 @@ end
 # Sources divided into multiple columns and influence is computed by multiple threads
 # p - no. of targets in a block
 # q - no. of threads handling a single target (should be factor of r)
-# r - no. of sources in a tile
-# rectangular - true: rectangular tile, false: square tile
-function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
+# r - no. of sources in a tile (in the shared memory)
+function gpu_atomic_rectangular!(out, s, t, p, q, r, kernel)
     t_size::Int32 = size(t, 2)
     s_size::Int32 = size(s, 2)
 
@@ -450,43 +449,45 @@ function gpu_atomic!(out, s, t, p, q, r, rectangular, kernel)
     while itile <= n_tiles
         # Each thread will copy source coordinates corresponding to its index into shared memory. This will be done for each tile.
         shblk = 1i32
-        if rectangular
-            while shblk <= n_shblks
-                shmem_idx = ithread + (shblk-1i32)*blockDim().x
-                idim = 1i32
-                if shmem_idx <= r
-                    isource = shmem_idx + (itile-1i32)*r
-                    if isource <= s_size
-                        while idim <= 7i32
-                            @inbounds sh_mem[idim, shmem_idx] = s[idim, isource]
-                            idim += 1i32
-                        end
-                    else
-                        while idim <= 7i32
-                            @inbounds sh_mem[idim, shmem_idx] = zero(eltype(s))
-                            idim += 1i32
-                        end
-                    end
-                end
-                shblk += 1i32
-            end
-        else
-            if (col == 1i32)
-                isource = row + (itile-1i32)*p
-                idim = 1i32
+        # if rectangular
+        while shblk <= n_shblks
+            shmem_idx = ithread + (shblk-1i32)*blockDim().x
+            idim = 1i32
+            if shmem_idx <= r
+                isource = shmem_idx + (itile-1i32)*r
                 if isource <= s_size
                     while idim <= 7i32
-                        @inbounds sh_mem[idim, row] = s[idim, isource]
+                        @inbounds sh_mem[idim, shmem_idx] = s[idim, isource]
                         idim += 1i32
                     end
                 else
                     while idim <= 7i32
-                        @inbounds sh_mem[idim, row] = zero(eltype(s))
+                        @inbounds sh_mem[idim, shmem_idx] = zero(eltype(s))
                         idim += 1i32
                     end
                 end
             end
+            shblk += 1i32
         end
+        # This part has been commented out since combining the square and
+        # rectangular kernels into a single kernel slows down the code drastically
+        # else
+        #     if (col == 1i32)
+        #         isource = row + (itile-1i32)*p
+        #         idim = 1i32
+        #         if isource <= s_size
+        #             while idim <= 7i32
+        #                 @inbounds sh_mem[idim, row] = s[idim, isource]
+        #                 idim += 1i32
+        #             end
+        #         else
+        #             while idim <= 7i32
+        #                 @inbounds sh_mem[idim, row] = zero(eltype(s))
+        #                 idim += 1i32
+        #             end
+        #         end
+        #     end
+        # end
         sync_threads()
 
         # Each thread will compute the influence of all the sources in the shared memory on the target corresponding to its index

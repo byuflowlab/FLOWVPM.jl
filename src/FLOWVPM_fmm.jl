@@ -126,12 +126,14 @@ function fmm.nearfield_device!(
         dev = CUDA.device()
         check_shared_memory(dev, shmem)
 
-        # Compute interactions using GPU
+        # Compute interactions using CUDA.jl
         kernel = source_systems.kernel.g_dgdr
         # CUDA.@time begin
-        # @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic!(UJ_d, s_d, t_d, p, q, r, rectangular, kernel)
-        # CUDA.@device_code_ptx
-        @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, kernel)
+        if rectangular
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_rectangular!(UJ_d, s_d, t_d, p, q, r, kernel)
+        else
+            @cuda threads=threads blocks=blocks shmem=shmem gpu_atomic_square!(UJ_d, s_d, t_d, p, q, kernel)
+        end
         # end
 
         # Do I really need to sum this? Because, the fmm already sorts it by targets
