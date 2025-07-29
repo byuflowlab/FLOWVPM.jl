@@ -9,57 +9,190 @@
   * Created   : Sep 2021
 =###############################################################################
 
-
 """
     Model of vortex-stretching SFS contributions evaluated with direct
 particle-to-particle interactions. See 20210901 notebook for derivation.
 """
-function Estr_direct(pfield::ParticleField)
-  return Estr_direct(   iterator(pfield; include_static=true),
-                        iterator(pfield; include_static=true),
-                        pfield.kernel.zeta, pfield.transposed)
+@inline function Estr_direct(target_particle, source_particle, r, zeta, transposed)
+    GS = get_Gamma(source_particle)
+    JS = get_J(source_particle)
+    JT = get_J(target_particle)
+
+    # Stretching term
+    if transposed
+        # Transposed scheme (Γq⋅∇')(Up - Uq)
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[2] - JS[2])*GS[2]+(JT[3] - JS[3])*GS[3]
+        S2 = (JT[4] - JS[4])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[6] - JS[6])*GS[3]
+        S3 = (JT[7] - JS[7])*GS[1]+(JT[8] - JS[8])*GS[2]+(JT[9] - JS[9])*GS[3]
+    else
+        # Classic scheme (Γq⋅∇)(Up - Uq)
+        S1 = (JT[1] - JS[1])*GS[1]+(JT[4] - JS[4])*GS[2]+(JT[7] - JS[7])*GS[3]
+        S2 = (JT[2] - JS[2])*GS[1]+(JT[5] - JS[5])*GS[2]+(JT[8] - JS[8])*GS[3]
+        S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
+    end
+
+    sigma_inv = 1.0 / get_sigma(source_particle)[]
+    zeta_sgm = zeta(r*sigma_inv) * sigma_inv * sigma_inv * sigma_inv
+
+    # Add ζ_σ (Γq⋅∇)(Up - Uq)
+    get_SFS(target_particle)[1] += zeta_sgm*S1
+    get_SFS(target_particle)[2] += zeta_sgm*S2
+    get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
-function Estr_direct(sources, targets, zeta, transposed)
+function Estr_direct!(pfield)
+    if Threads.nthreads() > 1
+        Estr_direct_multithreaded(pfield)
+    else
+        Estr_direct_singlethreaded(pfield)
+    end
+end
 
-    for p in targets
-        for q in sources
+function Estr_direct_multithreaded(pfield::ParticleField)
+    n_per_thread, rem = divrem(pfield.np, Threads.nthreads())
+    n = n_per_thread + (rem > 0)
+    assignments = 1:n:pfield.np
 
-            # Stretching term
-            if transposed
-                # Transposed scheme (Γq⋅∇')(Up - Uq)
-                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[2,1] - q.J[2,1])*q.Gamma[2]+(p.J[3,1] - q.J[3,1])*q.Gamma[3]
-                S2 = (p.J[1,2] - q.J[1,2])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[3,2] - q.J[3,2])*q.Gamma[3]
-                S3 = (p.J[1,3] - q.J[1,3])*q.Gamma[1]+(p.J[2,3] - q.J[2,3])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
-            else
-                # Classic scheme (Γq⋅∇)(Up - Uq)
-                S1 = (p.J[1,1] - q.J[1,1])*q.Gamma[1]+(p.J[1,2] - q.J[1,2])*q.Gamma[2]+(p.J[1,3] - q.J[1,3])*q.Gamma[3]
-                S2 = (p.J[2,1] - q.J[2,1])*q.Gamma[1]+(p.J[2,2] - q.J[2,2])*q.Gamma[2]+(p.J[2,3] - q.J[2,3])*q.Gamma[3]
-                S3 = (p.J[3,1] - q.J[3,1])*q.Gamma[1]+(p.J[3,2] - q.J[3,2])*q.Gamma[2]+(p.J[3,3] - q.J[3,3])*q.Gamma[3]
+    Threads.@threads for i_assignment in eachindex(assignments)
+        start_idx = assignments[i_assignment]
+        end_idx = min(start_idx + n - 1, pfield.np)
+
+        # Calculate SFS contributions for the assigned particles
+        for i_target in start_idx:end_idx
+            target_particle = get_particle(pfield, i_target)
+            is_static(target_particle) && continue
+            tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+            for source_particle in iterator(pfield)
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+                dx, dy, dz = sx - tx, sy - ty, sz - tz
+                r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
             end
-
-            dX1 = p.X[1] - q.X[1]
-            dX2 = p.X[2] - q.X[2]
-            dX3 = p.X[3] - q.X[3]
-            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
-
-            zeta_sgm = zeta(r/q.sigma[1]) / q.sigma[1]^3
-
-            # Add ζ_σ (Γq⋅∇)(Up - Uq)
-            add_SFS1(p, zeta_sgm*S1)
-            add_SFS2(p, zeta_sgm*S2)
-            add_SFS3(p, zeta_sgm*S3)
         end
     end
 end
 
+function Estr_direct_singlethreaded(pfield::ParticleField)
+    for target_particle in iterator(pfield)
+        is_static(target_particle) && continue
+        tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+        for source_particle in iterator(pfield)
+            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+            dx, dy, dz = sx - tx, sy - ty, sz - tz
+            r = sqrt(dx * dx + dy * dy + dz * dz)
+
+            Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
+        end
+    end
+end
+
+function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+    if Threads.nthreads() > 1
+        Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    else
+        Estr_fmm_singlethread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    end
+end
+
+function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+
+    # total number of interactions
+    n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
+    n_threads = Threads.nthreads()
+
+    # interactions per thread
+    n_per_thread, rem = divrem(n_interactions, n_threads)
+    rem > 0 && (n_per_thread += 1)
+    n_per_thread < 100 && (n_per_thread = 100)
+
+    # create assignments
+    assignments = Vector{UnitRange{Int64}}(undef,n_threads)
+    for i in eachindex(assignments)
+        assignments[i] = 1:0
+    end
+    FastMultipole.make_direct_assignments!(assignments, 1, target_tree.branches, 1, source_tree.branches, direct_list, n_threads, n_per_thread, nothing)
+
+    Threads.@threads for i_task in eachindex(assignments)
+        assignment = assignments[i_task]
+
+        # evaluate
+        for i_interaction in assignment
+            i_target, i_source = direct_list[i_interaction]
+            
+            target_index = target_tree.branches[i_target].bodies_index[1]
+            source_index = source_tree.branches[i_source].bodies_index[1]
+
+            # loop over source particles
+            for i_source in source_index
+                source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+
+                # source position
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+                # loop over target particles
+                for i_target in target_index
+                    target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+
+                    # target position
+                    tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+                    # separation distance
+                    dx, dy, dz = sx - tx, sy - ty, sz - tz
+                    r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                    # add Estr contribution
+                    Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+
+                end
+            end
+        end
+    end
+end
+
+function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+
+    for (i_target, i_source) in direct_list
+    
+        target_index = target_tree.branches[i_target].bodies_index[1]
+        source_index = source_tree.branches[i_source].bodies_index[1]
+
+        # loop over source particles
+        for i_source in source_index
+            source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+
+            # source position
+            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+            # loop over target particles
+            for i_target in target_index
+                target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+
+                # target position
+                tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+                # separation distance
+                dx, dy, dz = sx - tx, sy - ty, sz - tz
+                r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                # add Estr contribution
+                Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+
+            end
+        end
+    end
+end
 
 """
     Model of vortex-stretching SFS contributions evaluated with fast multipole
 method. See 20210901 notebook for derivation.
 """
 function Estr_fmm(pfield::ParticleField; reset_sfs=true, optargs...)
-    call_FLOWExaFMM(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs=reset_sfs,
+    UJ_fmm(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs,
                             transposed_sfs=pfield.transposed, optargs...)
 end
 

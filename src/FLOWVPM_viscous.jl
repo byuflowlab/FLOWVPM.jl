@@ -41,7 +41,7 @@ struct Inviscid{R} <: ViscousScheme{R}
     Inviscid{R}(; nu=zero(R)) where {R} = new(nu)
 end
 
-Inviscid() = Inviscid{RealFMM}()
+Inviscid() = Inviscid{FLOAT_TYPE}()
 
 """
     `isinviscid(scheme::ViscousScheme)`
@@ -57,11 +57,11 @@ viscousdiffusion(pfield, scheme::Inviscid, dt; optargs...) = nothing
 ################################################################################
 # CORE SPEADING SCHEME TYPE
 ################################################################################
-mutable struct CoreSpreading{R} <: ViscousScheme{R}
+mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     # User inputs
     nu::R                                 # Kinematic viscosity
     sgm0::R                               # Core size after reset
-    zeta::Function                        # Basis function evaluation method
+    zeta::Tzeta                        # Basis function evaluation method
 
     # Optional inputs
     beta::R                               # Maximum core size growth σ/σ_0
@@ -74,7 +74,7 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
 
     # Internal properties
     t_sgm::R                              # Time since last core size reset
-    rbf::Function                         # RBF function
+    rbf::Trbf                         # RBF function
     rr0s::Array{R, 1}                     # Initial field residuals
     rrs::Array{R, 1}                      # Current field residuals
     prev_rrs::Array{R, 1}                 # Previous field residuals
@@ -83,17 +83,17 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
     betas::Array{R, 1}                    # Beta coefficients
     flags::Array{Bool, 1}                 # Convergence flags
 
-    CoreSpreading{R}(
-                        nu, sgm0, zeta;
+    CoreSpreading{R,Tzeta,Trbf}(
+                        nu, sgm0, zeta::Tzeta;
                         beta=R(1.5),
                         itmax=R(15), tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
-                        rbf=rbf_conjugategradient,
+                        rbf::Trbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
                         pAps=zeros(R, 3), alphas=zeros(R, 3), betas=zeros(R, 3),
                         flags=zeros(Bool, 3)
-                    ) where {R} = new(
+                    ) where {R,Tzeta,Trbf} = new(
                         nu, sgm0, zeta,
                         beta,
                         itmax, tol,
@@ -106,8 +106,8 @@ mutable struct CoreSpreading{R} <: ViscousScheme{R}
                     )
 end
 
-CoreSpreading(nu, sgm0, args...; optargs...
-                    ) = CoreSpreading{RealFMM}(RealFMM(nu), RealFMM(sgm0), args...; optargs...)
+CoreSpreading(nu, sgm0, zeta::Tzeta; rbf::Trbf=rbf_conjugategradient, optargs...
+                    ) where {Tzeta,Trbf} = CoreSpreading{FLOAT_TYPE,Tzeta,Trbf}(FLOAT_TYPE(nu), FLOAT_TYPE(sgm0), zeta; rbf, optargs...)
 
 """
    `iscorespreading(scheme::ViscousScheme)`
@@ -115,7 +115,7 @@ CoreSpreading(nu, sgm0, args...; optargs...
 Returns true if viscous scheme is core spreading.
 """
 iscorespreading(scheme::ViscousScheme
-                            ) = typeof(scheme).name == CoreSpreading.body.name
+                            ) = typeof(scheme) <: CoreSpreading
 
 
 
@@ -128,7 +128,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Core spreading
         for p in iterator(pfield)
-            p.sigma[1] = sqrt(p.sigma[1]^2 + 2*scheme.nu*dt)
+            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
         end
 
         proceed = true
@@ -140,8 +140,8 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         for p in iterator(pfield)
             # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
             # Should I be solving dsigmadt = nu/sigma instead?
-            p.M[1, 3] = aux1*p.M[1, 3] + dt*2*scheme.nu
-            p.sigma[1] = sqrt(p.sigma[1]^2 + aux2*p.M[1, 3])
+            get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
+            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
         end
 
         # Update things in the last RK inner iteration
@@ -149,10 +149,10 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
             proceed = true
         end
 
-    # ------------------ DEFAULT -----------------------------------------------
+        # ------------------ DEFAULT -----------------------------------------------
     else
         error("Time integration scheme $(pfield.integration) not"*
-                        " implemented in core spreading viscous scheme yet!")
+              " implemented in core spreading viscous scheme yet!")
     end
 
     if proceed
@@ -170,16 +170,16 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Reset core sizes if cores have overgrown
         if beta_cur >= scheme.beta
-            # Calculate approximated vorticity (stored under P.Jexa[1:3])
+            # Calculate approximated vorticity (stored under P.J[1:3])
             scheme.zeta(pfield)
 
             for p in iterator(pfield)
-                # Use approximated vorticity as target vorticity (stored under P.Jexa[7:9])
+                # Use approximated vorticity as target vorticity (stored under P.J[7:9])
                 for i in 1:3
-                    p.M[i+6] = p.Jexa[i]
+                    get_M(p)[6+i] = get_J(p)[i]
                 end
                 # Reset core sizes
-                p.sigma[1] = scheme.sgm0
+                get_sigma(p)[] = scheme.sgm0
             end
 
             # Calculate new strengths through RBF to preserve original vorticity
@@ -213,7 +213,7 @@ mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
 end
 
 ParticleStrengthExchange(nu, args...; optargs...
-                    ) = ParticleStrengthExchange{RealFMM}(RealFMM(nu), args...; optargs...)
+                        ) = ParticleStrengthExchange{FLOAT_TYPE}(FLOAT_TYPE(nu), args...; optargs...)
 
 function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
 
@@ -225,7 +225,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     # Recalculate particle volume from current particle smoothing
     if scheme.recalculate_vols
         for p in iterator(pfield)
-            p.vol[1] = 4/3*pi*p.sigma[1]^3
+            get_vol(p)[] = 4/3*pi*get_sigma(p)[]^3
         end
     end
 
@@ -235,25 +235,25 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p.Gamma[i] += dt * scheme.nu*p.PSE[i]
+                get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
             end
         end
 
-    # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
+        # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
     elseif pfield.integration == rungekutta3
 
         # Update Gamma
         for p in iterator(pfield)
             for i in 1:3
-                p.M[i, 2] += dt * scheme.nu*p.PSE[i]
-                p.Gamma[i] += aux2 * dt * scheme.nu*p.PSE[i]
+                get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
+                get_Gamma(p)[i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
             end
         end
 
-    # ------------------ DEFAULT -----------------------------------------------
+        # ------------------ DEFAULT -----------------------------------------------
     else
         error("Time integration scheme $(pfield.integration) not"*
-                        " implemented in PSE viscous scheme yet!")
+              " implemented in PSE viscous scheme yet!")
     end
 
 end
@@ -276,18 +276,18 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     #= NOTES
     * The target vorticity (`omega_targ`) is expected to be stored in P.M[7:9]
-        (give it the basis-approximated vorticity instead of the UJ-calculated
-        one or the method will diverge).
-    * The basis function evaluation (`omega_cur`) is stored in Jexa[1:3] (it
-        used to be p).
+    (give it the basis-approximated vorticity instead of the UJ-calculated
+    one or the method will diverge).
+    * The basis function evaluation (`omega_cur`) is stored in J[1:3] (it
+    used to be p).
     * The solution is built under P.M[1:3] (it used to be x).
     * The current residual is stored under P.M[4:6] (it used to be r).
     =#
 
     if cs.debug
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
-                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1).M[7:9], digits=8))\n")
+                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1)[4:6], digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1)[34:36], digits=8))\n")
     end
 
     # Initialize memory
@@ -298,25 +298,25 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     for P in iterator(pfield)
         for i in 1:3
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            P.M[i] = P.M[i+6]*P.vol[1]
+            get_M(P)[i] = get_M(P)[6+i]*get_vol(P)[]
             # Sets initial guess as Gamma for vorticity evaluation
-            P.Gamma[i] = P.M[i]
+            get_Gamma(P)[i] = get_M(P)[i]
         end
     end
 
-    # Current vorticity: Evaluate basis function storing results under P.Jexa[1:3]
+    # Current vorticity: Evaluate basis function storing results under P.J[1:3]
     cs.zeta(pfield)
 
     for P in iterator(pfield)
         for i in 1:3
             # Residual of initial guess (r0=b-Ax0)
-            P.M[i+3] = P.M[i+6] - P.Jexa[i]    # r = omega_targ - omega_cur
+            get_M(P)[3+i] = get_M(P)[6+i] - get_J(P)[i]    # r = omega_targ - omega_cur
 
             # Update coefficients
-            P.Gamma[i] = P.M[i+3]             # p0 = r0
+            get_Gamma(P)[i] = get_M(P)[3+i]             # p0 = r0
 
             # Initial field residual
-            cs.rr0s[i] += P.M[i+3]^2
+            cs.rr0s[i] += (get_M(P)[3+i])^2
         end
     end
 
@@ -338,12 +338,12 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.pAps .= 0
         for P in iterator(pfield)
             for i in 1:3
-                cs.pAps[i] += P.Gamma[i] * P.Jexa[i]
+                cs.pAps[i] += get_Gamma(P)[i] .* get_J(P)[i]
             end
         end
 
-        for i in 1:3                          # alpha = rr./pAp
-            cs.alphas[i] = cs.rrs[i]/cs.pAps[i] * cs.flags[i]
+        for i in 1:3
+            cs.alphas[i] = cs.rrs[i] / cs.pAps[i] * cs.flags[i]
             # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
         end
 
@@ -352,9 +352,9 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P.M[i] += cs.alphas[i]*P.Gamma[i]   # x = x + alpha*p
-                P.M[i+3] -= cs.alphas[i].*P.Jexa[i] # r = r - alpha*Ap
-                cs.rrs[i] += P.M[i+3]^2             # Update field residual
+                get_M(P)[i] += cs.alphas[i]*get_Gamma(P)[i]   # x = x + alpha*p
+                get_M(P)[i+3] -= cs.alphas[i].*get_J(P)[i] # r = r - alpha*Ap
+                cs.rrs[i] += get_M(P)[i+3]^2             # Update field residual
             end
         end
 
@@ -370,7 +370,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         for P in iterator(pfield)
             for i in 1:3
-                P.Gamma[i] = P.M[i+3] + cs.betas[i]*P.Gamma[i]
+                get_Gamma(P)[i] = get_M(P)[i+3] + cs.betas[i]*get_Gamma(P)[i]
             end
         end
 
@@ -382,12 +382,12 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         if it==cs.itmax && true in cs.flags
             if cs.iterror
                 error("Maximum number of iterations $(cs.itmax) reached before"*
-                        " convergence."*
-                        " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)")
+                      " convergence."*
+                      " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)")
             elseif cs.verbose
                 @warn("Maximum number of iterations $(cs.itmax) reached before"*
-                        " convergence."*
-                        " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)")
+                      " convergence."*
+                      " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)")
             else
                 nothing
             end
@@ -398,8 +398,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
                     "\t"^(cs.v_lvl+1)*"Iteration $(it) / $(cs.itmax) max\n"*
                     "\t"^(cs.v_lvl+2)*"Error: $(sqrt.(cs.rrs ./ cs.rr0s))\n"*
                     "\t"^(cs.v_lvl+2)*"Flags: $(cs.flags)\n"*
-                    "\t"^(cs.v_lvl+2)*"Sol Particle 1: $(round.(get_particle(pfield, 1).M[1:3], digits=8))"
-                    )
+                    "\t"^(cs.v_lvl+2)*"Sol Particle 1: $(round.(get_particle(pfield, 1)[28:30], digits=8))"
+                   )
         end
 
     end
@@ -407,7 +407,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Save final solution
     for P in iterator(pfield)
         for i in 1:3
-            P.Gamma[i] = P.M[i]
+            get_Gamma(P)[i] = get_M(P)[i]
         end
     end
 
@@ -415,16 +415,16 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         # Evaluate current vorticity
         cs.zeta(pfield)
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_particle(pfield, 1).Gamma, digits=8))\n"*
-                "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_particle(pfield, 1).Jexa[1:3], digits=8))")
+                "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_Gamma(pfield, 1), digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_J(pfield, 1)[1:3], digits=8))")
         println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
 
         rms_ini, rms_resend = zeros(3), zeros(3)
 
         for P in iterator(pfield)
             for i in 1:3
-                rms_ini[i] += P.M[i+6]^2
-                rms_resend[i] += (P.Jexa[i] - P.M[i+6])^2
+                rms_ini[i] += get_M(P)[i+6]^2
+                rms_resend[i] += (get_J(P)[i] - get_M(P)[i+6])^2
             end
         end
         for i in 1:3
@@ -444,11 +444,11 @@ end
   `zeta_direct(pfield)`
 
 Evaluates the basis function that the field exerts on itself through direct
-particle-to-particle interactions, saving the results under P.Jexa[1:3].
+particle-to-particle interactions, saving the results under P.J[1:3].
 """
 function zeta_direct(pfield)
     for P in iterator(pfield; include_static=true)
-        P.Jexa[1:3] .= 0
+        get_J(P)[1:3] .= 0
     end
     return zeta_direct( iterator(pfield; include_static=true),
                         iterator(pfield; include_static=true),
@@ -460,16 +460,16 @@ function zeta_direct(sources, targets, zeta::Function)
     for Pi in targets
         for Pj in sources
 
-            dX1 = Pi.X[1] - Pj.X[1]
-            dX2 = Pi.X[2] - Pj.X[2]
-            dX3 = Pi.X[3] - Pj.X[3]
+            dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+            dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+            dX3 = get_X(Pi)[3] - get_X(Pj)[3]
             r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
 
-            zeta_sgm = 1/Pj.sigma[1]^3*zeta(r/Pj.sigma[1])
+            zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
 
-            Pi.Jexa[1] += Pj.Gamma[1]*zeta_sgm
-            Pi.Jexa[2] += Pj.Gamma[2]*zeta_sgm
-            Pi.Jexa[3] += Pj.Gamma[3]*zeta_sgm
+            get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+            get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+            get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
 
         end
     end
@@ -479,9 +479,43 @@ end
   `zeta_fmm(pfield)`
 
 Evaluates the basis function that the field exerts on itself through
-the FMM neglecting the far field, saving the results under P.Jexa[1:3].
+the FMM neglecting the far field, saving the results under P.W.
 """
 function zeta_fmm(pfield)
-    call_FLOWExaFMM(pfield; rbf=true)
+    fmm_options = pfield.fmm
+    leaf_size=fmm_options.ncrit
+    shrink_recenter=fmm_options.shrink_recenter
+    multipole_acceptance = fmm_options.theta
+    zeta = pfield.kernel.zeta
+
+    # create tree
+    tree = FastMultipole.Tree((pfield,); leaf_size, shrink_recenter)
+    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_acceptance, false, true, true)
+    sort_index = tree.sort_index_list[1]
+
+    # loop over direct list
+    for (i_target, i_source) in direct_list
+        target_branch = tree.branches[i_target]
+        source_branch = tree.branches[i_source]
+        for i_source_particle in source_branch.bodies_index[1]
+            Pi = get_particle(pfield, sort_index[i_source_particle])
+
+            for i_target_particle in target_branch.bodies_index[1]
+                Pj = get_particle(pfield, sort_index[i_target_particle])
+
+                dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+                dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+                dX3 = get_X(Pi)[3] - get_X(Pj)[3]
+                r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+                zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
+
+                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+            end
+        end
+    end
 end
+
 ################################################################################

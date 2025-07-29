@@ -4,26 +4,34 @@ authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
 version = "3.0.2"
 
 [deps]
-HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
-JLD = "4138dd39-2aa7-5051-a626-17a0bb65d9c8"
-SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
-FLOWExaFMM = "a07d1f4e-0e34-4d8b-bfef-e5b961477d34"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+EllipticFunctions = "6a4e32cb-b31a-4929-85af-fb29d9a80738"
+FastMultipole = "ce07d0d3-2b9f-49ba-89eb-12c800257c85"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
+WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
+FastMultipole = "2.0.0"
 julia = "1.6"
-FLOWExaFMM = "2.1"
 
 [extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
-Cubature = "667455a9-e2ce-5579-9412-b964f529a492"
-Elliptic = "b305315f-e792-5b7a-8f41-49f472929428"
-LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
+EllipticFunctions = "6a4e32cb-b31a-4929-85af-fb29d9a80738"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+HCubature = "19dc6840-f33b-545b-b366-655c7e3ffd49"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Roots", "Cubature", "Elliptic", "LinearAlgebra", "DifferentialEquations", "ForwardDiff"]
+test = ["Test", "Roots", "HCubature", "EllipticFunctions", "LinearAlgebra", "DifferentialEquations", "ForwardDiff"]
