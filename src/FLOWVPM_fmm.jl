@@ -103,11 +103,8 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 
     for i_source_particle in source_index
 
-        # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
         gamma_x, gamma_y, gamma_z = fmm.get_strength(source_buffer, source_system, i_source_particle)
-        # source_x, source_y, source_z = get_X(source_particle)
         source_x, source_y, source_z = fmm.get_position(source_buffer, i_source_particle)
-        # sigma = get_sigma(source_particle)[]
         sigma = source_buffer[8, i_source_particle]
 
         for j_target in target_index
@@ -159,8 +156,6 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du1x3 = aux * crss1 * dz - aux2 * gamma_y
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
-                    # @show aux, aux2, crss1, crss2, crss3, dx, dy, dz
-                    # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
                     fmm.set_hessian!(target_buffer, j_target, val)
