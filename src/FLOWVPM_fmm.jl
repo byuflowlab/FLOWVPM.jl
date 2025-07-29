@@ -2,33 +2,68 @@
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
 const const4 = 1/(4*pi)
-function upper_bound(σ, ω, ε)
-    return ω / (8 * pi * ε * σ) * (sqrt(2/pi) + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
+const const5 = sqrt(2)
+
+function upper_bound_abs(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (const2 + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
 
-function residual(ρ_σ, σ, ω, ε)
+function upper_bound_rel()
+    return 10.0
+end
+
+function residual_abs(ρ_σ, σ, ω, ε)
     t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
-    t2 = erf(ρ_σ / sqrt(2))
-    t3 = sqrt(2/pi) * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    t2 = erf(ρ_σ / const5)
+    t3 = const2 * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
     return t1 + t2 - t3 - 1.0
 end
 
-function solve_ρ_over_σ(σ, ω, ε)
-    if ω < 10*eps()
-        return zero(eltype(ω))
-    end
-    return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+function residual_rel(ρ_σ, ε)
+    return erf(ρ_σ / const5) - const2 * ρ_σ * exp(-ρ_σ * ρ_σ * 0.5) - 1 / (ε + 1)
 end
 
-function solve_ρ_over_σ(σ, ω, ε::Nothing)
-    return one(σ)
+function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
+    if autotune_reg_error
+        if ω < 10*eps()
+            # ω = zero(ω)
+            return zero(eltype(ω))
+        end
+        
+        if ε_rel<=eps(10.0)
+            return ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+        end
+        
+        if ε_abs<=eps(10.0)
+            return Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        end
+
+        ρ_over_σ_rel = ε_rel<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        ρ_over_σ_abs = ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+
+        return min(ρ_over_σ_rel, ρ_over_σ_abs)
+    end
+
+    return default_rho_over_sigma
 end
+
+# function solve_ρ_over_σ(σ, ω, ε)
+#     if ω < 10*eps()
+#         # ω = zero(ω)
+#         return zero(eltype(ω))
+#     end
+#     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+# end
+
+# function solve_ρ_over_σ(σ, ω, ε::Nothing)
+#     return one(σ)
+# end
 
 function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
     buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
@@ -48,6 +83,16 @@ function fmm.strength_dims(system::ParticleField)
     return 3
 end
 
+function fmm.has_vector_potential(system::ParticleField)
+    return true
+end
+
+function fmm.get_previous_influence(system::ParticleField, i)
+    prev_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i)
+    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+end
+
 fmm.get_n_bodies(system::ParticleField) = system.np
 
 function fmm.body_to_multipole!(system::ParticleField, args...)
@@ -58,11 +103,8 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 
     for i_source_particle in source_index
 
-        # gamma_x, gamma_y, gamma_z = get_Gamma(source_particle)
         gamma_x, gamma_y, gamma_z = fmm.get_strength(source_buffer, source_system, i_source_particle)
-        # source_x, source_y, source_z = get_X(source_particle)
         source_x, source_y, source_z = fmm.get_position(source_buffer, i_source_particle)
-        # sigma = get_sigma(source_particle)[]
         sigma = source_buffer[8, i_source_particle]
 
         for j_target in target_index
@@ -90,8 +132,6 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
-                    # get_U(target_particle) .+= Ux, Uy, Uz
-                    Ux0, Uy0, Uz0 = fmm.get_gradient(target_buffer, j_target)
 
                     val = SVector{3}(Ux, Uy, Uz)
                     fmm.set_gradient!(target_buffer, j_target, val)
@@ -116,8 +156,6 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du1x3 = aux * crss1 * dz - aux2 * gamma_y
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
-                    # @show aux, aux2, crss1, crss2, crss3, dx, dy, dz
-                    # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
                     fmm.set_hessian!(target_buffer, j_target, val)
@@ -137,4 +175,4 @@ function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, de
     end
 end
 
-Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
