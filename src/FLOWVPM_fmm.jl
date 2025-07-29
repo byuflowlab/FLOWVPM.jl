@@ -1,52 +1,178 @@
-#=##############################################################################
-# DESCRIPTION
-    Fast-multipole parameters.
-
-# AUTHORSHIP
-  * Author    : Eduardo J Alvarez
-  * Email     : Edo.AlvarezR@gmail.com
-  * Created   : Aug 2020
-=###############################################################################
-
 ################################################################################
-# FMM STRUCT
+# FMM COMPATIBILITY FUNCTION
 ################################################################################
-"""
-    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)`
+const const4 = 1/(4*pi)
+const const5 = sqrt(2)
 
-Parameters for FMM solver.
-
-# Arguments
-* `p`       : Order of multipole expansion (number of terms).
-* `ncrit`   : Maximum number of particles per leaf.
-* `theta`   : Neighborhood criterion. This criterion defines the distance
-                where the far field starts. The criterion is that if θ*r < R1+R2
-                the interaction between two cells is resolved through P2P, where
-                r is the distance between cell centers, and R1 and R2 are each
-                cell radius. This means that at θ=1, P2P is done only on cells
-                that have overlap; at θ=0.5, P2P is done on cells that their
-                distance is less than double R1+R2; at θ=0.25, P2P is done on
-                cells that their distance is less than four times R1+R2; at
-                θ=0, P2P is done on cells all cells.
-* `phi`     : Regularizing neighborhood criterion. This criterion avoid
-                approximating interactions with the singular-FMM between
-                regularized particles that are sufficiently close to each other
-                across cell boundaries. Used together with the θ-criterion, P2P
-                is performed between two cells if φ < σ/dx, where σ is the
-                average smoothing radius in between all particles in both cells,
-                and dx is the distance between cell boundaries
-                ( dx = r-(R1+R2) ). This means that at φ = 1, P2P is done on
-                cells with boundaries closer than the average smoothing radius;
-                at φ = 0.5, P2P is done on cells closer than two times the
-                smoothing radius; at φ = 0.25, P2P is done on cells closer than
-                four times the smoothing radius.
-"""
-mutable struct FMM
-  # Optional user inputs
-  p::Int32                        # Multipole expansion order
-  ncrit::Int32                    # Max number of particles per leaf
-  theta::RealFMM                  # Neighborhood criterion
-  phi::RealFMM                    # Regularizing neighborhood criterion
-
-  FMM(; p=4, ncrit=50, theta=0.4, phi=1/3) = new(p, ncrit, theta, phi)
+function upper_bound_abs(σ, ω, ε)
+    return ω / (8 * pi * ε * σ) * (const2 + sqrt(2/(pi*σ*σ) + 16 * pi * ε / ω))
 end
+
+function upper_bound_rel()
+    return 10.0
+end
+
+function residual_abs(ρ_σ, σ, ω, ε)
+    t1 = 4*pi*σ*σ*ε*ρ_σ*ρ_σ / ω
+    t2 = erf(ρ_σ / const5)
+    t3 = const2 * ρ_σ * exp(-ρ_σ*ρ_σ*0.5)
+    return t1 + t2 - t3 - 1.0
+end
+
+function residual_rel(ρ_σ, ε)
+    return erf(ρ_σ / const5) - const2 * ρ_σ * exp(-ρ_σ * ρ_σ * 0.5) - 1 / (ε + 1)
+end
+
+function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
+    if autotune_reg_error
+        if ω < 10*eps()
+            # ω = zero(ω)
+            return zero(eltype(ω))
+        end
+        
+        if ε_rel<=eps(10.0)
+            return ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+        end
+        
+        if ε_abs<=eps(10.0)
+            return Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        end
+
+        ρ_over_σ_rel = ε_rel<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        ρ_over_σ_abs = ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+
+        return min(ρ_over_σ_rel, ρ_over_σ_abs)
+    end
+
+    return default_rho_over_sigma
+end
+
+# function solve_ρ_over_σ(σ, ω, ε)
+#     if ω < 10*eps()
+#         # ω = zero(ω)
+#         return zero(eltype(ω))
+#     end
+#     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
+# end
+
+# function solve_ρ_over_σ(σ, ω, ε::Nothing)
+#     return one(σ)
+# end
+
+function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
+    σ = system.particles[SIGMA_INDEX, i_body]
+    Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
+    Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
+    buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
+    buffer[4, i_buffer] = ρ_σ * σ
+    buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
+    buffer[8, i_buffer] = σ
+end
+
+function fmm.data_per_body(system::ParticleField)
+    return 8
+end
+#--- getters ---#
+
+function fmm.get_position(system::ParticleField, i)
+    return SVector{3}(system.particles[j,i] for j in X_INDEX)
+end
+
+function fmm.strength_dims(system::ParticleField)
+    return 3
+end
+
+function fmm.has_vector_potential(system::ParticleField)
+    return true
+end
+
+function fmm.get_previous_influence(system::ParticleField, i)
+    prev_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i)
+    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+end
+
+fmm.get_n_bodies(system::ParticleField) = system.np
+
+function fmm.body_to_multipole!(system::ParticleField, args...)
+    return fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
+end
+
+function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS}
+
+    for i_source_particle in source_index
+
+        gamma_x, gamma_y, gamma_z = fmm.get_strength(source_buffer, source_system, i_source_particle)
+        source_x, source_y, source_z = fmm.get_position(source_buffer, i_source_particle)
+        sigma = source_buffer[8, i_source_particle]
+
+        for j_target in target_index
+
+            target_x, target_y, target_z = fmm.get_position(target_buffer, j_target)
+            dx = target_x - source_x
+            dy = target_y - source_y
+            dz = target_z - source_z
+            r2 = dx*dx + dy*dy + dz*dz
+
+            if !iszero(r2)
+                r = sqrt(r2)
+
+                # Regularizing function and deriv
+                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
+
+                # K × Γp
+                r3inv = one(r) / (r2 * r)
+                crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
+                crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
+                crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
+
+                if VS
+                    # U = ∑g_σ(x-xp) * K(x-xp) × Γp
+                    Ux = g_sgm * crss1
+                    Uy = g_sgm * crss2
+                    Uz = g_sgm * crss3
+
+                    val = SVector{3}(Ux, Uy, Uz)
+                    fmm.set_gradient!(target_buffer, j_target, val)
+                end
+
+                if GS
+                    # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
+                    # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
+                    aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
+                    # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
+                    # Adds the Kronecker delta term
+                    aux2 = -const4 * g_sgm * r3inv
+                    # j=1
+                    du1x1 = aux * crss1 * dx
+                    du2x1 = aux * crss2 * dx - aux2 * gamma_z
+                    du3x1 = aux * crss3 * dx + aux2 * gamma_y
+                    # j=2
+                    du1x2 = aux * crss1 * dy + aux2 * gamma_z
+                    du2x2 = aux * crss2 * dy
+                    du3x2 = aux * crss3 * dy - aux2 * gamma_x
+                    # j=3
+                    du1x3 = aux * crss1 * dz - aux2 * gamma_y
+                    du2x3 = aux * crss2 * dz + aux2 * gamma_x
+                    du3x3 = aux * crss3 * dz
+
+                    val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
+                    fmm.set_hessian!(target_buffer, j_target, val)
+                end
+            end
+        end
+    end
+
+    return nothing
+end
+
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
+    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
+    j = fmm.get_hessian(target_buffer, i_buffer)
+    for i = 1:9
+        target_system.particles[J_INDEX[i], i_target] += j[i]
+    end
+end
+
+Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF

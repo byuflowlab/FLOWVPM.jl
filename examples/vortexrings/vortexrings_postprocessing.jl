@@ -104,6 +104,70 @@ end
 
 plot_dynamics1n2 = plot_dynamics
 
+"""
+    solve(derivative!, u0, tspan; dt, verbose, p)
+
+Solve the ode using a simple forward euler step. (Eliminates DifferentialEquations as a dependency.)
+
+# Arguments
+
+- `derivative!::Function`- computes the derivative in place, as `derivative!(du, u, p, t)`, where `du` is the derivative, `u` the current state, `p` parameters, and `t` the current time
+- `u0::Vector{Float64}`- vector of the initial states
+- `tspan::Tuple{Float64,Float64}`- tuple containing the initial and final times
+- `dt::Float64`- time step
+- `verbose::Bool`- whether or not to use verbose output
+- `p::NTuple{N,Any}`- tuple of parameters required by the `derivative!` function
+
+# Returns
+
+- `t::Range`- time vector
+- `u::Vector{Vector{Float64}}`- vector of time solutions of each state; `u[i][j]` contains the value of the i-th state at the j-th time
+"""
+function solve(derivative!, u0, tspan; dt=1e-7, verbose=false, p=())
+    verbose && (println("== SOLVE DIFFERENTIAL EQUATION ==\n"))
+    t = range(tspan[1], tspan[2], step=dt)
+    if t[end] != tspan[2]
+        t = vcat(collect(t), tspan[end])
+    end
+    n_points = length(t)
+    n_states = length(u0)
+    u = [zeros(n_points) for _ in 1:n_states]
+    
+    # initial conditions
+    for i_state in eachindex(u0)
+        u[i_state][1] = u0[i_state]
+    end
+
+    # set up state and derivative containers
+    this_u = deepcopy(u0)
+    this_u_dot = similar(u0)
+
+    # step through time
+    verbose && (println("\tBegin Euler steps:"))
+    for i_point in 2:n_points
+        previous_time = t[i_point-1]
+        this_dt = t[i_point] - previous_time
+        # verbose && (println("\t\tt=$(round(previous_time,digits=4)), u=$(this_u)"))
+
+        # update this_u
+        for i_state in eachindex(u0)
+            this_u[i_state] = u[i_state][i_point-1]
+        end
+
+        # update derivative
+        derivative!(this_u_dot, this_u, p, previous_time)
+
+        # euler step
+        for i_state in 1:n_states
+            u[i_state][i_point] = u[i_state][i_point-1] + this_u_dot[i_state] * this_dt
+        end
+        # i_point == n_points && verbose && (println("\t\tt=$(round(t[n_points],digits=4)), u=$(this_u)"))
+    end
+
+    verbose && (println("== DONE =="))
+    # return result
+    return t, u
+end
 
 """
 Solve dynamics of a system of coaxial inviscid rings using the analytic system
@@ -124,7 +188,7 @@ associated with vorticity distribution inside the ring core (Winckelmans' kernel
 corresponds to `Delta=0`).
 """
 function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
-                                tend=20.0, dtmax=0.1, dynamica=true, nu=nothing,
+                                tend=20.0, dtmax=1e-3, dynamica=true, nu=nothing,
                                 thickgaussian=false)
 
     # Initial conditions
@@ -207,19 +271,19 @@ function analytic_coaxialrings(nrings, Gammas, Rs, Zs, as, Deltas;
     # Time span
     tspan = (0.0, tend)
 
-    prob = DifferentialEquations.ODEProblem(borisov2013!, u0, tspan)
-    sol = DifferentialEquations.solve(prob; dtmax=dtmax, verbose=true)
+    # prob = DifferentialEquations.ODEProblem(borisov2013!, u0, tspan)
+    # sol = DifferentialEquations.solve(prob; dtmax=dtmax, verbose=true)
+    t, u = solve(borisov2013!, u0, tspan; dt=dtmax/10, verbose=true)
 
-    ts = sol.t
-    solRs = [[u[5*(ri-1) + 2] for u in sol.u] for ri in 1:nrings]
-    solZs = [[u[5*(ri-1) + 3] for u in sol.u] for ri in 1:nrings]
-    solas = [[u[5*(ri-1) + 4] for u in sol.u] for ri in 1:nrings]
+    solRs = [u[5*(ri-1) + 2] for ri in 1:nrings]
+    solZs = [u[5*(ri-1) + 3] for ri in 1:nrings]
+    solas = [u[5*(ri-1) + 4] for ri in 1:nrings]
 
-    return sol.t, solRs, solZs, solas, sol
+    return t, solRs, solZs, solas
 end
 
-K(k) = Elliptic.K(k^2)
-E(k) = Elliptic.E(k^2)
+K(k) = EllipticFunctions.ellipticK(k^2)
+E(k) = EllipticFunctions.ellipticE(k^2)
 
 k(z, r, zt, rt) = sqrt( 4*r*rt / ( (z-zt)^2 + (r+rt)^2 ) )
 

@@ -18,15 +18,33 @@ module FLOWVPM
 
 # ------------ GENERIC MODULES -------------------------------------------------
 import HDF5
-import JLD
-import SpecialFunctions
+import BSON
 import Dates
 import Printf
 import DataStructures: OrderedDict
+import Roots
+import SpecialFunctions: erf
+import Base: getindex, setindex! # for compatibility with FastMultipole
+# using ReverseDiff
+using StaticArrays
+# using CUDA
+# using CUDA: i32
+using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
-import FLOWExaFMM
-const fmm = FLOWExaFMM
+# import FLOWExaFMM
+# const fmm = FLOWExaFMM
+import FastMultipole
+
+#------------- exports --------------------------------------------------------
+
+export ParticleField,
+       ClassicVPM, ReformulatedVPM,
+       NoSFS, ConstantSFS, DynamicSFS,
+       U_INDEX, J_INDEX,
+       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX
+
+const fmm = FastMultipole
 
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
@@ -35,15 +53,23 @@ const utilities_path = joinpath(examples_path, "utilities") # Path to utilities
 const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utilities
 
 # Determine the floating point precision of ExaFMM
-const exafmm_single_precision = fmm.getPrecision()
-const RealFMM = exafmm_single_precision ? Float32 : Float64
+const FLOAT_TYPE = Float64
+
+# miscellaneous constants
+const const1 = 1/(2*pi)^1.5
+const const2 = sqrt(2/pi)
+const const3 = 3/(4*pi)
+const const4 = 1/(4*pi)
+const sqr2 = sqrt(2)
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "fmm", "viscous", "formulation",
-                    "particle", "relaxation", "subfilterscale",
-                    "particlefield",
+for header_name in ["kernel", "viscous", "formulation",
+                    "relaxation", "subfilterscale",
+                    "particlefield", "fmm",
+                    # "particlefield", "gpu_erf", "gpu", "fmm",
+                    "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils"]# , "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
@@ -51,13 +77,13 @@ end
 # ------------ AVAILABLE SOLVER OPTIONS ----------------------------------------
 
 # ------------ Available VPM formulations
-const formulation_classic = ClassicVPM{RealFMM}()
-const formulation_cVPM = ReformulatedVPM{RealFMM}(0, 0)
-const formulation_rVPM = ReformulatedVPM{RealFMM}(0, 1/5)
+const formulation_classic = ClassicVPM{FLOAT_TYPE}()
+const formulation_cVPM = ReformulatedVPM{FLOAT_TYPE}(0, 0)
+const formulation_rVPM = ReformulatedVPM{FLOAT_TYPE}(0, 1/5)
 
-const formulation_tube_continuity = ReformulatedVPM{RealFMM}(1/2, 0)
-const formulation_tube_momentum = ReformulatedVPM{RealFMM}(1/4, 1/4)
-const formulation_sphere_momentum = ReformulatedVPM{RealFMM}(0, 1/5 + 1e-8)
+const formulation_tube_continuity = ReformulatedVPM{FLOAT_TYPE}(1/2, 0)
+const formulation_tube_momentum = ReformulatedVPM{FLOAT_TYPE}(1/4, 1/4)
+const formulation_sphere_momentum = ReformulatedVPM{FLOAT_TYPE}(0, 1/5 + 1e-8)
 
 # Formulation aliases
 const cVPM = formulation_cVPM
@@ -71,10 +97,10 @@ const standard_formulations = ( :formulation_classic,
                               )
 
 # ------------ Available Kernels
-const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing, 1, 1)
-const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus, -1, 1)
-const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf, 5, 1)
-const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns, 3, 1)
+const kernel_singular = Kernel(zeta_sing, g_sing, dgdr_sing, g_dgdr_sing)
+const kernel_gaussian = Kernel(zeta_gaus, g_gaus, dgdr_gaus, g_dgdr_gaus)
+const kernel_gaussianerf = Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf)
+const kernel_winckelmans = Kernel(zeta_wnklmns, g_wnklmns, dgdr_wnklmns, g_dgdr_wnklmns)
 const kernel_default = kernel_gaussianerf
 
 # Kernel aliases
@@ -87,9 +113,9 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
 
 # ------------ Available relaxation schemes
-const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, RealFMM(0.0))
-const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, RealFMM(0.3))
-const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, RealFMM(0.3))
+const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, FLOAT_TYPE(0.0))
+const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, FLOAT_TYPE(0.3))
+const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, FLOAT_TYPE(0.3))
 
 # Relaxation aliases
 const pedrizzetti = relaxation_pedrizzetti
@@ -101,15 +127,18 @@ const standard_relaxations = (:norelaxation, :pedrizzetti, :correctedpedrizzetti
 
 # ------------ Subfilter-scale models
 # SFS procedure aliases
-const pseudo3level = dynamicprocedure_pseudo3level
-const pseudo3level_positive(args...; optargs...) = pseudo3level(args...; force_positive=true, optargs...)
+const pseudo3level_beforeUJ = dynamicprocedure_pseudo3level_beforeUJ
+const pseudo3level_afterUJ = dynamicprocedure_pseudo3level_afterUJ
+const pseudo3level_positive_afterUJ(args...; optargs...) = pseudo3level_afterUJ(args...; force_positive=true, optargs...)
+const pseudo3level = (pseudo3level_beforeUJ, pseudo3level_afterUJ)
+const pseudo3level_positive = (pseudo3level_beforeUJ, pseudo3level_positive_afterUJ)
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
-const SFS_none = NoSFS{RealFMM}()
-const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=[clipping_backscatter])
-const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.999, clippings=[clipping_backscatter])
-const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_positive; alpha=0.667, clippings=[clipping_backscatter])
+const SFS_none = NoSFS{FLOAT_TYPE}()
+const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=(clipping_backscatter,))
+const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
+const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.667, clippings=(clipping_backscatter,))
 
 # SFS aliases
 const noSFS = SFS_none
@@ -122,7 +151,7 @@ const standard_SFSs = (
                         )
 
 # ------------ Other default functions
-const nofreestream(t) = zeros(3)
+const nofreestream(t) = SVector{3,Float64}(0,0,0)
 const Uinf_default = nofreestream
 # const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
@@ -131,21 +160,27 @@ const static_particles_default(pfield, t, dt) = nothing
 
 
 # ------------ Compatibility between kernels and viscous schemes
-const _kernel_compatibility = Dict( # Viscous scheme => kernels
-        Inviscid.body.name      => [singular, gaussian, gaussianerf, winckelmans,
-                                        kernel_singular, kernel_gaussian,
-                                        kernel_gaussianerf, kernel_winckelmans],
-        CoreSpreading.body.name => [gaussianerf, kernel_gaussianerf],
-        ParticleStrengthExchange.body.name => [gaussianerf, winckelmans,
-                                        kernel_gaussianerf, kernel_winckelmans],
-    )
+function _kernel_compatibility(viscous_scheme::Inviscid)
+    return [singular, gaussian, gaussianerf, winckelmans,
+    kernel_singular, kernel_gaussian,
+    kernel_gaussianerf, kernel_winckelmans]
+end
+
+function _kernel_compatibility(viscous_scheme::CoreSpreading)
+    return [gaussianerf, kernel_gaussianerf]
+end
+
+function _kernel_compatibility(viscous_scheme::ParticleStrengthExchange)
+    return [gaussianerf, winckelmans,
+    kernel_gaussianerf, kernel_winckelmans]
+end
 
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------
 
 # Field inside the Particle type where the SFS contribution is stored (make sure
 # this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
-const _SFS = :Jexa
+# const _SFS = :S
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions

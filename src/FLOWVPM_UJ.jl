@@ -18,8 +18,22 @@ particle-to-particle interaction, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_direct(pfield::ParticleField)
-  return UJ_direct(pfield, pfield)
+function UJ_direct(pfield::ParticleField;
+        rbf::Bool=false, sfs::Bool=false,
+        reset=true, reset_sfs=false,
+        optargs...
+    )
+
+    # reset
+    if reset
+        _reset_particles(pfield)
+    end
+    if reset_sfs
+        _reset_particles_sfs(pfield)
+    end
+
+    fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    sfs && Estr_direct!(pfield)
 end
 
 """
@@ -32,75 +46,7 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_direct(source::ParticleField, target::ParticleField)
-  return UJ_direct( iterator(source; include_static=true),
-                    iterator(target; include_static=true),
-                    source.kernel)
-end
-
-function UJ_direct(sources, targets, kernel::Kernel)
- return UJ_direct(sources, targets, kernel.g_dgdr)
-end
-
-function UJ_direct(sources, targets, g_dgdr::Function)
-
-   for Pi in targets
-     for Pj in sources
-
-       dX1 = Pi.X[1] - Pj.X[1]
-       dX2 = Pi.X[2] - Pj.X[2]
-       dX3 = Pi.X[3] - Pj.X[3]
-       r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
-
-       if r!=0
-
-         # Regularizing function and deriv
-         g_sgm, dg_sgmdr = g_dgdr(r/Pj.sigma[1])
-
-         # K × Γp
-         crss1 = -const4 / r^3 * ( dX2*Pj.Gamma[3] - dX3*Pj.Gamma[2] )
-         crss2 = -const4 / r^3 * ( dX3*Pj.Gamma[1] - dX1*Pj.Gamma[3] )
-         crss3 = -const4 / r^3 * ( dX1*Pj.Gamma[2] - dX2*Pj.Gamma[1] )
-
-         # U = ∑g_σ(x-xp) * K(x-xp) × Γp
-         Pi.U[1] += g_sgm * crss1
-         Pi.U[2] += g_sgm * crss2
-         Pi.U[3] += g_sgm * crss3
-
-         # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
-         # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
-         aux = dg_sgmdr/(Pj.sigma[1]*r) - 3*g_sgm /r^2
-         # j=1
-         Pi.J[1, 1] += aux * crss1 * dX1
-         Pi.J[2, 1] += aux * crss2 * dX1
-         Pi.J[3, 1] += aux * crss3 * dX1
-         # j=2
-         Pi.J[1, 2] += aux * crss1 * dX2
-         Pi.J[2, 2] += aux * crss2 * dX2
-         Pi.J[3, 2] += aux * crss3 * dX2
-         # j=3
-         Pi.J[1, 3] += aux * crss1 * dX3
-         Pi.J[2, 3] += aux * crss2 * dX3
-         Pi.J[3, 3] += aux * crss3 * dX3
-
-         # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
-         # Adds the Kronecker delta term
-         aux = - const4 * g_sgm / r^3
-
-         # j=1
-         Pi.J[2, 1] -= aux * Pj.Gamma[3]
-         Pi.J[3, 1] += aux * Pj.Gamma[2]
-         # j=2
-         Pi.J[1, 2] += aux * Pj.Gamma[3]
-         Pi.J[3, 2] -= aux * Pj.Gamma[1]
-         # j=3
-         Pi.J[1, 3] -= aux * Pj.Gamma[2]
-         Pi.J[2, 3] += aux * Pj.Gamma[1]
-
-       end
-     end
-   end
-
-  return nothing
+    return fmm.direct!(target, source)
 end
 
 
@@ -113,54 +59,70 @@ a fast-multipole approximation, saving U and J on the particles.
 NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
-function UJ_fmm(pfield::ParticleField; optargs...)
+function UJ_fmm(
+        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
+        verbose::Bool=false,
+        rbf::Bool=false,
+        sfs::Bool=false,
+        sfs_type::Int=-1, # unused
+        transposed_sfs::Bool=true, # unused
+        reset::Bool=true,
+        reset_sfs::Bool=false,
+        autotune::Bool=true,
+    ) where {useGPU}
 
-    # Calculate FMM of vector potential
-    call_FLOWExaFMM(pfield; optargs...)
+    # reset # TODO should this really have an elseif in between?
+    if reset
+        _reset_particles(pfield)
+    end
+    if reset_sfs || sfs
+        _reset_particles_sfs(pfield)
+    end
 
-    aux1 = RealFMM(1/(4*pi))
+    # extract FMM options
+    fmm_options = pfield.fmm
 
-    # Build velocity and velocity Jacobian from the FMM's vector potential
-    for P in iterator(pfield; include_static=true)
-        # Velocity U = ∇ × ψ
-        P.U[1] += aux1*(P.Jexa[2,3] - P.Jexa[3,2])
-        P.U[2] += aux1*(P.Jexa[3,1] - P.Jexa[1,3])
-        P.U[3] += aux1*(P.Jexa[1,2] - P.Jexa[2,1])
+    if rbf
+        # calculate vorticity
+        zeta_fmm(pfield)
+    else
+        # Calculate FMM of vector potential
+        args = fmm.fmm!(pfield; 
+                        expansion_order=fmm_options.p-1, 
+                        leaf_size_source=fmm_options.ncrit, 
+                        multipole_acceptance=fmm_options.theta, 
+                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
+                        tune=true,
+                        shrink_recenter=fmm_options.shrink_recenter,
+                        nearfield_device=(useGPU>0),
+                        scalar_potential=false,
+                        hessian=true,
+                        silence_warnings=!verbose)
+        optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = args
 
-        # Jacobian
-        # dU1 / dxj
-        P.J[1, 1] += aux1*(P.dJdx1exa[2,3] - P.dJdx1exa[3,2])
-        P.J[1, 2] += aux1*(P.dJdx2exa[2,3] - P.dJdx2exa[3,2])
-        P.J[1, 3] += aux1*(P.dJdx3exa[2,3] - P.dJdx3exa[3,2])
-        # dU2 / dxj
-        P.J[2, 1] += aux1*(P.dJdx1exa[3,1] - P.dJdx1exa[1,3])
-        P.J[2, 2] += aux1*(P.dJdx2exa[3,1] - P.dJdx2exa[1,3])
-        P.J[2, 3] += aux1*(P.dJdx3exa[3,1] - P.dJdx3exa[1,3])
-        # dU3 / dxj
-        P.J[3, 1] += aux1*(P.dJdx1exa[1,2] - P.dJdx1exa[2,1])
-        P.J[3, 2] += aux1*(P.dJdx2exa[1,2] - P.dJdx2exa[2,1])
-        P.J[3, 3] += aux1*(P.dJdx3exa[1,2] - P.dJdx3exa[2,1])
+        # autotune p and ncrit
+        if autotune
+            new_p = fmm_options.autotune_p ? optargs.expansion_order+1 : fmm_options.p
+            new_ncrit = fmm_options.autotune_ncrit ? optargs.leaf_size_source[1] : fmm_options.ncrit
+            pfield.fmm = FMM(new_p, new_ncrit, fmm_options.theta,
+                            fmm_options.shrink_recenter,
+                            fmm_options.relative_tolerance,
+                            fmm_options.absolute_tolerance,
+                            fmm_options.autotune_p,
+                            fmm_options.autotune_ncrit,
+                            fmm_options.autotune_reg_error,
+                            fmm_options.default_rho_over_sigma)
+        end
+
+        # This should be concurrent_direct=(pfield.useGPU > 0)
+        # But until multithread_direct!() works for the target_indices argument,
+        # we'll leave it true
+
+        # now calculate SFS contribution
+        # NOTE: this must be performed after velocity gradients are calculated, and
+        #       therefore cannot be included in the direct function of the FMM
+        sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
     end
 
     return nothing
-end
-
-function call_FLOWExaFMM(pfield::ParticleField; verbose::Bool=false,
-                            rbf::Bool=false, sfs::Bool=false, sfs_type::Int=-1,
-                            transposed_sfs::Bool=true,
-                            reset::Bool=true, reset_sfs::Bool=false,
-                            sort::Bool=true)
-    try
-        fmm.calculate(pfield.bodies,
-                        Int32(get_np(pfield)),
-                        Int32(pfield.fmm.p), Int32(pfield.fmm.ncrit),
-                        RealFMM(pfield.fmm.theta), RealFMM(pfield.fmm.phi), verbose,
-                        Int32(pfield.kernel.EXAFMM_P2P),
-                        Int32(pfield.kernel.EXAFMM_L2P),
-                        Int32(sfs_type),
-                        rbf, sfs, transposed_sfs,
-                        reset, reset_sfs, sort)
-    catch e
-        error("ExaFMM unexpected error: $(e)")
-    end
 end
