@@ -63,12 +63,13 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, IT<:InflowTurbulenceScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
+    inflow_turbulence::IT                       # Inflow turbulence scheme
 
     # Internal properties
     np::Int                                     # Number of particles in the field
@@ -99,6 +100,7 @@ end
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
+        inflow_turbulence::IT=NoInflowTurbulence(),
         np=0, nt=0, t=zero(R),
         transposed=true,
         fmm::FMM=FMM(),
@@ -109,7 +111,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
-    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
+    ) where {F, V<:ViscousScheme, IT<:InflowTurbulenceScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
     # particles = [zero(Particle{R}) for _ in 1:maxparticles]
@@ -120,8 +122,9 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     #     P.index[1] = i
     # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
-                                            formulation, viscous, np, nt, t,
+    return ParticleField{R, F, V, IT, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
+                                            formulation, viscous, inflow_turbulence, 
+                                            np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
                                             M, toggle_rbf, toggle_sfs)

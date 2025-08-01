@@ -30,6 +30,7 @@ using StaticArrays
 # using CUDA
 # using CUDA: i32
 using Primes
+using SyntheticEddy
 
 # ------------ FLOW CODES ------------------------------------------------------
 # import FLOWExaFMM
@@ -64,7 +65,7 @@ const sqr2 = sqrt(2)
 
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
-                    "relaxation", "subfilterscale",
+                    "relaxation", "subfilterscale", "inflow_turbulence",
                     "particlefield", "fmm",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",

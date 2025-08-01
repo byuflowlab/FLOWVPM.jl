@@ -33,8 +33,8 @@ end
 """
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
-function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                                dt; relax::Bool=false) where {R, V}
+function _euler(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
+                                dt; relax::Bool=false) where {R, V, IT}
 
     pfield.SFS(pfield, AfterUJ())
 
@@ -42,6 +42,8 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     Uinf = pfield.Uinf(pfield.t)
 
     zeta0::R = pfield.kernel.zeta(0)
+
+    inflow_turbulence(pfield, dt)
 
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
@@ -92,8 +94,8 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
-function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                               dt::Real; relax::Bool=false) where {R, V, R2}
+function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
+                               dt::Real; relax::Bool=false) where {R, V, IT, R2}
 
     pfield.SFS(pfield, AfterUJ())
 
@@ -106,6 +108,8 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
+
+    inflow_turbulence(pfield, dt)
 
     # Update the particle field: convection and stretching
     for (i_p,p) in enumerate(iterator(pfield))
@@ -178,8 +182,8 @@ end
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
-function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                            dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
+function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
+                            dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, IT, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
 
@@ -204,6 +208,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
             custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
+        inflow_turbulence(pfield, dt)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
@@ -286,8 +291,8 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
 """
-function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                     dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R2, R3}
+function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
+                     dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, IT, R2, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
     #                      qsmg <=> get_M(p)[8], Z <=> MM[4], S <=> MM[1:3]
@@ -317,6 +322,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
             custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
+        inflow_turbulence(pfield, dt)
 
         # Update the particle field: convection and stretching
         update_particle_states(pfield,MM,a,b,dt,Uinf,f, g, zeta0)
@@ -349,7 +355,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 end
 
 
-function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
+function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, IT, R3}
 
     for i in 1:pfield.np
         p = get_particle(pfield, i)
