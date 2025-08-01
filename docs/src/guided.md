@@ -32,6 +32,10 @@ end
 run_vpm!(pfield, 0.1, 200; save_path="ring")
 ```
 
+```@setup ring
+rm("ring", recursive=true, force=true)
+```
+
 ## Leapfrogging Vortex Rings
 ```@example leapfrog
 using FLOWVPM
@@ -69,3 +73,9 @@ build_ring!(pfield, max_particles/2, r, circulation, r)
 
 run_vpm!(pfield, 0.1, 200; save_path="leapfrog")
 ```
+
+```@setup leapfrog
+rm("leapfrog", recursive=true, force=true)
+```
+
+![Leapfrog simulation](../vid/val_leapfrog04_6.gif)
