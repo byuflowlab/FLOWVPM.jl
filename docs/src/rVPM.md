@@ -367,7 +367,7 @@ Like the classic VPM, the reformulated VPM is spatially second-order accurate in
 Viscous diffusion is solved through the core spreading method coupled with the radial basis function interpolation approach for spatial adaptation developed by Barba.[^8]
 This viscous scheme has second-order spatial convergence, while showing linear convergence when coupled with spatial adaptation.
 The fast multipole method (FMM) is used for the computation of the regularized Biot-Savart law, approximating the velocity field and vortex stretching through spherical harmonics with computational complexity ``\mathcal{O}(N)``, where ``N`` is the number of particles.
-The FMM computation of vortex stretching is performed through an efficient complex-step derivative approximation,[^9] implemented in a modified version of the open-source, parallelized code [ExaFMM](https://joss.theoj.org/papers/10.21105/joss.03145).
+The FMM computation of vortex stretching is performed analytically under the Lamb-Helmholtz decomposition[^9] as implemented in the open-source, parallelized code [FastMultipole](https://flow.byu.edu/FastMultipole.jl/dev/).
 [FLOWVPM](https://github.com/byuflowlab/FLOWVPM.jl) and [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) are implemented in [the Julia language](https://julialang.org), which is a modern, high-level, dynamic programming language for high-performance computing.
 
 !!! compat "Recommended"
@@ -389,6 +389,8 @@ The FMM computation of vortex stretching is performed through an efficient compl
 
 [^8]: Barba, L. A., Leonard, A., and Allen, C. B., “Advances in viscous vortex methods - Meshless spatial adaption based on radial basis function interpolation,” International Journal for Numerical Methods in Fluids, Vol. 47, No. 5, 2005, pp. 387–421. Also, Barba, L. A., “Vortex Method for computing high-Reynolds number Flows: Increased accuracy with a fully mesh-less formulation,” California Institute of Technology, Vol. 2004, 2004.
 
-[^9]: Alvarez, E. J., and Ning, A., “High-Fidelity Modeling of Multirotor Aerodynamic Interactions for Aircraft Design,” AIAA Journal, Vol. 58, No. 10, 2020, pp. 4385–4400.
+[^9]: Gumerov, Nail A and Duraiswami, Ramani, "Efficient FMM Accelerated Vortex Methods in Three Dimensions via the Lamb--Helmholtz Decomposition", Journal of Computational Physics, Vol. 240, 2013, pp. 310-328.
+
+[^10]: Alvarez, E. J., and Ning, A., “High-Fidelity Modeling of Multirotor Aerodynamic Interactions for Aircraft Design,” AIAA Journal, Vol. 58, No. 10, 2020, pp. 4385–4400.
 
 [^a]: Let ``\phi`` be a field and ``\zeta_\sigma`` a filter kernel with cutoff length ``\sigma``, the filter operator is defined as ``\overline{\phi} \left( \mathbf{x} \right) \equiv \int\limits_{-\infty}^\infty \phi(\mathbf{y})\zeta_\sigma(\mathbf{x}-\mathbf{y}) \,\mathrm{d}\mathbf{y}``.
