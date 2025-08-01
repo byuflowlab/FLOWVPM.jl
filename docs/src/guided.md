@@ -78,4 +78,4 @@ run_vpm!(pfield, 0.1, 200; save_path="leapfrog")
 rm("leapfrog", recursive=true, force=true)
 ```
 
-![Leapfrog simulation](../media/vid/val_leapfrog04_6.gif)
+![Leapfrog simulation](val_leapfrog04_6.gif)
