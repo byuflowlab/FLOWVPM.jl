@@ -30,10 +30,9 @@ end
 function inflow_turbulence(pfield, scheme::SyntheticEddyMethod, dt)
     SyntheticEddy.compute_fluctuations!(pfield.particles[U_INDEX,1:pfield.np], 
                                         pfield.particles[X_INDEX,1:pfield.np], 
-                                        pfield.particles[U_INDEX,1:pfield.np], 
                                         scheme.eddydomain)
 
-    SyntheticEddy.convect_eddies!(schene.eddydomain, dt)
+    SyntheticEddy.convect_eddies!(scheme.eddydomain, dt)
 
     return nothing
 end

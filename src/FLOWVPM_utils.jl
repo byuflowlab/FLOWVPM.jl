@@ -389,6 +389,16 @@ function _get_settings_string(pfield::ParticleField; tab=0)
 
         valstr = val in _lengthyoptions ? "$(_lengthy2key[val])" : "$(val)"
 
+        # Remove module prefix from function names for better readability
+        if typeof(valstr) == String && startswith(valstr, "FLOWVPM.")
+            valstr = split(valstr, ".")[end]
+        end
+        if key == "inflow_turbulence"
+            valstr = typeof(val) == NoInflowTurbulence ? "NoInflowTurbulence" :
+                     typeof(val) == SyntheticEddyMethod ? "SyntheticEddyMethod" :
+                     "UnknownInflowTurbulenceScheme"
+        end
+
         str *= Printf.@sprintf "%14.14s----> %s\n" key valstr
     end
 
