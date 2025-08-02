@@ -391,6 +391,4 @@ The FMM computation of vortex stretching is performed analytically under the Lam
 
 [^9]: Gumerov, Nail A and Duraiswami, Ramani, "Efficient FMM Accelerated Vortex Methods in Three Dimensions via the Lamb--Helmholtz Decomposition", Journal of Computational Physics, Vol. 240, 2013, pp. 310-328.
 
-[^10]: Alvarez, E. J., and Ning, A., “High-Fidelity Modeling of Multirotor Aerodynamic Interactions for Aircraft Design,” AIAA Journal, Vol. 58, No. 10, 2020, pp. 4385–4400.
-
 [^a]: Let ``\phi`` be a field and ``\zeta_\sigma`` a filter kernel with cutoff length ``\sigma``, the filter operator is defined as ``\overline{\phi} \left( \mathbf{x} \right) \equiv \int\limits_{-\infty}^\infty \phi(\mathbf{y})\zeta_\sigma(\mathbf{x}-\mathbf{y}) \,\mathrm{d}\mathbf{y}``.
