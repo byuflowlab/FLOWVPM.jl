@@ -77,4 +77,4 @@ run_vpm!(pfield, 0.1, 200; save_path="leapfrog")
 ```@setup leapfrog
 rm("leapfrog", recursive=true, force=true)
 ```
-<img src="../media/vid/val_leapfrog04_6.gif" alt="Leapfrog simulation"/>
+![Leapfrog simulation](./media/vid/val_leapfrog04_6.gif)
