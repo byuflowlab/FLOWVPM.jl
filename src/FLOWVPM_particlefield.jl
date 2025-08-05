@@ -90,10 +90,6 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
 
     # Internal memory for computation
     M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
-
-    # switches for dispatch in the FMM
-    toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
-    toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 end
 
 """
@@ -103,33 +99,25 @@ Create a new particle field with `maxparticles` particles. The particle field
 is created with the default values for the other parameters.
 
 # Arguments
-- `maxparticles::Int`           : Maximum number of particles in the field.
-- `R=FLOAT_TYPE`                : Type of the particle field. Default is `FLOAT_TYPE`.
-- `formulation`                 : VPM formulation. Default is `rVPM`.
-- `viscous::ViscousScheme`      : Viscous scheme. Default is `Inviscid()`. With `rVPM` formulation,
-                                    a viscous scheme is not required for numerical stability.
-- `np::Int`                     : Number of particles currently in the field. Default is 0. (user should not modify)
-- `nt::Int`                     : Current time step number. Default is 0. (user should not modify)
-- `t::Real`                     : Current time. Default is 0.
-- `transposed::Bool`            : If true, the transposed scheme is recommended for stability.
-                                Default is true. (user should not modify)
-- `fmm::FMM{TEPS}`              : Fast-multipole settings. Default is `FMM()`.
-- `M::Array{R, 1}`              : Memory for computations. Default is `zeros(R, 4)`. (user should not modify)
-- `toggle_rbf::Bool`            : If true, the FMM computes the vorticity field rather than velocity field.
-                                    This is used as an internal switch for the FMM.
-                                    Default is false. (user should not modify)
-- `toggle_sfs::Bool`            : If true, the FMM computes the stretching term for the SFS model.
-                                    This is used as an internal switch for the FMM.
-                                    Default is false. (user should not modify)
-- `SFS::S`                      : Subfilter-scale contributions scheme. Default is `noSFS`.
-- `kernel::Tkernel`             : Vortex particle kernel. Default is `gaussianerf`.
-- `UJ::TUJ`                     : Particle-to-particle calculation. Default is `UJ_fmm`.
-- `Uinf::TUinf`                 : Uniform freestream function Uinf(t). Default is no freestream.
-- `relaxation::TR`              : Relaxation scheme. Default is `pedrizzetti`.
-- `integration::Tintegration`   : Time integration scheme. Default is `rungekutta3`. The only other
-                                    option is `euler`.
-- `useGPU::Int`                 : Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not 
-                                    accelerate SFS calculations)
+- `maxparticles::Int`: Maximum number of particles in the field.
+- `R=FLOAT_TYPE`: Type of the particle field. Default is `FLOAT_TYPE`.
+
+# Keyword Arguments
+- `formulation::Formulation=ReformulatedVPM{FLOAT_TYPE}(0, 1/5)`: VPM governing equations. Default is reformulated to conserve mass for a tube and angular momentum for a sphere.
+- `viscous::ViscousScheme=Inviscid()`: Viscous scheme. Note that with `rVPM` formulation, artificial viscosity is not needed for numerical stability, as is common in VPM.
+- `np::Int=0`: Number of particles currently in the field.
+- `nt::Int=0`: Current time step number.
+- `t::Real=0`: Current simulation time.
+- `transposed::Bool=true`: If true, the transposed scheme of the stretching term is used (recommended for stability).
+- `fmm::FMM`: Fast multipole method tuning and auto-tuning settings.
+- `M::Array{R, 1}=zeros(R, 4)`: Auxilliary memory for computations. Should not be modified for most purposes.
+- `SFS::SubFilterScale=NoSFS{FLOAT_TYPE}()`: Subfilter-scale turbulence model.
+- `kernel::Kernel=Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf)`: Regularization scheme. Default is Gaussian smoothing of the vorticity field.
+- `UJ=UJ_fmm`: Method used to compute the \$N\$-body problem. Default uses the fast multipole method to achieve \$O(N)\$ complexity.
+- `Uinf::Function=(t) -> [0.0,0.0,0.0]`: Uniform freestream velocity function Uinf(t).
+- `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
+- `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
+- `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
 """
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
@@ -138,7 +126,6 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         transposed=true,
         fmm::FMM=FMM(),
         M=zeros(R, 4),
-        toggle_rbf=false, toggle_sfs=false,
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
@@ -158,8 +145,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm, useGPU,
-                                            M, toggle_rbf, toggle_sfs)
+                                            transposed, relaxation, fmm, useGPU, M)
 end
 
 """

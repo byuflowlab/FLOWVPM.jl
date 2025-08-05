@@ -206,14 +206,14 @@ const sensorfunction = dynamicprocedure_sensorfunction
 const SFS_none = NoSFS{FLOAT_TYPE}()
 
 """
-    SFS_Cs_nobackscatter
+    `SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=(clipping_backscatter,))`
 
 Alias for the Constant SFS model with no backscatter.
 """
 const SFS_Cs_nobackscatter = ConstantSFS(Estr_fmm; Cs=1.0, clippings=(clipping_backscatter,))
 
 """
-    SFS_Cd_twolevel_nobackscatter
+    `SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))`
 
 Alias for the Dynamic SFS model with two levels and no backscatter.
 This is the recommended SFS model for high fidelity modeling.
@@ -221,7 +221,7 @@ This is the recommended SFS model for high fidelity modeling.
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
 
 """
-    SFS_Cd_threelevel_nobackscatter
+    `SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.667, clippings=(clipping_backscatter,))`
 
 Alias for the Dynamic SFS model with three levels and no backscatter.
 This is similar to the two level version but uses a lower value of alpha (0.667).
@@ -230,9 +230,9 @@ const SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_before
 
 # SFS aliases
 """
-    noSFS
+    `noSFS = NoSFS{FLOAT_TYPE}()`
 
-    Alias for the no subfilter-scale model.
+Alias for the no subfilter-scale model.
 """
 const noSFS = SFS_none
 const SFS_default = SFS_none
