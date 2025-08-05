@@ -90,12 +90,35 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
 
     # Internal memory for computation
     M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
-
-    # switches for dispatch in the FMM
-    toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
-    toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 end
 
+"""
+    ParticleField(maxparticles::Int, R=FLOAT_TYPE; <keyword arguments>)
+
+Create a new particle field with `maxparticles` particles. The particle field
+is created with the default values for the other parameters.
+
+# Arguments
+- `maxparticles::Int`: Maximum number of particles in the field.
+- `R=FLOAT_TYPE`: Type of the particle field. Default is `FLOAT_TYPE`.
+
+# Keyword Arguments
+- `formulation::Formulation=ReformulatedVPM{FLOAT_TYPE}(0, 1/5)`: VPM governing equations. Default is reformulated to conserve mass for a tube and angular momentum for a sphere.
+- `viscous::ViscousScheme=Inviscid()`: Viscous scheme. Note that with `rVPM` formulation, artificial viscosity is not needed for numerical stability, as is common in VPM.
+- `np::Int=0`: Number of particles currently in the field.
+- `nt::Int=0`: Current time step number.
+- `t::Real=0`: Current simulation time.
+- `transposed::Bool=true`: If true, the transposed scheme of the stretching term is used (recommended for stability).
+- `fmm::FMM`: Fast multipole method tuning and auto-tuning settings.
+- `M::Array{R, 1}=zeros(R, 4)`: Auxilliary memory for computations. Should not be modified for most purposes.
+- `SFS::SubFilterScale=NoSFS{FLOAT_TYPE}()`: Subfilter-scale turbulence model.
+- `kernel::Kernel=Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf)`: Regularization scheme. Default is Gaussian smoothing of the vorticity field.
+- `UJ=UJ_fmm`: Method used to compute the \$N\$-body problem. Default uses the fast multipole method to achieve \$O(N)\$ complexity.
+- `Uinf::Function=(t) -> [0.0,0.0,0.0]`: Uniform freestream velocity function Uinf(t).
+- `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
+- `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
+- `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
+"""
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
@@ -103,7 +126,6 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         transposed=true,
         fmm::FMM=FMM(),
         M=zeros(R, 4),
-        toggle_rbf=false, toggle_sfs=false,
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
@@ -123,8 +145,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm, useGPU,
-                                            M, toggle_rbf, toggle_sfs)
+                                            transposed, relaxation, fmm, useGPU, M)
 end
 
 """
@@ -137,9 +158,19 @@ isLES(pfield::ParticleField) = isSFSenabled(pfield.SFS)
 
 ##### FUNCTIONS ################################################################
 """
-  `add_particle(pfield::ParticleField, X, Gamma, sigma; vol=0)`
+  `add_particle(pfield::ParticleField, X, Gamma, sigma; <keyword arguments>)`
 
 Add a particle to the field.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to add the particle to.
+- `X`                      : Position of the particle.
+- `Gamma`                  : Strength of the particle.
+- `sigma`                 : Smoothing radius of the particle.
+- `vol`                   : Volume of the particle. Default is 0.
+- `circulation`           : Circulation of the particle. Default is 1.
+- `C`                     : SFS parameter of the particle. Default is 0.
+- `static`                : If true, the particle is static. Default is false.
 """
 function add_particle(pfield::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
@@ -398,7 +429,16 @@ end
 """
   `nextstep(pfield::ParticleField, dt; relax=false)`
 
-Steps the particle field in time by a step `dt`.
+Steps the particle field in time by a step `dt`. Modifies the pfield in place.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to step.
+- `dt::Real`                : Time step to step the field.
+- `relax::Bool`             : If true, the relaxation scheme is applied to the
+                                particles. Default is false.
+
+# Returns
+- The time step number of the particle field.
 """
 function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs...)
 
