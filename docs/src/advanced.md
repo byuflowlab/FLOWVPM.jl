@@ -44,7 +44,7 @@ Describes how vorticity is distributed by the vortex particles.
 ### UJ
 Determines how the n-body particle interaction is solved. Users can provide custom UJ functions if desired.
 - [`UJ_fmm`](@ref FLOWVPM.UJ_fmm): Uses the fast multipole method to solve the n-body problem (default).
-- [`UJ_direct`](@ref FLOWVPM_direct): Loops through all particle interactions directly.
+- [`UJ_direct`](@ref FLOWVPM.UJ_direct(pfield::FLOWVPM.ParticleField)): Loops through all particle interactions directly.
 
 ### Uinf
 The freestream fluid velocity. Defaults to `SVector{3,Float64}(0,0,0)`.

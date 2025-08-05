@@ -36,27 +36,27 @@ FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programm
   * E. J. Alvarez, J. Mehr, & A. Ning, 2022, *FLOWUnsteady: An Interactional Aerodynamics Solver for Multirotor Aircraft and Wind Energy*. AIAA AVIATION 2022 Forum. [[PDF]](https://scholarsarchive.byu.edu/facpub/5830/)
 
 ## Sponsors
-  <img src="docs/img/sponsors00.jpg" alt="Pic here" style="width:900px"/>
+  <img src="docs/media/img/sponsors00.jpg" alt="Pic here" style="width:900px"/>
 
 ## Examples
 
   **Turbulent Jet:** [`examples/roundjet/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/roundjet) [[VIDEO1](https://www.youtube.com/watch?v=SobMmRR9JlU)] [[VIDEO2](https://www.youtube.com/watch?v=V9hthE7m1d4)]
-  [<img src="docs/media/img/vid-roundjet.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
+  [<img src="../media/img/vid-roundjet.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
 
   **Vortex Ring Leapfrog:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/media/img/vid-leapfrog.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
+  [<img src="../media/img/vid-leapfrog.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
 
   **Isolated Vortex Ring:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/media/img/vid-vortexring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
+  [<img src="../media/img/vid-vortexring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
 
   **Rotor in Hover:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) [[VIDEO](https://www.youtube.com/watch?v=u9SgYbYhPpU)]
-  [<img src="docs/media/img/vid-rotor.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
+  [<img src="../media/img/vid-rotor.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
 
   **Ring with Toroidal Vorticity:** [[LINK](https://www.linkedin.com/posts/alvarezedo_cfd-paraview-fluiddynamics-activity-6857078379137650688-F0yO)] [[VIDEO](https://www.youtube.com/watch?v=D3VHhDR8-bI)]
-  [<img src="docs/media/img/vid-vortonring2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
+  [<img src="../media/img/vid-vortonring2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
 
   **eVTOL Aircraft:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady)  [[VIDEO](https://youtu.be/-6aR37Z6hig)]
-  [<img src="docs/media/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://youtu.be/-6aR37Z6hig)
+  [<img src="../media/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://youtu.be/-6aR37Z6hig)
 
 ## About
   * Main Developer    : Eduardo J Alvarez

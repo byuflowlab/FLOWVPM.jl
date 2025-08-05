@@ -57,5 +57,5 @@ FLOWVPM.rungekutta3
 ## UJ
 ```@docs
 FLOWVPM.UJ_fmm
-FLOWVPM.UJ_direct
+FLOWVPM.UJ_direct(pfield::FLOWVPM.ParticleField)
 ```
