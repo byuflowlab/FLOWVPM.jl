@@ -43,8 +43,6 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubFilter
 
     zeta0::R = pfield.kernel.zeta(0)
 
-    inflow_turbulence(pfield, dt)
-
     # Update the particle field: convection and stretching
     for p in iterator(pfield)
 
@@ -82,6 +80,9 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubFilter
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
 
+    # convect turbulent convect
+    inflow_turbulence_convect(pfield, pfield.inflow_turbulence, dt)
+
 end
 
 
@@ -108,8 +109,6 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:
 
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
-
-    inflow_turbulence(pfield, dt)
 
     # Update the particle field: convection and stretching
     for (i_p,p) in enumerate(iterator(pfield))
@@ -170,6 +169,9 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:
     # Update the particle field: viscous diffusion
     viscousdiffusion(pfield, dt)
 
+    # convect turbulent convect
+    inflow_turbulence_convect(pfield, pfield.inflow_turbulence, dt)
+
 end
 
 
@@ -208,7 +210,6 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubF
             custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
-        inflow_turbulence(pfield, dt)
 
         # Update the particle field: convection and stretching
         for p in iterator(pfield)
@@ -249,6 +250,9 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, IT, <:Any, <:SubF
 
         # Update the particle field: viscous diffusion
         viscousdiffusion(pfield, dt; aux1=a, aux2=b)
+
+        # convect turbulent convect
+        inflow_turbulence_convect(pfield, pfield.inflow_turbulence, dt)
 
     end
 
@@ -322,13 +326,15 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:An
             custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
-        inflow_turbulence(pfield, dt)
 
         # Update the particle field: convection and stretching
         update_particle_states(pfield,MM,a,b,dt,Uinf,f, g, zeta0)
 
         # Update the particle field: viscous diffusion
         viscousdiffusion(pfield, dt; aux1=a, aux2=b)
+
+        # convect turbulent convect
+        inflow_turbulence_convect(pfield, pfield.inflow_turbulence, dt)
     end
 
     # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?

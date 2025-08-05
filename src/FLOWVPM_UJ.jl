@@ -34,6 +34,7 @@ function UJ_direct(pfield::ParticleField;
 
     fmm.direct!(pfield; scalar_potential=false, hessian=true)
     sfs && Estr_direct!(pfield)
+    inflow_turbulence(pfield, pfield.inflow_turbulence)
 end
 
 """
@@ -122,6 +123,7 @@ function UJ_fmm(
         # NOTE: this must be performed after velocity gradients are calculated, and
         #       therefore cannot be included in the direct function of the FMM
         sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
+        inflow_turbulence(pfield, pfield.inflow_turbulence)
     end
 
     return nothing
