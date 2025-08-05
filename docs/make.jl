@@ -14,7 +14,7 @@ makedocs(sitename="FLOWVPM.jl",
         "Guided Examples" => "guided.md",
         "Advanced Usage" => "advanced.md",
         "Theory" => "rVPM.md",
-        "Reference" => "api.md",
+        "Reference" => "reference.md",
         ],
         checkdocs=:none
     )
