@@ -29,9 +29,10 @@ struct SyntheticEddyMethod <: InflowTurbulenceScheme
 end
 
 function inflow_turbulence(pfield, scheme::SyntheticEddyMethod)
-    SyntheticEddy.compute_fluctuations!(pfield.particles[U_INDEX,1:pfield.np], 
-                                        pfield.particles[X_INDEX,1:pfield.np], 
-                                        scheme.eddydomain)
+    U = view(pfield.particles, U_INDEX, 1:pfield.np)
+    J = view(pfield.particles, J_INDEX, 1:pfield.np)
+    X = view(pfield.particles, X_INDEX, 1:pfield.np)
+    SyntheticEddy.compute_fluctuations!(U, X, scheme.eddydomain; compute_hessian=J)
     return nothing
 end
 
