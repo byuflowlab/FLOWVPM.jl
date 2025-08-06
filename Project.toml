@@ -22,6 +22,7 @@ WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
 FastMultipole = "2.0.0"
+StaticArrays = "1"
 julia = "1.6"
 
 [extras]
