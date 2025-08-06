@@ -21,6 +21,7 @@ TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
+BSON = "0.3"
 FastMultipole = "2.0.0"
 julia = "1.6"
 
