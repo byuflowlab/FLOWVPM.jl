@@ -1,3 +1,5 @@
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://flow.byu.edu/FLOWVPM.jl/dev)
+![](https://github.com/byuflowlab/FLOWVPM.jl/actions/workflows/CI.yml/badge.svg)
 <p align="center">
   <img src="docs/media/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
   <br>
