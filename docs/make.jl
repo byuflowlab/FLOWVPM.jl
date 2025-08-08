@@ -21,5 +21,5 @@ makedocs(sitename="FLOWVPM.jl",
 
 deploydocs(;
     repo="github.com/byuflowlab/FLOWVPM",
-    devbranch="main",
+    devbranch="master",
 )
