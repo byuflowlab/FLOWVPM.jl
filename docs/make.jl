@@ -5,7 +5,7 @@ DocMeta.setdocmeta!(FLOWVPM, :DocTestSetup, :(using FLOWVPM); recursive=true)
 makedocs(sitename="FLOWVPM.jl",
         modules=[FLOWVPM],
         format=Documenter.HTML(;
-        canonical="https://flow.byu.edu/FLOWVPM",
+        canonical="https://flow.byu.edu/FLOWVPM.jl",
         edit_link="master",
         assets=String[]),
         pages=[
@@ -20,6 +20,6 @@ makedocs(sitename="FLOWVPM.jl",
     )
 
 deploydocs(;
-    repo="github.com/byuflowlab/FLOWVPM",
+    repo="github.com/byuflowlab/FLOWVPM.jl",
     devbranch="master",
 )
