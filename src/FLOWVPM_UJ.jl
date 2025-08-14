@@ -87,19 +87,6 @@ function UJ_fmm(
         # calculate vorticity
         zeta_fmm(pfield)
     else
-        for i in 1:pfield.np
-            X_i = get_X(pfield, i)
-            for j in 1:pfield.np
-                i == j && continue
-
-                # Calculate distance between particles i and j
-                X_j = get_X(pfield, j)
-
-                if X_i == X_j
-                    error()
-                end
-            end
-        end
         # Calculate FMM of vector potential
         args = fmm.fmm!(pfield; 
                         expansion_order=fmm_options.p-1, 
