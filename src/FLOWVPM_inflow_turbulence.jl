@@ -32,7 +32,7 @@ function inflow_turbulence(pfield, scheme::SyntheticEddyMethod)
     U = view(pfield.particles, U_INDEX, 1:pfield.np)
     J = view(pfield.particles, J_INDEX, 1:pfield.np)
     X = view(pfield.particles, X_INDEX, 1:pfield.np)
-    SyntheticEddy.compute_fluctuations!(U, X, scheme.eddydomain; compute_hessian=J)
+    SyntheticEddy.compute_fluctuations!(U, X, scheme.eddydomain; hessian=J)
     return nothing
 end
 
