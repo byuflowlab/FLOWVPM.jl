@@ -54,10 +54,11 @@ struct FMM
   autotune_ncrit::Bool            # If true, automatically adjust ncrit to optimize performance
   autotune_reg_error::Bool        # If true, automatically calculate rho/sigma to constrain regularization error
   default_rho_over_sigma::FLOAT_TYPE # Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true)
+  min_ncrit::Int64                 # Minimum number of particles per leaf
 end
 
-function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0)
-    return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=2)
+    return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma, min_ncrit)
 end
 
 ################################################################################
