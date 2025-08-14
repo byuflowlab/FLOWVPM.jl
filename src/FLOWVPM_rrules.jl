@@ -32,9 +32,10 @@ function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tint
 
     #l = length(ReverseDiff.tape(target_system.particles[1].X[1]))
 
-    if source_system.toggle_rbf
-        error("vorticity_direct not yet compatible with reversediff! Please set toggle_rbf to false.")
-    end
+    # toggle_rbf is no longer a field of ::ParticleField, so the following is commented, and should probably be deleted
+    # if source_system.toggle_rbf
+    #     error("vorticity_direct not yet compatible with reversediff! Please set toggle_rbf to false.")
+    # end
 
     xyz_target = reshape(view(target_system.particles, 1:3, target_index),3*length(target_index))
     J_target = reshape(view(target_system.particles, 16:24, target_index),9*length(target_index))
@@ -46,7 +47,7 @@ function fmm.direct!(target_system::ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tint
     J_source = reshape(view(source_system.particles, 16:24, source_index),9*length(source_index))
     S_target = reshape(view(target_system.particles, 40:42, target_index),3*length(target_index))
 
-    UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index),source_system.toggle_sfs)
+    UJS = fmm.direct!(xyz_target, J_target, gamma_source, xyz_source, sigma_source, kernel_source, U_target, J_source, S_target, length(target_index), length(source_index))
 
     for i=1:length(target_index)
         target_system.particles[10:12,target_index[i]] .= UJS[3*(i-1)+1:3*(i-1)+3] # set new U

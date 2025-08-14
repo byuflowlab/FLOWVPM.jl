@@ -90,7 +90,7 @@ function UJ_fmm(
         # Calculate FMM of vector potential
         args = fmm.fmm!(pfield; 
                         expansion_order=fmm_options.p-1, 
-                        leaf_size_source=fmm_options.ncrit, 
+                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit), 
                         multipole_acceptance=fmm_options.theta, 
                         error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
                         tune=true,
@@ -112,7 +112,8 @@ function UJ_fmm(
                             fmm_options.autotune_p,
                             fmm_options.autotune_ncrit,
                             fmm_options.autotune_reg_error,
-                            fmm_options.default_rho_over_sigma)
+                            fmm_options.default_rho_over_sigma,
+                            fmm_options.min_ncrit)
         end
 
         # This should be concurrent_direct=(pfield.useGPU > 0)

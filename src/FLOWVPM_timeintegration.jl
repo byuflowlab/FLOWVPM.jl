@@ -9,9 +9,15 @@
 =###############################################################################
 
 """
-    _euler(pfield, dt; relax=false)
+    euler(pfield::ParticleField, dt::Real; relax::Bool=false, custom_UJ=nothing)
 
-Convects the `::ParticleField` by timestep `dt` using a forward Euler step.
+Convects the `pfield` by timestep `dt` using a forward Euler step.
+
+# Arguments
+- `pfield::ParticleField` The particle field to integrate.
+- `dt::Real` The time step.
+- `relax::Bool` Whether to apply relaxation (default: false).
+- `custom_UJ` Optional custom function for updating U and J.
 
 """
 function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
@@ -291,9 +297,19 @@ end
 
 
 """
+
+    rungekutta3(pfield::ParticleField, dt::Real; relax::Bool=false, custom_UJ=nothing)
+
 Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme using the VPM reformulation. See Notebook entry 20180105
 (RK integration) and notebook 20210104 (reformulation).
+
+# Arguments
+- `pfield::ParticleField` The particle field to integrate.
+- `dt::R3` The time step.
+- `relax::Bool` Whether to apply relaxation (default: false).
+- `custom_UJ` Optional custom function for updating U and J.
+
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, IT, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
                      dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, IT, R2, R3}
