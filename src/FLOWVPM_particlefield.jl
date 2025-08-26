@@ -57,7 +57,7 @@ struct FMM
   min_ncrit::Int64                 # Minimum number of particles per leaf (default to 3 for safety)
 end
 
-function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-6, absolute_tolerance=1e-6, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
     return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma, min_ncrit)
 end
 
