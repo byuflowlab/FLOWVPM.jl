@@ -320,8 +320,9 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     # Reset storage memory to zero
     zeroR::R = zero(R)
     for i in 1:get_np(pfield)
-        p = get_particle(pfield, i)
-        !is_static(p) && set_M(p,zeroR) # this is necessary to reset the particle's M storage memory
+        if pfield.particles[STATIC_INDEX,i] > 0 
+            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+        end
     end
 
     # Runge-Kutta inner steps
@@ -333,9 +334,9 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         if isnothing(custom_UJ)
-            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
+            pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
         else
-            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
+            custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
         end
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
         #println("tape entries after SFS 2/before time marching: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
@@ -417,9 +418,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         #       by not calculating UJ again.
         pfield.UJ(pfield)
 
-        for p in iterator(pfield)
-            # Align particle strength
-            pfield.relaxation(p)
+        for i in 1:get_np(pfield)
+            if pfield.particles[STATIC_INDEX,i] > 0 
+                pfield.relaxation(get_particle(pfield, i)) # this is necessary to reset the particle's M storage memory
+            end
         end
     end
 
@@ -429,7 +431,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     return nothing
 end
 
-
+# TODO: SHOULD BE MULTITHREADED
 function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
 
     for i in 1:pfield.np
