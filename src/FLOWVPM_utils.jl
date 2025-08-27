@@ -475,12 +475,8 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
 
     # Delete existing particles
     if overwrite
-        for i in get_np(pfield):-1:1
-            remove_particle(pfield, i)
-        end
+        pfield.np = 0
     end
-
-    maxparticles = pfield.maxparticles
 
     # Open HDF5 file
     h5fname = h5_fname * (h5_fname[end-2:end]==".h5" ? "" : ".h5")
@@ -491,9 +487,9 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
     np = HDF5.read(h5["np"])
 
     # Error case: Particle overflow
-    if np>maxparticles
+    if pfield.np+np > pfield.maxparticles
         error("The field to be read ($(h5_fname)) contains $(np) particles"*
-                " but max number of particles is $(maxparticles).")
+                " but max number of particles is $(pfield.maxparticles).")
     end
 
     # Use time stamp
@@ -521,13 +517,29 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
     end
 
     # Load particles
-    for i in 1:np
-        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                                    circulation=circulation[i],
-                                    vol=vol[i],
-                                    static = static_bool ? static[i] : false,
-                                    C = C_bool ? view(C, 1:3, i) : 0)
+    start_i = pfield.np + 1
+    end_i = start_i + np - 1
+
+    Threads.@threads for i in start_i:end_i
+        pfield.particles[X_INDEX[1], i] = X[1, i]
+        pfield.particles[X_INDEX[2], i] = X[2, i]
+        pfield.particles[X_INDEX[3], i] = X[3, i]
+        pfield.particles[GAMMA_INDEX[1], i] = Gamma[1, i]
+        pfield.particles[GAMMA_INDEX[2], i] = Gamma[2, i]
+        pfield.particles[GAMMA_INDEX[3], i] = Gamma[3, i]
+        pfield.particles[SIGMA_INDEX, i] = sigma[i]
+        pfield.particles[VOL_INDEX, i] = vol[i]
+        pfield.particles[CIRCULATION_INDEX, i] = circulation[i]
+        pfield.particles[STATIC_INDEX, i] = static_bool ? Float64(static[i]) : Float64(false)
+        if C_bool
+            pfield.particles[C_INDEX[1], i] = C[1, i]
+            pfield.particles[C_INDEX[2], i] = C[2, i]
+            pfield.particles[C_INDEX[3], i] = C[3, i]
+        else
+            pfield.particles[C_INDEX, i] .= 0
+        end
     end
+    pfield.np += np
 
     close(h5)
 
