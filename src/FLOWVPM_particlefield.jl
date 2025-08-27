@@ -465,7 +465,7 @@ end
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
     for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] > 0) && _reset_particle(pfield, i)
+        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
     end
 end
 
@@ -487,7 +487,7 @@ end
 
 function _reset_particles_sfs(pfield::ParticleField)
     for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] > 0) && _reset_particle_sfs(pfield, i)
+        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
     end
 end
 
