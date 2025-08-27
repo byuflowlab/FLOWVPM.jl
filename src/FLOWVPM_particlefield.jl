@@ -464,12 +464,8 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    # for p in iterator(pfield)
-    #     _reset_particle(p)
-    # end
     for i in 1:pfield.np
-        p = get_particle(pfield, i)
-        !is_static(p) && _reset_particle(p)
+        (pfield.particles[STATIC_INDEX, i] > 0) && _reset_particle(pfield, i)
     end
 end
 
@@ -481,20 +477,22 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
-_reset_particle(pfield::ParticleField, i::Int) = _reset_particle(get_particle(pfield, i))
+function _reset_particle(pfield::ParticleField, i::Int)
+    zeroVal = zero(eltype(pfield.particles))
+    pfield.particles[U_INDEX, i] .= zeroVal
+    pfield.particles[VORTICITY_INDEX, i] .= zeroVal
+    pfield.particles[J_INDEX, i] .= zeroVal
+    pfield.particles[PSE_INDEX, i] .= zeroVal
+end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    # for p in iterator(pfield)
-    #     _reset_particle_sfs(p)
-    # end
     for i in 1:pfield.np
-        p = get_particle(pfield, i)
-        !is_static(p) && _reset_particle_sfs(p)
+        (pfield.particles[STATIC_INDEX, i] > 0) && _reset_particle_sfs(pfield, i)
     end
 end
 
-function _reset_particles_sfs(pfield::ParticleField, i::Int)
-    _reset_particle(get_particle(pfield, i))
+function _reset_particle_sfs(pfield::ParticleField, i::Int)
+    pfield.particles[SFS_INDEX, i] .= zero(eltype(pfield.particles))
 end
 
 function _reset_particle_sfs(particle)
