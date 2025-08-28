@@ -24,10 +24,10 @@ divs_128 = @SMatrix [
                      4 8 8 2 4 6 8 4 1 2 3 4 2 1 2 1 1 ]
 
 
-const divs_lookup = Dict{Int, SMatrix}(
-                                       512 => divs_512,
-                                       480 => divs_480,
-                                       384 => divs_384,
-                                       256 => divs_256,
-                                       128 => divs_128
-                                      )
+divs_lookup = Dict{Int, SMatrix}(
+                                 512 => divs_512,
+                                 480 => divs_480,
+                                 384 => divs_384,
+                                 256 => divs_256,
+                                 128 => divs_128
+                                )
