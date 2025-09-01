@@ -89,6 +89,9 @@ isSFSenabled(SFS::SubFilterScale) = !(typeof(SFS) <: NoSFS)
 ################################################################################
 # CONSTANT-COEFFICIENT SFS SCHEME
 ################################################################################
+"""
+    Subfilter-scale scheme with an associated constant model coefficient.
+"""
 struct ConstantSFS{R,Tmodel,Tcontrols,Tclippings} <: SubFilterScale{R}
     model::Tmodel                 # Model of subfilter scale contributions
     Cs::R                           # Model coefficient

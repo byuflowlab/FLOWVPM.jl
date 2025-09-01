@@ -395,12 +395,23 @@ function _get_settings_string(pfield::ParticleField; tab=0)
     return str
 end
 
+"""
+    save_settings(pfield::ParticleField, file_name::String;
+                                        path::String="", suff="_settings")
+
+Save the settings of a particle field to a BSON file.
+"""
 function save_settings(pfield::ParticleField, file_name::String;
                                         path::String="", suff="_settings")
     settings = _get_settings(pfield)
     BSON.bson(joinpath(path, file_name*suff*".bson"), settings)
 end
 
+"""
+    read_settings(fname::String; path::String="")
+
+Read the settings of a particle field from a BSON file.
+"""
 function read_settings(fname::String; path::String="")
     # Read settings as a dictionary with String keys
     settings_dict = BSON.load(joinpath(path, fname))
@@ -452,6 +463,12 @@ function generate_particlefield(settings_fname::String;
     return pfield
 end
 
+"""
+    read(h5_fname::String, settings_fname::String; overwrite_settings=(),
+                                                                     optargs...)
+
+    Read particle field from HDF5 file.
+"""
 function read(h5_fname::String, settings_fname::String; overwrite_settings=(),
                                                                      optargs...)
     # Initiate particle field
