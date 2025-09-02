@@ -464,8 +464,14 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    Threads.@threads for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+    if pfield.np > 1000
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+        end
     end
 end
 
@@ -486,8 +492,14 @@ function _reset_particle(pfield::ParticleField, i::Int)
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    Threads.@threads for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+    if pfield.np > 1000
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+        end
     end
 end
 
