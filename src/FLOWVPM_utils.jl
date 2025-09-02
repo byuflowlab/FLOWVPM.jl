@@ -191,13 +191,13 @@ function save(
     temp = zeros(1,np)
     h5["X"] = view(self.particles, X_INDEX, 1:np)
     h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
-    temp .= reshape(view(self.particles, SIGMA_INDEX, 1:np), 1, np)
+    temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
     h5["sigma"] = temp
-    temp .= reshape(view(self.particles, CIRCULATION_INDEX, 1:np), 1, np)
+    temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
     h5["circulation"] = temp
-    temp .= reshape(view(self.particles, VOL_INDEX, 1:np), 1, np)
+    temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
     h5["vol"] = temp
-    temp .= reshape(view(self.particles, STATIC_INDEX, 1:np), 1, np)
+    temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
     h5["static"] = temp
     h5["velocity"] = view(self.particles, U_INDEX, 1:np)
     h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)

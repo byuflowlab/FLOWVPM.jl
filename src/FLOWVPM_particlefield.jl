@@ -450,7 +450,7 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     
     # update U_prev
     if update_U_prev
-        for i in 1:get_np(pfield)
+        Threads.@threads for i in 1:get_np(pfield)
             Ux, Uy, Uz = get_U(pfield, i)
             set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
         end
@@ -464,7 +464,7 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
     end
 end
@@ -486,7 +486,7 @@ function _reset_particle(pfield::ParticleField, i::Int)
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
     end
 end
