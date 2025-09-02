@@ -296,9 +296,7 @@ function update_particle_states(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:
 end
 
 function update_particle_states_multithreaded(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
-    n_per_thread, rem = divrem(pfield.np,Threads.nthreads())
-    n = n_per_thread + (rem > 0)
-    assignments = 1:n:pfield.np
+    assignments, n = thread_assignments(pfield.np, Threads.nthreads())
 
     Threads.@threads :static for i_assignment in eachindex(assignments)
         i_start = assignments[i_assignment]
