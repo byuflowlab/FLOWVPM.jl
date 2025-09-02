@@ -187,21 +187,26 @@ function save(
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [get_X(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [get_Gamma(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["sigma"] = [get_sigma(P)[] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [get_circulation(P)[] for P in iterate(self; include_static=true)]
-    h5["vol"] = [get_vol(P)[] for P in iterate(self; include_static=true)]
-    h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
-    # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
-    h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_x"] = [get_J(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_y"] = [get_J(P)[i] for i in 4:6, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_z"] = [get_J(P)[i] for i in 7:9, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+    sigma, circulation, vol, static = zeros(1, np), zeros(1, np), zeros(1, np), zeros(1, np)
+    sigma .= reshape(view(self.particles, SIGMA_INDEX, 1:np), 1, np)
+    circulation .= reshape(view(self.particles, CIRCULATION_INDEX, 1:np), 1, np)
+    vol .= reshape(view(self.particles, VOL_INDEX, 1:np), 1, np)
+    static .= reshape(view(self.particles, STATIC_INDEX, 1:np), 1, np)
+
+    h5["X"] = view(self.particles, X_INDEX, 1:np)
+    h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
+    h5["sigma"] = sigma
+    h5["circulation"] = circulation
+    h5["vol"] = vol
+    h5["static"] = static
+    h5["velocity"] = view(self.particles, U_INDEX, 1:np)
+    h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
+    h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
+    h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
+    h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
 
     if isLES(self)
-        h5["C"] = [get_C(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+        h5["C"] = view(self.particles, C_INDEX, 1:np)
     end
 
     # # Connectivity information
