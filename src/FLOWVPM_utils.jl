@@ -187,18 +187,18 @@ function save(
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    sigma, circulation, vol, static = zeros(1, np), zeros(1, np), zeros(1, np), zeros(1, np)
-    sigma .= reshape(view(self.particles, SIGMA_INDEX, 1:np), 1, np)
-    circulation .= reshape(view(self.particles, CIRCULATION_INDEX, 1:np), 1, np)
-    vol .= reshape(view(self.particles, VOL_INDEX, 1:np), 1, np)
-    static .= reshape(view(self.particles, STATIC_INDEX, 1:np), 1, np)
 
+    temp = zeros(1,np)
     h5["X"] = view(self.particles, X_INDEX, 1:np)
     h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
-    h5["sigma"] = sigma
-    h5["circulation"] = circulation
-    h5["vol"] = vol
-    h5["static"] = static
+    temp .= reshape(view(self.particles, SIGMA_INDEX, 1:np), 1, np)
+    h5["sigma"] = temp
+    temp .= reshape(view(self.particles, CIRCULATION_INDEX, 1:np), 1, np)
+    h5["circulation"] = temp
+    temp .= reshape(view(self.particles, VOL_INDEX, 1:np), 1, np)
+    h5["vol"] = temp
+    temp .= reshape(view(self.particles, STATIC_INDEX, 1:np), 1, np)
+    h5["static"] = temp
     h5["velocity"] = view(self.particles, U_INDEX, 1:np)
     h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
     h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
