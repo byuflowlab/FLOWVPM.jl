@@ -14,6 +14,14 @@ Furthermore, rVPM is highly efficient since it uses computational elements only 
 FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programming language for high-performance computing.
 [Paraview](https://www.paraview.org/) is recommended for visualization of simulations.
 
+## Installation
+
+Install using Julia's package manager as:
+
+```@julia-repl
+] add https://github.com/byuflowlab/FLOWVPM.jl.git
+```
+
 ## Features
   * Fast-multipole acceleration through FastMultipole.jl
   * Threaded CPU parallelization through OpenMP
