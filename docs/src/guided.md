@@ -1,5 +1,14 @@
 # Guided Examples
 
+## CPU Parallelization
+
+To enable CPU parallelization, merely launch Julia with multiple threads and run your code as usual:
+
+```bash
+julia --threads=auto
+```
+The [FastMultipole.jl](https://flow.byu.edu/FastMultipole.jl/dev/) backend will automatically take advantage of the available threads.
+
 ## Vortex Ring
 ```@example ring
 using FLOWVPM
