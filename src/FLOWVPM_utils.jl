@@ -139,7 +139,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 end
 
 """
-  `save(pfield, file_name; path="")`
+  save(pfield, file_name; path="")
 
 Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
@@ -464,7 +464,7 @@ function generate_particlefield(settings_fname::String;
 end
 
 """
-  `read(h5_fname; path="")`
+  read(h5_fname, settings_fname)
 
 Reads an HDF5 file containing a particle field created with `save(pfield)`.
 """
