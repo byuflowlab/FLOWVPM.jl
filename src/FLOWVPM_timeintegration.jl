@@ -288,96 +288,46 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     #                      qsmg <=> get_M(p)[8], Z <=> MM[4], S <=> MM[1:3]
 
     # Calculate freestream
-    # Uinf::Array{R, 1} = R.(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
     Uinf = SVector{3,R}(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
-
+    
     MM = pfield.M # eltype(pfield.M) = R
-    # MM::Array{R, 1} = pfield.M # eltype(pfield.M) = R
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g # formulation floating-point type may end up as Float64 even if AD is used. (double check this)
-    #zeta0::R = pfield.kernel.zeta(0)
     zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    for p in iterator(pfield); get_M(p) .= zeroR; end;
 
+    if R <: ReverseDiff.TrackedReal
+        tp = ReverseDiff.tape(pfield)
+        zeroT = zero(eltype(pfield.particles[1].value))
+        for p in iterator(pfield)
+            M = get_M(p)
+            for i=1:8
+                M[i] = ReverseDiff.track(zeroT, tp)
+            end
+        end
+    else
+        for p in iterator(pfield); get_M(p) .= zeroR; end; # this line is not safe with ReverseDiff.
+    end
     # Runge-Kutta inner steps
     for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
 
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
-        #println("tape entries before SFS 1: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
-        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
-        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        #pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         if isnothing(custom_UJ)
             pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=pfield.toggle_sfs)
         else
             custom_UJ(pfield; reset_sfs=true, reset=true, sfs=pfield.toggle_sfs)
         end
-        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
-        #println("tape entries after SFS 2/before time marching: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
-        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+        #pfield.SFS(pfield, AfterUJ(); a=a, b=b)
         # Update the particle field: convection and stretching
         update_particle_states(pfield,MM,a,b,dt,Uinf,f, g, zeta0)
-
-        #=for p in iterator(pfield)
-
-            C::R = get_C(p)[1]
-
-            # Low-storage RK step
-            ## Velocity
-            M = get_M(p); G = get_Gamma(p); J = get_J(p)
-            M[1] = a*M[1] + dt*(get_U(p)[1] + Uinf[1])
-            M[2] = a*M[2] + dt*(get_U(p)[2] + Uinf[2])
-            M[3] = a*M[3] + dt*(get_U(p)[3] + Uinf[3])
-
-            # Update position
-            get_X(p)[1] += b*M[1]
-            get_X(p)[2] += b*M[2]
-            get_X(p)[3] += b*M[3]
-
-            # Store stretching S under M[1:3]
-            if pfield.transposed
-                # Transposed scheme S = (Γ⋅∇')U
-                MM[1] = J[1]*G[1]+J[2]*G[2]+J[3]*G[3]
-                MM[2] = J[4]*G[1]+J[5]*G[2]+J[6]*G[3]
-                MM[3] = J[7]*G[1]+J[8]*G[2]+J[9]*G[3]
-            else
-                # Classic scheme (Γ⋅∇)U
-                MM[1] = J[1]*G[1]+J[4]*G[2]+J[7]*G[3]
-                MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
-                MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
-            end
-
-            # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-            MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
-            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
-            MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
-
-            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
-            # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-            M[4] = a*M[4] + dt*(MM[1] - 3*MM[4]*G[1] - C*get_SFS1(p)*get_sigma(p)[]^3/zeta0)
-            M[5] = a*M[5] + dt*(MM[2] - 3*MM[4]*G[2] - C*get_SFS2(p)*get_sigma(p)[]^3/zeta0)
-            M[6] = a*M[6] + dt*(MM[3] - 3*MM[4]*G[3] - C*get_SFS3(p)*get_sigma(p)[]^3/zeta0)
-
-            # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-            M[8] = a*M[8] - dt*( get_sigma(p)[] * MM[4] )
-
-            # Update vectorial circulation
-            G[1] += b*M[4]
-            G[2] += b*M[5]
-            G[3] += b*M[6]
-
-            # Update cross-sectional area
-            get_sigma(p)[] += b*M[8]
-
-        end=#
-
+        
         # Update the particle field: viscous diffusion
-        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
-        #println("tape entries after diffusion: $(length(ReverseDiff.tape(pfield.particles[1].X[1])) - l)")
-        #l = length(ReverseDiff.tape(pfield.particles[1].X[1]))
+        #viscousdiffusion(pfield, dt; aux1=a, aux2=b)
 
     end
+    return nothing
 
     # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?
     # Relaxation: Align vectorial circulation to local vorticity
@@ -395,7 +345,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 
         for p in iterator(pfield)
             # Align particle strength
-            pfield.relaxation(p)
+            #pfield.relaxation(p)
         end
     end
 
@@ -412,52 +362,90 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 
         C::R = get_C(p)[1]
 
-            # Low-storage RK step
-            ## Velocity
-            M = get_M(p); G = get_Gamma(p); J = get_J(p)
-            M[1] = a*M[1] + dt*(get_U(p)[1] + Uinf[1])
-            M[2] = a*M[2] + dt*(get_U(p)[2] + Uinf[2])
-            M[3] = a*M[3] + dt*(get_U(p)[3] + Uinf[3])
-
-            # Update position
-            get_X(p)[1] += b*M[1]
-            get_X(p)[2] += b*M[2]
-            get_X(p)[3] += b*M[3]
-
-            # Store stretching S under M[1:3]
-            if pfield.transposed
-                # Transposed scheme S = (Γ⋅∇')U
-                MM[1] = J[1]*G[1]+J[2]*G[2]+J[3]*G[3]
-                MM[2] = J[4]*G[1]+J[5]*G[2]+J[6]*G[3]
-                MM[3] = J[7]*G[1]+J[8]*G[2]+J[9]*G[3]
+        # Low-storage RK step
+        ## Velocity
+        M = get_M(p); G = get_Gamma(p); J = get_J(p); S = get_SFS(p); sigma = get_sigma(p)[]; X = get_X(p); U = get_U(p)
+        #M[1] = a*M[1] + dt*(get_U(p)[1] + Uinf[1])
+        #M[2] = a*M[2] + dt*(get_U(p)[2] + Uinf[2])
+        #M[3] = a*M[3] + dt*(get_U(p)[3] + Uinf[3])
+        for i=1:3
+            if R<:ReverseDiff.TrackedReal
+                add!(M[i], (a-1)*M[i] + dt*(U[i] + Uinf[i]))
             else
-                # Classic scheme (Γ⋅∇)U
-                MM[1] = J[1]*G[1]+J[4]*G[2]+J[7]*G[3]
-                MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
-                MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
+                M[i] = a*M[i] + dt*(U[i] + Uinf[i])
             end
+        end
 
-            # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
-            MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
-            MM[4] -= f/(1+3*f) * (C*get_SFS1(p)*G[1] + C*get_SFS2(p)*G[2] + C*get_SFS3(p)*G[3]) * get_sigma(p)[]^3/zeta0
-            MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
+        # Update position
+        
+        #get_X(p)[1] += b*M[1]
+        #get_X(p)[2] += b*M[2]
+        #get_X(p)[3] += b*M[3]
+        
+        for i=1:3
+            if R <: ReverseDiff.TrackedReal
+                add!(X[i], b*M[i])
+            else
+                X[i] += b*M[i]
+            end
+        end
+        # Store stretching S under M[1:3]
+        if pfield.transposed
+            # Transposed scheme S = (Γ⋅∇')U
+            MM[1] = J[1]*G[1]+J[2]*G[2]+J[3]*G[3]
+            MM[2] = J[4]*G[1]+J[5]*G[2]+J[6]*G[3]
+            MM[3] = J[7]*G[1]+J[8]*G[2]+J[9]*G[3]
+        else
+            # Classic scheme (Γ⋅∇)U
+            MM[1] = J[1]*G[1]+J[4]*G[2]+J[7]*G[3]
+            MM[2] = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
+            MM[3] = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
+        end
+        # Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
+        MM[4] = (f+g)/(1+3*f) * (MM[1]*G[1] + MM[2]*G[2] + MM[3]*G[3])
+        MM[4] -= f/(1+3*f) * (C*S[1]*G[1] + C*S[2]*G[2] + C*S[3]*G[3]) * sigma^3/zeta0
+        MM[4] /= G[1]^2 + G[2]^2 + G[3]^2
 
-            # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
-            # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-            M[4] = a*M[4] + dt*(MM[1] - 3*MM[4]*G[1] - C*get_SFS1(p)*get_sigma(p)[]^3/zeta0)
-            M[5] = a*M[5] + dt*(MM[2] - 3*MM[4]*G[2] - C*get_SFS2(p)*get_sigma(p)[]^3/zeta0)
-            M[6] = a*M[6] + dt*(MM[3] - 3*MM[4]*G[3] - C*get_SFS3(p)*get_sigma(p)[]^3/zeta0)
+        # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
+        # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
+        #M[4] = a*M[4] + dt*(MM[1] - 3*MM[4]*G[1] - C*S[1]*sigma^3/zeta0)
+        #M[5] = a*M[5] + dt*(MM[2] - 3*MM[4]*G[2] - C*S[2]*sigma^3/zeta0)
+        #M[6] = a*M[6] + dt*(MM[3] - 3*MM[4]*G[3] - C*S[3]*sigma^3/zeta0)
+        for i=1:3
+            if R <: ReverseDiff.TrackedReal
+                add!(M[i+3], (a-1)*M[i+3] + dt*(MM[i] - 3*MM[4]*G[i] - C*S[i]*sigma^3/zeta0))
+            else
+                M[i+3] = a*M[i+3] + dt*(MM[i] - 3*MM[4]*G[i] - C*S[i]*sigma^3/zeta0)
+            end
+        end
 
-            # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-            M[8] = a*M[8] - dt*( get_sigma(p)[] * MM[4] )
+        # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
+        #M[8] = a*M[8] - dt*(sigma * MM[4])
+        if R <: ReverseDiff.TrackedReal
+            add!(M[8], (a-1)*M[8] - dt*(sigma * MM[4]))
+        else
+            M[8] = a*M[8] - dt*(sigma * MM[4])
+        end
 
-            # Update vectorial circulation
-            G[1] += b*M[4]
-            G[2] += b*M[5]
-            G[3] += b*M[6]
+        # Update vectorial circulation
+        #G[1] += b*M[4]
+        #G[2] += b*M[5]
+        #G[3] += b*M[6]
+        for i=1:3
+            if R <: ReverseDiff.TrackedReal
+                add!(G[i], b*M[i+3])
+            else
+                G[i] += b*M[i+3]
+            end
+        end
 
-            # Update cross-sectional area
-            get_sigma(p)[] += b*M[8]
+        # Update cross-sectional area
+        #sigma += b*M[8]
+        if R <: ReverseDiff.TrackedReal
+            add!(sigma, b*M[8])
+        else
+            sigma += b*M[8]
+        end
 
     end
 

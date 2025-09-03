@@ -25,7 +25,8 @@ import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
-# using ReverseDiff
+using ReverseDiff
+using ImplicitAD
 using StaticArrays
 # using CUDA
 # using CUDA: i32
@@ -69,7 +70,7 @@ for header_name in ["kernel", "viscous", "formulation",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils"]# , "rrules"]
+                    "monitors", "utils" , "rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

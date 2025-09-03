@@ -51,9 +51,13 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       save_code::String="",
                       nsteps_save::Int=1, prompt::Bool=true,
                       verbose::Bool=true, verbose_nsteps::Int=10, v_lvl::Int=0,
-                      save_time=true)
+                      save_time=true,
+                      reverse_ad_mode=nothing,
+                      xd=nothing,
+                      xci=nothing)
 
     # ERROR CASES
+    #check_derivs(pfield.particles)
     ## Check that viscous scheme and kernel are compatible
     compatible_kernels = _kernel_compatibility(pfield.viscous)
 
@@ -84,8 +88,18 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                                                     static_particles_function, v_lvl)
 
     # RUN
-    for i in 0:nsteps
 
+    if reverse_ad_mode == "ImplicitAD"
+
+        t = range(0, nsteps*dt, nsteps)
+        p = (static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield)
+        pfield.particles = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+
+        return nothing
+    end
+
+    for i in 0:nsteps
         if i%verbose_nsteps==0
             vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
         end
@@ -97,7 +111,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         org_np = get_np(pfield)
 
-        # Time step
         if i!=0
             # Add static particles
             remove = static_particles_function(pfield, pfield.t, dt)
@@ -106,7 +119,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
 
             # Remove static particles (assumes particles remained sorted)
-            if remove==nothing || remove
+            if remove===nothing || remove
                 for pi in get_np(pfield):-1:(org_np+1)
                     remove_particle(pfield, pi)
                 end
@@ -114,15 +127,20 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         end
 
         # Calls user-defined runtime function
+        #pfield.np > 0 && check_deriv_allocation(pfield.particles[:, 1:pfield.np]; label="full pfield")
+        #pfield.np > 0 && check_deriv_allocation(pfield.particles[GAMMA_INDEX, 1:pfield.np]; label="Gamma")
         breakflag = runtime_function(pfield, pfield.t, dt;
-                                     vprintln= (str)-> i%verbose_nsteps==0 ?
-                                            vprintln(str, v_lvl+2) : nothing)
-
+        vprintln= (str)-> i%verbose_nsteps==0 ?
+            vprintln(str, v_lvl+2) : nothing,
+        xd=xd, xci=xci)
+        #check_derivs(pfield.particles)
+        #check_deriv_allocation(pfield.particles[:, 1:pfield.np]; label="full pfield")
+        #check_deriv_allocation(pfield.particles[GAMMA_INDEX, 1:pfield.np]; label="Gamma")
         # Save particle field
         if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat
-            overwrite_time = save_time ? nothing : pfield.nt
-            save(pfield, run_name; path=save_path, add_num=true,
-                                        overwrite_time=overwrite_time)
+        overwrite_time = save_time ? nothing : pfield.nt
+        save(pfield, run_name; path=save_path, add_num=true,
+                overwrite_time=overwrite_time)
         end
 
         # User-indicated end of simulation
@@ -131,7 +149,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         end
 
     end
-
     # Finalize verbose
     finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 

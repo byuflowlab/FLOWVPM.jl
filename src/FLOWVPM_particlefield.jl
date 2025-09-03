@@ -53,7 +53,7 @@ mutable struct FMM{TEPS}
   ε_tol::TEPS
 end
 
-function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=nothing)
+function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=1e-10)
     return FMM{typeof(ε_tol)}(p, ncrit, theta, nonzero_sigma, ε_tol)
 end
 
@@ -111,7 +111,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     # create particle field
     # particles = [zero(Particle{R}) for _ in 1:maxparticles]
     particles = zeros(R, nfields, maxparticles)
-
+    
     # Set index of each particle
     # for (i, P) in enumerate(particles)
     #     P.index[1] = i
@@ -138,9 +138,9 @@ isLES(pfield::ParticleField) = isSFSenabled(pfield.SFS)
 
 Add a particle to the field.
 """
-function add_particle(pfield::ParticleField, X, Gamma, sigma;
+function add_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, static=false)
+                                           C=0, static=false) where {R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}
     # ERROR CASES
     if get_np(pfield)==pfield.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
@@ -241,7 +241,8 @@ get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
 get_static(P) = view(P, STATIC_INDEX)
 
-is_static(P) = Bool(P[43])
+#is_static(P) = Bool(P[43]) # this causes so many type errors
+is_static(P) = false
 
 # This extra function computes the vorticity using the cross-product
 get_W(P) = (get_W1(P), get_W2(P), get_W3(P))

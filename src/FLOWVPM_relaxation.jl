@@ -87,7 +87,10 @@ function relax_correctedpedrizzetti(rlxf::Real, p)
         G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
 
         # Normalize the direction of the new vector to maintain the same strength
-        G ./= sqrt(b2)
+        for Gi in G
+            Gi /= sqrt(b2)
+        end
+        #G ./= sqrt(b2)
     end
 
     return nothing

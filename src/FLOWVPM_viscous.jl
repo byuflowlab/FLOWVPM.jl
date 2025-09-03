@@ -448,7 +448,10 @@ particle-to-particle interactions, saving the results under P.J[1:3].
 """
 function zeta_direct(pfield)
     for P in iterator(pfield; include_static=true)
-        get_J(P)[1:3] .= 0
+        for i=1:3
+            get_J(P)[i] = zero(eltype(J))
+        end
+        #get_J(P)[1:3] .= 0
     end
     return zeta_direct( iterator(pfield; include_static=true),
                         iterator(pfield; include_static=true),

@@ -36,7 +36,9 @@ function UJ_direct(pfield::ParticleField;
     pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
 
     # return UJ_direct(pfield, pfield)
+    #check_derivs(pfield.particles)
     fmm.direct!(pfield)
+    #check_derivs(pfield.particles)
 end
 
 """
@@ -83,19 +85,14 @@ function UJ_fmm(
 
     # extract FMM options
     fmm_options = pfield.fmm
-<<<<<<< HEAD
-    farfield = !rbf
-    #@show typeof(pfield)
-    # Calculate FMM of vector potential
-    fmm.fmm!(pfield; expansion_order=fmm_options.p-1, nearfield=true, farfield=farfield, unsort_bodies=sort, shrink_recenter=fmm_options.nonzero_sigma)
-=======
 
     if rbf
         # calculate vorticity
         zeta_fmm(pfield)
     else
         # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        #args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
         _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)
@@ -107,7 +104,6 @@ function UJ_fmm(
         #       therefore cannot be included in the direct function of the FMM
         sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
     end
->>>>>>> upgrade-fastmultipole
 
     return nothing
 end
