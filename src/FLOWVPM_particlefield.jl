@@ -462,13 +462,14 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
+    zeroVal = zero(eltype(pfield.particles))
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
         end
     else
         for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
         end
     end
 end
@@ -481,8 +482,7 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
-function _reset_particle(pfield::ParticleField, i::Int)
-    zeroVal = zero(eltype(pfield.particles))
+function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
     pfield.particles[U_INDEX, i] .= zeroVal
     pfield.particles[VORTICITY_INDEX, i] .= zeroVal
     pfield.particles[J_INDEX, i] .= zeroVal
@@ -490,19 +490,20 @@ function _reset_particle(pfield::ParticleField, i::Int)
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
+    zeroVal = zero(eltype(pfield.particles))
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
         end
     else
         for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
         end
     end
 end
 
-function _reset_particle_sfs(pfield::ParticleField, i::Int)
-    pfield.particles[SFS_INDEX, i] .= zero(eltype(pfield.particles))
+function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
+    pfield.particles[SFS_INDEX, i] .= zeroVal
 end
 
 function _reset_particle_sfs(particle)
