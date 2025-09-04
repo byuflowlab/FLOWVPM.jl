@@ -11,7 +11,7 @@ vpm = FLOWVPM
 
 this_is_a_test = true
 examples_path = joinpath(dirname(pathof(FLOWVPM)), "..", "examples", "vortexrings")
-include(joinpath(examples_path, "vortexrings.jl"))
+# include(joinpath(examples_path, "vortexrings.jl"))
 
 overlap = 0.3
 R = 1.0

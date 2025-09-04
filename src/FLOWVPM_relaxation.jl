@@ -29,6 +29,7 @@ end
 
 # Make Relaxation object callable
 (rlx::Relaxation)(p) = rlx.relax(rlx.rlxf, p)
+(rlx::Relaxation)(pfield, i) = rlx.relax(rlx.rlxf, pfield, i)
 
 
 ##### RELAXATION METHODS #######################################################
@@ -58,6 +59,26 @@ function relax_pedrizzetti(rlxf::Real, p)
     return nothing
 end
 
+function relax_pedrizzetti(rlxf::Real, pfield, i)
+
+    J = get_J(pfield, i)
+    G = get_Gamma(pfield, i)
+
+    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
+                (J[7]-J[3])*(J[7]-J[3]) +
+                (J[2]-J[4])*(J[2]-J[4]))
+
+    if !iszero(nrmw)
+    
+        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+
+        G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+        G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+        G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+    end
+
+    return nothing
+end
 
 """
     `relax_correctedPedrizzetti(rlxf::Real, p)`
@@ -70,6 +91,33 @@ function relax_correctedpedrizzetti(rlxf::Real, p)
 
     J = get_J(p)
     G = get_Gamma(p)
+
+    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
+                (J[7]-J[3])*(J[7]-J[3]) +
+                (J[2]-J[4])*(J[2]-J[4]))
+
+    if !iszero(nrmw)
+        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+
+        b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
+                                        G[2]*(J[7]-J[3]) +
+                                        G[3]*(J[2]-J[4])) / (nrmGamma*nrmw))
+
+        G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+        G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+        G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+
+        # Normalize the direction of the new vector to maintain the same strength
+        G ./= sqrt(b2)
+    end
+
+    return nothing
+end
+
+function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
+
+    J = get_J(pfield, i)
+    G = get_Gamma(pfield, i)
 
     nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
                 (J[7]-J[3])*(J[7]-J[3]) +

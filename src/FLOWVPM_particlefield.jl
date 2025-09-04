@@ -88,9 +88,6 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
-
-    # Internal memory for computation
-    M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
 end
 
 """
@@ -126,7 +123,6 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         np=0, nt=0, t=zero(R),
         transposed=true,
         fmm::FMM=FMM(),
-        M=zeros(R, 4),
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
@@ -135,18 +131,13 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
-    # particles = [zero(Particle{R}) for _ in 1:maxparticles]
     particles = zeros(R, nfields, maxparticles)
 
-    # Set index of each particle
-    # for (i, P) in enumerate(particles)
-    #     P.index[1] = i
-    # end
     # Generate and return ParticleField
     return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm, useGPU, M)
+                                            transposed, relaxation, fmm, useGPU)
 end
 
 """
@@ -450,9 +441,16 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     
     # update U_prev
     if update_U_prev
-        for i in 1:get_np(pfield)
-            Ux, Uy, Uz = get_U(pfield, i)
-            set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                Ux, Uy, Uz = get_U(pfield, i)
+                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+            end
+        else
+            for i in 1:pfield.np
+                Ux, Uy, Uz = get_U(pfield, i)
+                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+            end
         end
     end
 
@@ -464,8 +462,15 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i)
+    zeroVal = zero(eltype(pfield.particles))
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+        end
     end
 end
 
@@ -477,8 +482,7 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
-function _reset_particle(pfield::ParticleField, i::Int)
-    zeroVal = zero(eltype(pfield.particles))
+function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
     pfield.particles[U_INDEX, i] .= zeroVal
     pfield.particles[VORTICITY_INDEX, i] .= zeroVal
     pfield.particles[J_INDEX, i] .= zeroVal
@@ -486,13 +490,20 @@ function _reset_particle(pfield::ParticleField, i::Int)
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    for i in 1:pfield.np
-        (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i)
+    zeroVal = zero(eltype(pfield.particles))
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+        end
     end
 end
 
-function _reset_particle_sfs(pfield::ParticleField, i::Int)
-    pfield.particles[SFS_INDEX, i] .= zero(eltype(pfield.particles))
+function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
+    pfield.particles[SFS_INDEX, i] .= zeroVal
 end
 
 function _reset_particle_sfs(particle)

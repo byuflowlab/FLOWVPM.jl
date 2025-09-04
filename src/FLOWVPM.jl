@@ -47,6 +47,8 @@ export ParticleField,
 
 const fmm = FastMultipole
 
+const MIN_MT_NP = 1000
+
 # ------------ GLOBAL VARIABLES ------------------------------------------------
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 const examples_path  = joinpath(module_path, "..", "examples") # Path to examples
