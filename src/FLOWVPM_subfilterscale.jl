@@ -118,17 +118,20 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
     if a==1 || a==0
 
         # "Calculate" model coefficient
-        for p in iterator(pfield)
-            get_C(p)[1] = SFS.Cs
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[C_INDEX[1],i] = SFS.Cs
         end
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                pfield.particles[STATIC_INDEX,i] != 0 && continue
+                p = get_particle(pfield, i)
 
                 if clipping(p, pfield)
                     # Clip SFS model by nullifying the model coefficient
-                    get_C(p)[1] *= 0
+                    pfield.particles[C_INDEX[1],i] = 0
                 end
 
             end
@@ -139,8 +142,9 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
         #       Possibly, but only if they are all continuous (magnitude control
         #       is not).
         for control in SFS.controls
-            for p in iterator(pfield)
-                control(p, pfield)
+            for i in 1:pfield.np
+                pfield.particles[STATIC_INDEX,i] != 0 && continue
+                control(get_particle(pfield, i), pfield)
             end
         end
 
@@ -213,7 +217,7 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for i in 1:pfield.np
+            Threads.@threads for i in 1:pfield.np
                 p = get_particle(pfield, i)
                 # Skip static particles
                 is_static(p) && continue
@@ -231,8 +235,9 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
         #       Possibly, but only if they are all continuous (magnitude control
         #       is not).
         for control in SFS.controls
-            for p in iterator(pfield)
-                control(p, pfield)
+            Threads.@threads for i in 1:pfield.np
+                pfield.particles[STATIC_INDEX,i] != 0 && continue
+                control(get_particle(pfield, i), pfield)
             end
         end
 
@@ -252,7 +257,8 @@ end
 SFS model. See 20210901 notebook for derivation.
 """
 function clipping_backscatter(P, pfield)
-    return get_C(P)[1]*(get_Gamma(P)[1]*get_SFS1(P) + get_Gamma(P)[2]*get_SFS2(P) + get_Gamma(P)[3]*get_SFS3(P)) < 0
+    Gamma = get_Gamma(P)
+    return get_C(P)[1]*(Gamma[1]*get_SFS1(P) + Gamma[2]*get_SFS2(P) + Gamma[3]*get_SFS3(P)) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -373,9 +379,9 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
-    for i in 1:pfield.np
-        p = get_particle(pfield, i)
-        !is_static(p) && (get_sigma(p)[] *= alpha)
+    Threads.@threads for i in 1:pfield.np
+        pfield.particles[STATIC_INDEX,i] != 0 && continue
+        pfield.particles[SIGMA_INDEX,i] *= alpha
     end
 
     # Calculate UJ with test filter
@@ -383,13 +389,13 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # Empty temporal memory
     zeroR::R = zero(R)
-    for i in 1:get_np(pfield)
+    Threads.@threads for i in 1:get_np(pfield)
         p = get_particle(pfield, i)
         !is_static(p) && set_M(p,zeroR) # this is necessary to reset the particle's M storage memory
     end
 
     # Calculate stretching and SFS
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
         # Skip static particles
         is_static(p) && continue
@@ -420,9 +426,9 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
-    for i in 1:pfield.np
-        p = get_particle(pfield, i)
-        !is_static(p) && (get_sigma(p)[] /= alpha)
+    Threads.@threads for i in 1:pfield.np
+        pfield.particles[STATIC_INDEX,i] != 0 && continue
+        pfield.particles[SIGMA_INDEX,i] /= alpha
     end
 
     return nothing
@@ -446,7 +452,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate stretching and SFS
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
         # Skip static particles
         is_static(p) && continue
@@ -479,7 +485,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     zeta0::R = pfield.kernel.zeta(0)
 
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
         # Skip static particles
         is_static(p) && continue
@@ -547,7 +553,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
     # Flush temporal memory
     zeroR::R = zero(R)
-    for i in 1:pfield.np
+    Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
         !is_static(p) && set_M(p,zeroR)
     end
