@@ -194,9 +194,17 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    Threads.@threads for i in 1:get_np(pfield)
-        if pfield.particles[STATIC_INDEX,i] == 0 
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            if pfield.particles[STATIC_INDEX,i] == 0 
+                pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            end
+        end
+    else
+        for i in 1:pfield.np
+            if pfield.particles[STATIC_INDEX,i] == 0 
+                pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            end
         end
     end
 
@@ -235,9 +243,17 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       by not calculating UJ again.
         pfield.UJ(pfield)
 
-        Threads.@threads for i in 1:get_np(pfield)
-            if pfield.particles[STATIC_INDEX,i] == 0 
-                pfield.relaxation(get_particle(pfield, i)) # this is necessary to reset the particle's M storage memory
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
+            end
+        else
+            for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
             end
         end
     end
@@ -383,9 +399,17 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 
     # Reset storage memory to zero
     zeroR::R = zero(R)
-    Threads.@threads for i in 1:get_np(pfield)
-        if pfield.particles[STATIC_INDEX,i] == 0 
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            if pfield.particles[STATIC_INDEX,i] == 0 
+                pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            end
+        end
+    else
+        for i in 1:pfield.np
+            if pfield.particles[STATIC_INDEX,i] == 0 
+                pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            end
         end
     end
 
@@ -418,9 +442,17 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         # Calculates interactions between particles: U and J
         pfield.UJ(pfield)
 
-        Threads.@threads for i in 1:get_np(pfield)
-            if pfield.particles[STATIC_INDEX,i] == 0 
-                pfield.relaxation(get_particle(pfield, i)) # this is necessary to reset the particle's M storage memory
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0 
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
+            end
+        else
+            for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0 
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
             end
         end
     end
