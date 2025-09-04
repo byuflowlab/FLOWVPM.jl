@@ -1,7 +1,7 @@
 name = "FLOWVPM"
 uuid = "6e19019d-7c31-4940-9d16-c3f15dfe6020"
 authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
-version = "4.0.0"
+version = "4.0.1"
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
