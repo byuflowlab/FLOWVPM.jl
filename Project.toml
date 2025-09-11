@@ -1,7 +1,7 @@
 name = "FLOWVPM"
 uuid = "6e19019d-7c31-4940-9d16-c3f15dfe6020"
 authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
-version = "3.0.2"
+version = "4.0.1"
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
@@ -17,7 +17,6 @@ ImplicitAD = "e7cbb90b-9b31-4eb2-a8c8-45099c074ee1"
 Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
@@ -25,6 +24,18 @@ TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
+BSON = "0.3"
+DataStructures = "0.18"
+EllipticFunctions = "2"
+FastMultipole = "2"
+HCubature = "1"
+HDF5 = "0.17"
+Primes = "0.5"
+Roots = "2"
+SpecialFunctions = "2"
+StaticArrays = "1"
+TestEnv = "1"
+WriteVTK = "1"
 julia = "1.6"
 
 [extras]

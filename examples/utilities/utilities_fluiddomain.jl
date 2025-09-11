@@ -340,7 +340,7 @@ end
 """
     computefluiddomain(maxparticles::Int, args...;
                         UJ::Function=vpm.UJ_fmm,
-                        fmm::FLOWVPM.FMM=vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
+                        fmm::FLOWVPM.FMM=vpm.FMM(; p=4, ncrit=50, theta=0.4, shrink_recenter=true),
                         pfield_optargs=[]
                         optargs...)
 
@@ -354,7 +354,7 @@ field constructor.
 """
 function computefluiddomain(maxparticles::Int, args...;
                                     UJ=vpm.UJ_fmm,
-                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true),
+                                    fmm=vpm.FMM(; p=4, ncrit=50, theta=0.4, shrink_recenter=true),
                                     pfield_optargs=[],
                                     verbose=true, v_lvl=0,
                                     optargs...)

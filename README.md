@@ -1,5 +1,7 @@
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://flow.byu.edu/FLOWVPM.jl/dev)
+![](https://github.com/byuflowlab/FLOWVPM.jl/actions/workflows/CI.yml/badge.svg)
 <p align="center">
-  <img src="docs/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
+  <img src="docs/media/img/flowvpm2.jpg" alt="Pic here" style="width:75%"/>
   <br>
   <i><b>Meshless large eddy simulation through the reformulated vortex particle method</b></i>
 </p>
@@ -19,15 +21,12 @@ In the absence of a mesh, the rVPM (1) does not suffer from the conventional CFL
 Furthermore, rVPM is highly efficient since it uses computational elements only where there is vorticity rather than meshing the entire space, making it 100x faster than conventional mesh-based LES.
 
 FLOWVPM is implemented in Julia, which is a modern, high-level, dynamic programming language for high-performance computing.
-The FMM acceleration has been tested in Linux-based machines (including supercomputing HPC clusters).
-Limited support is provided for MacOs and Windows machines, and we would graciously accept pull requests automating the compilation of the FMM for these architectures (see [FLOWExaFMM](https://github.com/byuflowlab/FLOWExaFMM)).
-[ParaView](https://www.paraview.org/) is recommended for visualization of simulations.
 
-* Installation instructions: [`docs/installation-linux.ipynb`](https://nbviewer.org/github/byuflowlab/FLOWVPM.jl/blob/master/docs/installation-linux.ipynb), also see [FLOWUnsteady's docs](https://flow.byu.edu/FLOWUnsteady/installation/general/#FLOWVPM)
+[Paraview](https://www.paraview.org/) is recommended for visualization of simulations.
 
 
 ## Features
-  * Fast-multipole acceleration through [ExaFMM](https://github.com/byuflowlab/FLOWExaFMM)
+  * Fast-multipole acceleration through [FastMultipole.jl](https://github.com/byuflowlab/FastMultipole.jl)
   * Threaded CPU parallelization through OpenMP
   * Meshless
   * Second-order spatial accuracy and third-order RK time integration
@@ -35,8 +34,9 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
   * Subfilter-scale (SFS) model of turbulence associated to vortex stretching
   * SFS model coefficient computed dynamically or prescribed
   * Viscous diffusion through core spreading
+  * Can be installed through the Julia registry
 
-  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady), [SUAVE](https://suave.stanford.edu/).
+  FLOWVPM is a stand-alone simulation framework, but it has also been integrated and used in the following codes: [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and [VortexLattice](https://github.com/byuflowlab/VortexLattice).
 
   This is an open-source project.
   Improvements and further development by the community are accepted and encouraged.
@@ -52,22 +52,22 @@ Limited support is provided for MacOs and Windows machines, and we would graciou
 ## Examples
 
   **Turbulent Jet:** [`examples/roundjet/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/roundjet) [[VIDEO1](https://www.youtube.com/watch?v=SobMmRR9JlU)] [[VIDEO2](https://www.youtube.com/watch?v=V9hthE7m1d4)]
-  [<img src="docs/img/vid-roundjet.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
+  [<img src="docs/media/img/vid-roundjet.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=V9hthE7m1d4)
 
   **Vortex Ring Leapfrog:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/img/vid-leapfrog.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
+  [<img src="docs/media/img/vid-leapfrog.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=viE-i0KzVOw)
 
   **Isolated Vortex Ring:** [`examples/vortexrings/`](https://github.com/byuflowlab/FLOWVPM.jl/tree/master/examples/vortexrings)
-  [<img src="docs/img/vid-vortexring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
+  [<img src="docs/media/img/vid-vortexring.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=PaR81mmByL8)
 
   **Rotor in Hover:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) [[VIDEO](https://www.youtube.com/watch?v=u9SgYbYhPpU)]
-  [<img src="docs/img/vid-rotor.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
+  [<img src="docs/media/img/vid-rotor.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=u9SgYbYhPpU)
 
   **Ring with Toroidal Vorticity:** [[LINK](https://www.linkedin.com/posts/alvarezedo_cfd-paraview-fluiddynamics-activity-6857078379137650688-F0yO)] [[VIDEO](https://www.youtube.com/watch?v=D3VHhDR8-bI)]
-  [<img src="docs/img/vid-vortonring2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
+  [<img src="docs/media/img/vid-vortonring2.jpg" alt="Pic here" style="width:600px"/>](https://www.youtube.com/watch?v=D3VHhDR8-bI)
 
   **eVTOL Aircraft:** [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady)  [[VIDEO](https://youtu.be/-6aR37Z6hig)]
-  [<img src="docs/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://youtu.be/-6aR37Z6hig)
+  [<img src="docs/media/img/vahana2.jpg" alt="Pic here" style="width:600px"/>](https://youtu.be/-6aR37Z6hig)
 
 ## About
 

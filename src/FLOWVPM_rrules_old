@@ -546,15 +546,216 @@ function ChainRulesCore.rrule(::typeof(_update_particle_states),M1,X,U,Uinf,M2,M
 end
 
 #=ReverseDiff.ReverseDiff.@grad_from_chainrules _update_particle_states(M1::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      X::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      U::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      Uinf::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      M2::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      M23::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      J::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      sigma::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      Gamma::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      C::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      S::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      MM::AbstractArray{<:ReverseDiff.TrackedReal},
-                                                                      a,b,dt,f,g,zeta0)=#
+X::AbstractArray{<:ReverseDiff.TrackedReal},
+U::AbstractArray{<:ReverseDiff.TrackedReal},
+Uinf::AbstractArray{<:ReverseDiff.TrackedReal},
+M2::AbstractArray{<:ReverseDiff.TrackedReal},
+M23::AbstractArray{<:ReverseDiff.TrackedReal},
+J::AbstractArray{<:ReverseDiff.TrackedReal},
+sigma::AbstractArray{<:ReverseDiff.TrackedReal},
+Gamma::AbstractArray{<:ReverseDiff.TrackedReal},
+C::AbstractArray{<:ReverseDiff.TrackedReal},
+S::AbstractArray{<:ReverseDiff.TrackedReal},
+MM::AbstractArray{<:ReverseDiff.TrackedReal},
+a,b,dt,f,g,zeta0)=#
+
+function _update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any,<:Any},MM,a,b,dt::R3,Uinf,f,g,zeta0) where {R<:ReverseDiff.TrackedReal, R2, V, R3}
+
+# grab the floating-point type and tape from the particle field
+T = eltype(pfield.particles[1].value)
+tp = ReverseDiff.tape(pfield)
+np = pfield.np
+# we need to store the original particle field state (or at least the values for M, X, sigma, G, and MM)
+Mstar = zeros(T, np, 8)
+Xstar = zeros(T, np, 3)
+sigmastar = zeros(T, np)
+Gstar = zeros(T, np, 3)
+_MM = ReverseDiff.value.(MM) # MM is just a buffer for calculations, so we don't need to store the original value.
+for i=1:np
+for j=1:3
+Xstar[i, j] = pfield.particles[X_INDEX[j], i].value
+Gstar[i, j] = pfield.particles[GAMMA_INDEX[j], i].value
+end
+for j=1:8
+Mstar[i, j] = pfield.particles[M_INDEX[j], i].value
+end
+sigmastar[i] = pfield.particles[SIGMA_INDEX, i].value
+end
+
+iii = 0
+for p in iterator(pfield)
+iii += 1
+C::R = get_C(p)[1]
+
+# Low-storage RK step
+## Velocity
+M = get_M(p); G = get_Gamma(p); J = get_J(p); S = get_SFS(p)
+for i=1:3
+M[i] = ReverseDiff.track(a*M[i].value + dt*(get_U(p)[i].value + ReverseDiff.value(Uinf[i])), tp)
+end
+
+# Update position
+X = get_X(p)
+for i=1:3
+X[i] = ReverseDiff.track(X[i].value + b*M[i].value, tp)
+#ReverseDiff.value!(X[i], X[i].value + b*M[i].value)
+end
+# Store stretching S under M[1:3]
+if pfield.transposed
+# Transposed scheme S = (Γ⋅∇')U
+_MM[1] = J[1].value*G[1].value+J[2].value*G[2].value+J[3].value*G[3].value
+_MM[2] = J[4].value*G[1].value+J[5].value*G[2].value+J[6].value*G[3].value
+_MM[3] = J[7].value*G[1].value+J[8].value*G[2].value+J[9].value*G[3].value
+else
+# Classic scheme (Γ⋅∇)U
+_MM[1] = J[1].value*G[1].value+J[4].value*G[2].value+J[7].value*G[3].value
+_MM[2] = J[2].value*G[1].value+J[5].value*G[2].value+J[8].value*G[3].value
+_MM[3] = J[3].value*G[1].value+J[6].value*G[2].value+J[9].value*G[3].value
+end
+
+# Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
+_MM[4] = (f+g)/(1+3*f) * (_MM[1]*G[1].value + _MM[2]*G[2].value + _MM[3]*G[3].value)
+_MM[4] -= f/(1+3*f) * (C.value*S[1].value*G[1].value + C.value*S[2].value*G[2].value + C.value*S[3].value*G[3].value) * get_sigma(p)[].value^3/zeta0
+_MM[4] /= G[1].value^2 + G[2].value^2 + G[3].value^2
+
+# Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
+# with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
+
+for i=1:3
+M[i+3] = ReverseDiff.track(a*M[i+3].value + dt*(_MM[i] - 3*_MM[4]*G[i].value - C.value*S[i].value*get_sigma(p)[].value^3/zeta0), tp)
+#ReverseDiff.value!(M[i+3], a*M[i+3].value + dt*(_MM[i] - 3*_MM[4]*G[i].value - C.value*S[i].value*get_sigma(p)[].value^3/zeta0))
+end
+
+# Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
+#ReverseDiff.value!(M[8], a*M[8].value - dt*( get_sigma(p)[].value * _MM[4] ))
+M[8] = ReverseDiff.track(a*M[8].value - dt*(get_sigma(p)[].value * _MM[4]), tp)
+
+# Update vectorial circulation
+for i=1:3
+#ReverseDiff.value!(G[i], G[i].value + b*M[i+3].value)
+G[i] = ReverseDiff.track(G[i].value + b*M[i+3].value, tp)
+end
+
+# Update cross-sectional area
+#get_sigma(p)[].value += b*M[8].value
+#ReverseDiff.value!(get_sigma(p)[], get_sigma(p)[].value + b*M[8].value)
+get_sigma(p)[] = ReverseDiff.track(get_sigma(p)[].value + b*M[8].value, tp)
+
+end
+
+ReverseDiff.record!(tp,
+ReverseDiff.SpecialInstruction,
+update_particle_states,
+(pfield,MM,a,b,dt,Uinf,f,g,zeta0),
+nothing,
+(Xstar,sigmastar,Gstar))
+
+return nothing
+
+end
+
+function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(_update_particle_states)})
+
+pfield,MM,a,b,dt,Uinf,f,g,zeta0 = instruction.input
+Xstar, sigmastar, Gstar = instruction.cache
+np = pfield.np
+T = eltype(pfield.particles[1].value)
+# temporary containers for derivatives of variables that are updated in-place
+sigma_bar = zeros(T, 1)
+M_bar = zeros(T, 8)
+X_bar = zeros(T, 3)
+G_bar = zeros(T, 3)
+
+# map original values back
+for i=1:np
+for j=1:3
+pfield.particles[X_INDEX[j], i].value = Xstar[i,j]
+pfield.particles[GAMMA_INDEX[j], i].value = Gstar[i,j]
+end
+pfield.particles[SIGMA_INDEX, i].value = sigmastar[i]
+end
+
+# compute some constants
+α = -f/(1+3*f)
+β = (f+g)/(1+3*f)
+@show sum(ReverseDiff.deriv.(pfield.particles))
+
+# calculate cotangents for X, Gamma, M, sigma, S
+for p in iterator(pfield)
+X = get_X(p); M = get_M(p); G = get_Gamma(p); J = get_J(p); sigma = get_sigma(p)[]; C = get_C(p)[1]; S = get_SFS(p); U = get_U(p)
+
+# compute scalars that depend on the particle
+Γ2 = G[1].value^2 + G[2].value^2 + G[3].value^2
+Γ3 = G[1].value^3 + G[2].value^3 + G[3].value^3
+if pfield.transposed
+# Transposed scheme S = (Γ⋅∇')U
+MM[1].value = J[1].value*G[1].value+J[2].value*G[2].value+J[3].value*G[3].value
+MM[2].value = J[4].value*G[1].value+J[5].value*G[2].value+J[6].value*G[3].value
+MM[3].value = J[7].value*G[1].value+J[8].value*G[2].value+J[9].value*G[3].value
+else
+# Classic scheme (Γ⋅∇)U
+MM[1].value = J[1].value*G[1].value+J[4].value*G[2].value+J[7].value*G[3].value
+MM[2].value = J[2].value*G[1].value+J[5].value*G[2].value+J[8].value*G[3].value
+MM[3].value = J[3].value*G[1].value+J[6].value*G[2].value+J[9].value*G[3].value
+end
+
+# Store Z under MM[4] with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
+MM[4].value = β * (MM[1].value*G[1].value + MM[2].value*G[2].value + MM[3].value*G[3].value)
+MM[4].value += α * (C.value*S[1].value*G[1].value + C.value*S[2].value*G[2].value + C.value*S[3].value*G[3].value) * get_sigma(p)[].value^3/zeta0
+MM[4].value /= Γ2
+
+# 
+sigma_bar[1] += sigma.deriv
+M[8].deriv += b*sigma.deriv
+for i=1:3
+G_bar[i] += G[i].deriv
+M[i+3].deriv += b*G[i].deriv
+end
+M_bar[8] += a*M[8].deriv
+sigma.deriv -= M[8].deriv*dt*MM[4].value
+dZdC = zero(T)
+for i=1:3
+dZdC += S[i].value*G[i].value
+end
+dZdC *= α/Γ2
+for i=1:3
+dMM4dGi = zero(T)
+for j=1:3
+dMM4dGi += (β*2*G[i].value*J[j + 3*(i-1)].value - α*C.value*S[i].value)/Γ2
+end
+dMM4dGi += -2*(β*MM[i].value*G[i].value - α*C.value*S[i].value*G[i].value)/Γ3
+dZdSi = α*C.value*G[i].value/Γ2
+M_bar[i+3] += a*M[i+3].deriv
+sigma_bar[1] -= 3*M[i+3].deriv*dt*C.value*S[i].value*sigma.value^2/zeta0
+S[i].deriv += -dt*C.value*sigma.value^3*S[i].value*M[i+3].deriv/zeta0 - 3*dt*G[i].value*dZdSi*M[i+3].deriv
+C.deriv += -dt*sigma.value^3*S[i].value*M[i+3].deriv/zeta0 - 3*dt*G[i].value*dZdC*M[i+3].deriv
+G[i].deriv += -dt*3*MM[4].value*M[i+3].deriv - 3*dt*G[i].value*dMM4dGi*M[i+3].deriv
+for j=1:3
+# transposed scheme
+J[j + 3*(i-1)].deriv += dt*M[i+3].deriv*G[i].value*(1 - 3*β)
+G[i].deriv += dt*J[j + 3*(i-1)].value*M[i+3].deriv
+end
+X_bar[i] += X[i].deriv
+M[i].deriv += b*X[i].deriv
+M_bar[i] += a*M[i].deriv
+U[i].deriv += dt*M[i].deriv
+end
+
+# map temporary derivative containers back to the original containers
+for i=1:3
+X[i].deriv = X_bar[i]
+G[i].deriv = G_bar[i]
+end
+for i=1:8
+M[i].deriv = M_bar[i]
+end
+sigma.deriv = sigma_bar[1]
+@show ReverseDiff.deriv.(sigma)
+end
+
+#@show sum(ReverseDiff.deriv.(pfield.particles))
+
+return nothing
+
+end
+

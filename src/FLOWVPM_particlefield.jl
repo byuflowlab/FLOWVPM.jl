@@ -8,19 +8,22 @@
   * Created   : Aug 2020
 =###############################################################################
 
-const nfields = 43
+const nfields = 46
 const useGPU_default = 0
 
 ################################################################################
 # FMM STRUCT
 ################################################################################
 """
-    `FMM(; p::Int=4, ncrit::Int=50, theta::Real=0.4, phi::Real=0.3)`
+    `FMM(; p::Int=4, ncrit::Int=10, theta::Real=0.5, shrink_recenter::Bool=true,
+          relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-6,
+          autotune_p::Bool=true, autotune_ncrit::Bool=true,
+          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0)`
 
 Parameters for FMM solver.
 
 # Arguments
-* `p`       : Order of multipole expansion (number of terms).
+* `p`       : Order of multipole expansion.
 * `ncrit`   : Maximum number of particles per leaf.
 * `theta`   : Neighborhood criterion. This criterion defines the distance
                 where the far field starts. The criterion is that if θ*r < R1+R2
@@ -30,37 +33,38 @@ Parameters for FMM solver.
                 that have overlap; at θ=0.5, P2P is done on cells that their
                 distance is less than double R1+R2; at θ=0.25, P2P is done on
                 cells that their distance is less than four times R1+R2; at
-                θ=0, P2P is done on cells all cells.
-* `phi`     : Regularizing neighborhood criterion. This criterion avoid
-                approximating interactions with the singular-FMM between
-                regularized particles that are sufficiently close to each other
-                across cell boundaries. Used together with the θ-criterion, P2P
-                is performed between two cells if φ < σ/dx, where σ is the
-                average smoothing radius in between all particles in both cells,
-                and dx is the distance between cell boundaries
-                ( dx = r-(R1+R2) ). This means that at φ = 1, P2P is done on
-                cells with boundaries closer than the average smoothing radius;
-                at φ = 0.5, P2P is done on cells closer than two times the
-                smoothing radius; at φ = 0.25, P2P is done on cells closer than
-                four times the smoothing radius.
+                θ=0, P2P is done on all cells.
+* `shrink_recenter` : If true, shrink and recenter multipole expansions to account for nonzero particle radius.
+* `relative_tolerance` : Relative error tolerance for FMM calls.
+* `absolute_tolerance` : Absolute error tolerance fallback for FMM calls in case relative tolerance becomes too small.
+* `autotune_p` : If true, automatically adjust p to optimize performance.
+* `autotune_ncrit` : If true, automatically adjust ncrit to optimize performance.
+* `autotune_reg_error` : If true, constrain regularization error in FMM calls.
+* `default_rho_over_sigma` : Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true).
+
 """
-mutable struct FMM{TEPS}
-  # Optional user inputs
+struct FMM
   p::Int64                        # Multipole expansion order
   ncrit::Int64                    # Max number of particles per leaf
-  theta::FLOAT_TYPE                  # Neighborhood criterion
-  nonzero_sigma::Bool
-  ε_tol::TEPS
+  theta::FLOAT_TYPE               # Neighborhood criterion
+  shrink_recenter::Bool           # If true, shrink/recenter expansions to account for nonzero radius particles
+  relative_tolerance::FLOAT_TYPE  # Relative error tolerance
+  absolute_tolerance::FLOAT_TYPE  # Absolute error tolerance fallback in case relative tolerance becomes too small
+  autotune_p::Bool                # If true, automatically adjust p to optimize performance
+  autotune_ncrit::Bool            # If true, automatically adjust ncrit to optimize performance
+  autotune_reg_error::Bool        # If true, automatically calculate rho/sigma to constrain regularization error
+  default_rho_over_sigma::FLOAT_TYPE # Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true)
+  min_ncrit::Int64                 # Minimum number of particles per leaf (default to 3 for safety)
 end
 
-function FMM(; p=4, ncrit=50, theta=0.4, nonzero_sigma=true, ε_tol=1e-10)
-    return FMM{typeof(ε_tol)}(p, ncrit, theta, nonzero_sigma, ε_tol)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
+    return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma, min_ncrit)
 end
 
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
     particles::Matrix{R}                        # Array of particles
@@ -82,46 +86,57 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     integration::Tintegration                   # Time integration scheme
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
-    fmm::FMM{TEPS}                                    # Fast-multipole settings
+    fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
-
-    # Internal memory for computation
-    M::Array{R, 1} # uses particle type since this memory is used for particle-related computations.
-
-    # switches for dispatch in the FMM
-    toggle_rbf::Bool                            # if true, the FMM computes the vorticity field rather than velocity field
-    toggle_sfs::Bool                            # if true, the FMM computes the stretching term for the SFS model
 end
 
+"""
+    ParticleField(maxparticles::Int, R=FLOAT_TYPE; <keyword arguments>)
+
+Create a new particle field with `maxparticles` particles. The particle field
+is created with the default values for the other parameters.
+
+# Arguments
+- `maxparticles::Int`: Maximum number of particles in the field.
+- `R=FLOAT_TYPE`: Type of the particle field. Default is `FLOAT_TYPE`.
+
+# Keyword Arguments
+- `formulation::Formulation=ReformulatedVPM{FLOAT_TYPE}(0, 1/5)`: VPM governing equations. Default is reformulated to conserve mass for a tube and angular momentum for a sphere.
+- `viscous::ViscousScheme=Inviscid()`: Viscous scheme. Note that with `rVPM` formulation, artificial viscosity is not needed for numerical stability, as is common in VPM.
+- `np::Int=0`: Number of particles currently in the field.
+- `nt::Int=0`: Current time step number.
+- `t::Real=0`: Current simulation time.
+- `transposed::Bool=true`: If true, the transposed scheme of the stretching term is used (recommended for stability).
+- `fmm::FMM`: Fast multipole method tuning and auto-tuning settings.
+- `M::Array{R, 1}=zeros(R, 4)`: Auxilliary memory for computations. Should not be modified for most purposes.
+- `SFS::SubFilterScale=NoSFS{FLOAT_TYPE}()`: Subfilter-scale turbulence model.
+- `kernel::Kernel=Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf)`: Regularization scheme. Default is Gaussian smoothing of the vorticity field.
+- `UJ=UJ_fmm`: Method used to compute the \$N\$-body problem. Default uses the fast multipole method to achieve \$O(N)\$ complexity.
+- `Uinf::Function=(t) -> [0.0,0.0,0.0]`: Uniform freestream velocity function Uinf(t).
+- `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
+- `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
+- `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
+"""
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
         np=0, nt=0, t=zero(R),
         transposed=true,
-        fmm::FMM{TEPS}=FMM(),
-        M=zeros(R, 4),
-        toggle_rbf=false, toggle_sfs=false,
+        fmm::FMM=FMM(),
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
-    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR, TEPS}
+    ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
-    # particles = [zero(Particle{R}) for _ in 1:maxparticles]
     particles = zeros(R, nfields, maxparticles)
-    
-    # Set index of each particle
-    # for (i, P) in enumerate(particles)
-    #     P.index[1] = i
-    # end
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}(maxparticles, particles,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm, useGPU,
-                                            M, toggle_rbf, toggle_sfs)
+                                            transposed, relaxation, fmm, useGPU)
 end
 
 """
@@ -134,9 +149,19 @@ isLES(pfield::ParticleField) = isSFSenabled(pfield.SFS)
 
 ##### FUNCTIONS ################################################################
 """
-  `add_particle(pfield::ParticleField, X, Gamma, sigma; vol=0)`
+  `add_particle(pfield::ParticleField, X, Gamma, sigma; <keyword arguments>)`
 
 Add a particle to the field.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to add the particle to.
+- `X`                      : Position of the particle.
+- `Gamma`                  : Strength of the particle.
+- `sigma`                 : Smoothing radius of the particle.
+- `vol`                   : Volume of the particle. Default is 0.
+- `circulation`           : Circulation of the particle. Default is 1.
+- `C`                     : SFS parameter of the particle. Default is 0.
+- `static`                : If true, the particle is static. Default is false.
 """
 function add_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}, X, Gamma, sigma;
                                            vol=0, circulation=1,
@@ -223,6 +248,7 @@ const M_INDEX = 28:36
 const C_INDEX = 37:39
 const SFS_INDEX = 40:42
 const STATIC_INDEX = 43
+const U_PREV_INDEX = 44
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
@@ -240,6 +266,7 @@ get_M(P) = view(P, M_INDEX)
 get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
 get_static(P) = view(P, STATIC_INDEX)
+get_U_prev(P) = view(P, U_PREV_INDEX)
 
 #is_static(P) = Bool(P[43]) # this causes so many type errors
 is_static(P) = false
@@ -270,6 +297,7 @@ get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
 get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
 get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
+get_U_prev(pfield::ParticleField, i::Int) = view(pfield.particles, U_PREV_INDEX, i)
 
 "Set functions for particles"
 function set_X(P, val) P[X_INDEX] .= val end
@@ -285,6 +313,7 @@ function set_C(P, val) P[C_INDEX] .= val end
 function set_static(P, val) P[STATIC_INDEX] = val end
 function set_PSE(P, val) P[PSE_INDEX] .= val end
 function set_SFS(P, val) P[SFS_INDEX] .= val end
+function set_U_prev(P, val) P[U_PREV_INDEX] = val end
 
 
 "Set functions for particles in ParticleField"
@@ -301,6 +330,8 @@ function set_C(pfield::ParticleField, i::Int, val) pfield.particles[C_INDEX, i] 
 function set_static(pfield::ParticleField, i::Int, val) pfield.particles[STATIC_INDEX, i] = val end
 function set_PSE(pfield::ParticleField, i::Int, val) pfield.particles[PSE_INDEX, i] .= val end
 function set_SFS(pfield::ParticleField, i::Int, val) pfield.particles[SFS_INDEX, i] .= val end
+function set_U_prev(pfield::ParticleField, i::Int, val) pfield.particles[U_PREV_INDEX, i] = val end
+
 
 """
     `isinviscid(pfield::ParticleField)`
@@ -390,13 +421,37 @@ end
 """
   `nextstep(pfield::ParticleField, dt; relax=false)`
 
-Steps the particle field in time by a step `dt`.
+Steps the particle field in time by a step `dt`. Modifies the pfield in place.
+
+# Arguments
+- `pfield::ParticleField`   : Particle field to step.
+- `dt::Real`                : Time step to step the field.
+- `relax::Bool`             : If true, the relaxation scheme is applied to the
+                                particles. Default is false.
+
+# Returns
+- The time step number of the particle field.
 """
-function nextstep(pfield::ParticleField, dt::Real; optargs...)
+function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs...)
 
     # Step in time
     if get_np(pfield)!=0
         pfield.integration(pfield, dt; optargs...)
+    end
+    
+    # update U_prev
+    if update_U_prev
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                Ux, Uy, Uz = get_U(pfield, i)
+                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+            end
+        else
+            for i in 1:pfield.np
+                Ux, Uy, Uz = get_U(pfield, i)
+                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+            end
+        end
     end
 
     # Updates time
@@ -407,8 +462,15 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    for particle in iterate(pfield)
-        _reset_particle(particle)
+    zeroVal = zero(eltype(pfield.particles))
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+        end
     end
 end
 
@@ -420,16 +482,28 @@ function _reset_particle(particle)
     set_PSE(particle, zeroVal)
 end
 
-_reset_particle(pfield::ParticleField, i::Int) = _reset_particle(get_particle(pfield, i))
+function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
+    pfield.particles[U_INDEX, i] .= zeroVal
+    pfield.particles[VORTICITY_INDEX, i] .= zeroVal
+    pfield.particles[J_INDEX, i] .= zeroVal
+    pfield.particles[PSE_INDEX, i] .= zeroVal
+end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    for particle in iterate(pfield)
-        _reset_particle_sfs(particle)
+    zeroVal = zero(eltype(pfield.particles))
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+        end
+    else
+        for i in 1:pfield.np
+            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+        end
     end
 end
 
-function _reset_particles_sfs(pfield::ParticleField, i::Int)
-    _reset_particle(get_particle(pfield, i))
+function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
+    pfield.particles[SFS_INDEX, i] .= zeroVal
 end
 
 function _reset_particle_sfs(particle)

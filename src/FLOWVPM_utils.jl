@@ -122,7 +122,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
             remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
-            nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
+            nextstep(pfield, dt; relax, custom_UJ)
 
             # Remove static particles (assumes particles remained sorted)
             if remove===nothing || remove
@@ -159,14 +159,14 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 end
 
 """
-  `save(pfield, file_name; path="")`
+  save(pfield, file_name; path="")
 
 Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
 function save(
-        self::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
+        self::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
         file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
                 overwrite_time=nothing) where TF
@@ -207,21 +207,26 @@ function save(
     #   through HDF5 and then dumping data into it from pfield through
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
-    h5["X"] = [get_X(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["Gamma"] = [get_Gamma(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["sigma"] = [get_sigma(P)[] for P in iterate(self; include_static=true)]
-    h5["circulation"] = [get_circulation(P)[] for P in iterate(self; include_static=true)]
-    h5["vol"] = [get_vol(P)[] for P in iterate(self; include_static=true)]
-    h5["static"] = [get_static(P)[] for P in iterate(self; include_static=true)]
-    # h5["i"] = [i for i in 1:length(iterate(self; include_static=true))]
-    h5["velocity"] = [get_U(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_x"] = [get_J(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_y"] = [get_J(P)[i] for i in 4:6, P in iterate(self; include_static=true)]
-    h5["velocity_gradient_z"] = [get_J(P)[i] for i in 7:9, P in iterate(self; include_static=true)]
-    h5["vorticity"] = [get_vorticity(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+
+    temp = zeros(1,np)
+    h5["X"] = view(self.particles, X_INDEX, 1:np)
+    h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
+    temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
+    h5["sigma"] = temp
+    temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
+    h5["circulation"] = temp
+    temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
+    h5["vol"] = temp
+    temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
+    h5["static"] = temp
+    h5["velocity"] = view(self.particles, U_INDEX, 1:np)
+    h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
+    h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
+    h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
+    h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
 
     if isLES(self)
-        h5["C"] = [get_C(P)[i] for i in 1:3, P in iterate(self; include_static=true)]
+        h5["C"] = view(self.particles, C_INDEX, 1:np)
     end
 
     # # Connectivity information
@@ -415,12 +420,18 @@ function _get_settings_string(pfield::ParticleField; tab=0)
     return str
 end
 
+"""
+    Save the settings of a particle field to a BSON file.
+"""
 function save_settings(pfield::ParticleField, file_name::String;
                                         path::String="", suff="_settings")
     settings = _get_settings(pfield)
     BSON.bson(joinpath(path, file_name*suff*".bson"), settings)
 end
 
+"""
+    Read the settings of a particle field from a BSON file.
+"""
 function read_settings(fname::String; path::String="")
     # Read settings as a dictionary with String keys
     settings_dict = BSON.load(joinpath(path, fname))
@@ -472,6 +483,11 @@ function generate_particlefield(settings_fname::String;
     return pfield
 end
 
+"""
+  read(h5_fname, settings_fname)
+
+Reads an HDF5 file containing a particle field created with `save(pfield)`.
+"""
 function read(h5_fname::String, settings_fname::String; overwrite_settings=(),
                                                                      optargs...)
     # Initiate particle field
@@ -483,36 +499,28 @@ function read(h5_fname::String, settings_fname::String; overwrite_settings=(),
     return read!(pfield, h5_fname; optargs...)
 end
 
-"""
-  `read(h5_fname; path="")`
-
-Reads an HDF5 file containing a particle field created with `save(pfield)`.
-"""
-function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
+function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}, h5_fname::String;
                                         path::String="",
                                         overwrite::Bool=true,
                                         load_time::Bool=true) where{R<:Real, F, V}
 
     # Delete existing particles
     if overwrite
-        for i in get_np(pfield):-1:1
-            remove_particle(pfield, i)
-        end
+        pfield.np = 0
     end
-
-    maxparticles = pfield.maxparticles
 
     # Open HDF5 file
     h5fname = h5_fname * (h5_fname[end-2:end]==".h5" ? "" : ".h5")
+
     h5 = HDF5.h5open(joinpath(path, h5fname), "r")
 
     # Number of particles in field
     np = HDF5.read(h5["np"])
 
     # Error case: Particle overflow
-    if np>maxparticles
+    if pfield.np+np > pfield.maxparticles
         error("The field to be read ($(h5_fname)) contains $(np) particles"*
-                " but max number of particles is $(maxparticles).")
+                " but max number of particles is $(pfield.maxparticles).")
     end
 
     # Use time stamp
@@ -522,31 +530,49 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
     end
 
     # Read HDF5 fields
-    X = h5["X"][:, :]
-    Gamma = h5["Gamma"][:, :]
-    sigma = h5["sigma"][:]
-    vol = h5["vol"][:]
-    circulation = h5["circulation"][:]
+    X::Matrix{eltype(R)} = h5["X"][:, :]
+    Gamma::Matrix{eltype(R)} = h5["Gamma"][:, :]
+    sigma::Vector{eltype(R)} = h5["sigma"][:]
+    vol::Vector{eltype(R)} = h5["vol"][:]
+    circulation::Vector{eltype(R)} = h5["circulation"][:]
 
-    # Hash to optional arguments of add_particles(...)
-    hash_optargs = [(:circulation, i->circulation[i]), (:vol, i->vol[i])]
-    gen_optargs(i) = ((sym, fun(i)) for (sym, fun) in hash_optargs)
-
+    static_bool = false
+    C_bool = false
     if "static" in keys(h5)
-        static = h5["static"][:]
-        push!( hash_optargs, (:static, i->static[i]) )
+        static::Vector{Bool} = h5["static"][:]
+        static_bool = true
     end
     if "C" in keys(h5)
-        C = h5["C"][:, :]
-        push!( hash_optargs, (:C, i->view(C, 1:3, i)) )
+        C::Matrix{eltype(R)} = h5["C"][:, :]
+        C_bool = true
     end
 
     # Load particles
-    for i in 1:np
-        optargs = gen_optargs(i)
-        add_particle(pfield, view(X, 1:3, i), view(Gamma, 1:3, i), sigma[i];
-                                                                     optargs...)
+    start_i = pfield.np + 1
+    end_i = start_i + np - 1
+
+    Threads.@threads for i in start_i:end_i
+        pfield.particles[X_INDEX[1], i] = X[1, i]
+        pfield.particles[X_INDEX[2], i] = X[2, i]
+        pfield.particles[X_INDEX[3], i] = X[3, i]
+        pfield.particles[GAMMA_INDEX[1], i] = Gamma[1, i]
+        pfield.particles[GAMMA_INDEX[2], i] = Gamma[2, i]
+        pfield.particles[GAMMA_INDEX[3], i] = Gamma[3, i]
+        pfield.particles[SIGMA_INDEX, i] = sigma[i]
+        pfield.particles[VOL_INDEX, i] = vol[i]
+        pfield.particles[CIRCULATION_INDEX, i] = circulation[i]
+        pfield.particles[STATIC_INDEX, i] = static_bool ? Float64(static[i]) : Float64(false)
+        if C_bool
+            pfield.particles[C_INDEX[1], i] = C[1, i]
+            pfield.particles[C_INDEX[2], i] = C[2, i]
+            pfield.particles[C_INDEX[3], i] = C[3, i]
+        else
+            pfield.particles[C_INDEX, i] .= 0
+        end
     end
+    pfield.np += np
+
+    close(h5)
 
     return pfield
 end

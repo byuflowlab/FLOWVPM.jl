@@ -32,13 +32,8 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    pfield.toggle_rbf = rbf # if true, computes the direct contribution to the vorticity field computed using the zeta function
-    pfield.toggle_sfs = sfs # if true, triggers addition of the SFS model contribution in the direct function
-
-    # return UJ_direct(pfield, pfield)
-    #check_derivs(pfield.particles)
-    fmm.direct!(pfield)
-    #check_derivs(pfield.particles)
+    fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    sfs && Estr_direct!(pfield)
 end
 
 """
@@ -65,21 +60,22 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_fmm(
-        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU, <:Any};
-        verbose::Bool=false, # unused
+        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
+        verbose::Bool=false,
         rbf::Bool=false,
         sfs::Bool=false,
         sfs_type::Int=-1, # unused
         transposed_sfs::Bool=true, # unused
         reset::Bool=true,
         reset_sfs::Bool=false,
+        autotune::Bool=true,
     ) where {useGPU}
 
     # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
     end
-    if reset_sfs
+    if reset_sfs || sfs
         _reset_particles_sfs(pfield)
     end
 
@@ -91,10 +87,33 @@ function UJ_fmm(
         zeta_fmm(pfield)
     else
         # Calculate FMM of vector potential
-        #args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
-        #args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=fmm.RelativeUpperBound{fmm_options.ε_tol}, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
-        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=nothing, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
-        _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
+        args = fmm.fmm!(pfield; 
+                        expansion_order=fmm_options.p-1, 
+                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit), 
+                        multipole_acceptance=fmm_options.theta, 
+                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
+                        tune=true,
+                        shrink_recenter=fmm_options.shrink_recenter,
+                        nearfield_device=(useGPU>0),
+                        scalar_potential=false,
+                        hessian=true,
+                        silence_warnings=!verbose)
+        optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = args
+
+        # autotune p and ncrit
+        if autotune
+            new_p = fmm_options.autotune_p ? optargs.expansion_order+1 : fmm_options.p
+            new_ncrit = fmm_options.autotune_ncrit ? optargs.leaf_size_source[1] : fmm_options.ncrit
+            pfield.fmm = FMM(new_p, new_ncrit, fmm_options.theta,
+                            fmm_options.shrink_recenter,
+                            fmm_options.relative_tolerance,
+                            fmm_options.absolute_tolerance,
+                            fmm_options.autotune_p,
+                            fmm_options.autotune_ncrit,
+                            fmm_options.autotune_reg_error,
+                            fmm_options.default_rho_over_sigma,
+                            fmm_options.min_ncrit)
+        end
 
         # This should be concurrent_direct=(pfield.useGPU > 0)
         # But until multithread_direct!() works for the target_indices argument,

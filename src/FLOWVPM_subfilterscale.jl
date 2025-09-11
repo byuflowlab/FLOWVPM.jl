@@ -89,6 +89,9 @@ isSFSenabled(SFS::SubFilterScale) = !(typeof(SFS) <: NoSFS)
 ################################################################################
 # CONSTANT-COEFFICIENT SFS SCHEME
 ################################################################################
+"""
+    Subfilter-scale scheme with an associated constant model coefficient.
+"""
 struct ConstantSFS{R,Tmodel,Tcontrols,Tclippings} <: SubFilterScale{R}
     model::Tmodel                 # Model of subfilter scale contributions
     Cs::R                           # Model coefficient
@@ -115,17 +118,19 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
     if a==1 || a==0
 
         # "Calculate" model coefficient
-        for p in iterator(pfield)
-            get_C(p)[1] = SFS.Cs
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[C_INDEX[1],i] = SFS.Cs
         end
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                pfield.particles[STATIC_INDEX,i] != 0 && continue
 
-                if clipping(p, pfield)
+                if clipping(pfield, i)
                     # Clip SFS model by nullifying the model coefficient
-                    get_C(p)[1] *= 0
+                    pfield.particles[C_INDEX[1],i] = 0
                 end
 
             end
@@ -136,8 +141,16 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
         #       Possibly, but only if they are all continuous (magnitude control
         #       is not).
         for control in SFS.controls
-            for p in iterator(pfield)
-                control(p, pfield)
+            if pfield.np > MIN_MT_NP
+                Threads.@threads for i in 1:pfield.np
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    control(pfield, i)
+                end
+            else
+                for i in 1:pfield.np
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    control(pfield, i)
+                end
             end
         end
 
@@ -210,13 +223,26 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # Apply clipping strategies
         for clipping in SFS.clippings
-            for p in iterator(pfield)
+            if pfield.np > MIN_MT_NP
+                Threads.@threads for i in 1:pfield.np
+                    # Skip static particles
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
 
-                if clipping(p, pfield)
-                    # Clip SFS model by nullifying the model coefficient
-                    get_C(p)[1] *= 0
+                    if clipping(pfield, i)
+                        # Clip SFS model by nullifying the model coefficient
+                        pfield.particles[C_INDEX[1],i] *= 0
+                    end
                 end
+            else
+                for i in 1:pfield.np
+                    # Skip static particles
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
 
+                    if clipping(pfield, i)
+                        # Clip SFS model by nullifying the model coefficient
+                        pfield.particles[C_INDEX[1],i] *= 0
+                    end
+                end
             end
         end
 
@@ -225,8 +251,16 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
         #       Possibly, but only if they are all continuous (magnitude control
         #       is not).
         for control in SFS.controls
-            for p in iterator(pfield)
-                control(p, pfield)
+            if pfield.np > MIN_MT_NP
+                Threads.@threads for i in 1:pfield.np
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    control(pfield, i)
+                end
+            else
+                for i in 1:pfield.np
+                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    control(pfield, i)
+                end
             end
         end
 
@@ -245,8 +279,20 @@ end
     Backscatter control strategy of SFS enstrophy production by clipping of the
 SFS model. See 20210901 notebook for derivation.
 """
-function clipping_backscatter(P, pfield)
-    return get_C(P)[1]*(get_Gamma(P)[1]*get_SFS1(P) + get_Gamma(P)[2]*get_SFS2(P) + get_Gamma(P)[3]*get_SFS3(P)) < 0
+function clipping_backscatter(P)
+    Gamma = get_Gamma(P)
+    return get_C(P)[1]*(Gamma[1]*get_SFS1(P) + Gamma[2]*get_SFS2(P) + Gamma[3]*get_SFS3(P)) < 0
+end
+
+function clipping_backscatter(pfield, i::Int)
+    C = pfield.particles[C_INDEX[1], i]
+    G1 = pfield.particles[GAMMA_INDEX[1], i]
+    G2 = pfield.particles[GAMMA_INDEX[2], i]
+    G3 = pfield.particles[GAMMA_INDEX[3], i]
+    S1 = pfield.particles[SFS_INDEX[1], i]
+    S2 = pfield.particles[SFS_INDEX[2], i]
+    S3 = pfield.particles[SFS_INDEX[3], i]
+    return C*(G1*S1 + G2*S2 + G3*S3) < 0
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -261,13 +307,30 @@ end
 to affect only the vortex strength magnitude and not the vortex orientation.
 See 20210901 notebook for derivation.
 """
-function control_directional(P, pfield)
+function control_directional(P)
 
     aux = get_SFS1(P)*get_Gamma(P)[1] + get_SFS2(P)*get_Gamma(P)[2] + get_SFS3(P)*get_Gamma(P)[3]
     aux /= (get_Gamma(P)[1]*get_Gamma(P)[1] + get_Gamma(P)[2]*get_Gamma(P)[2] + get_Gamma(P)[3]*get_Gamma(P)[3])
 
     # Replaces old SFS with the direcionally controlled SFS
     get_SFS(P) .= aux*get_Gamma(P)
+end
+
+function control_directional(pfield, i::Int)
+    G1 = pfield.particles[GAMMA_INDEX[1], i]
+    G2 = pfield.particles[GAMMA_INDEX[2], i]
+    G3 = pfield.particles[GAMMA_INDEX[3], i]
+    S1 = pfield.particles[SFS_INDEX[1], i]
+    S2 = pfield.particles[SFS_INDEX[2], i]
+    S3 = pfield.particles[SFS_INDEX[3], i]
+
+    aux = S1*G1 + S2*G2 + S3*G3
+    aux /= (G1*G1 + G2*G2 + G3*G3)
+
+    # Replaces old SFS with the direcionally controlled SFS
+    pfield.particles[SFS_INDEX[1], i] = aux*G1
+    pfield.particles[SFS_INDEX[2], i] = aux*G2
+    pfield.particles[SFS_INDEX[3], i] = aux*G3
 end
 
 """
@@ -287,16 +350,48 @@ function control_magnitude(P, pfield)
         f::Real = pfield.formulation.f
         zeta0::Real = pfield.kernel.zeta(0)
 
-        aux = get_SFS1(P)*get_Gamma(P)[1] + get_SFS2(P)*get_Gamma(P)[2] + get_SFS3(P)*get_Gamma(P)[3]
+        SFS = get_SFS(P)
+
+        aux = SFS[1]*get_Gamma(P)[1] + SFS[2]*get_Gamma(P)[2] + SFS[3]*get_Gamma(P)[3]
         aux /= get_Gamma(P)[1]*get_Gamma(P)[1] + get_Gamma(P)[2]*get_Gamma(P)[2] + get_Gamma(P)[3]*get_Gamma(P)[3]
         aux -= (1+3*f)*(zeta0/get_sigma(P)[]^3) / deltat / get_C(P)[1]
 
         # f_p filter criterion
         if aux > 0
-            get_SFS(P) .+= -aux .* get_Gamma(P)
-            # add_SFS1(P, -aux*get_Gamma(P)[1])
-            # add_SFS2(P, -aux*get_Gamma(P)[2])
-            # add_SFS3(P, -aux*get_Gamma(P)[3])
+            SFS .+= -aux .* get_Gamma(P)
+        end
+    end
+end
+
+function control_magnitude(pfield, i::Int)
+    C = pfield.particles[C_INDEX[1], i]
+
+    # Estimate Δt
+    if pfield.nt == 0
+        # error("Logic error: It was not possible to estimate time step.")
+        nothing
+    elseif C != 0
+        deltat::Real = pfield.t / pfield.nt
+
+        f::Real = pfield.formulation.f
+        zeta0::Real = pfield.kernel.zeta(0)
+
+        G1 = pfield.particles[GAMMA_INDEX[1], i]
+        G2 = pfield.particles[GAMMA_INDEX[2], i]
+        G3 = pfield.particles[GAMMA_INDEX[3], i]
+        S1 = pfield.particles[SFS_INDEX[1], i]
+        S2 = pfield.particles[SFS_INDEX[2], i]
+        S3 = pfield.particles[SFS_INDEX[3], i]
+
+        aux = S1*G1 + S2*G2 + S3*G3
+        aux /= (G1*G1 + G2*G2 + G3*G3)
+        aux -= (1+3*f)*(zeta0/get_sigma(P)[]^3) / deltat / C
+
+        # f_p filter criterion
+        if aux > 0
+            pfield.particles[SFS_INDEX[1], i] = -aux*G1
+            pfield.particles[SFS_INDEX[2], i] = -aux*G2
+            pfield.particles[SFS_INDEX[3], i] = -aux*G3
         end
     end
 end
@@ -367,8 +462,16 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATIONS WITH TEST FILTER WIDTH -----------------------
     # Replace domain filter width with test filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] *= alpha
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[SIGMA_INDEX,i] *= alpha
+        end
+    else
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[SIGMA_INDEX,i] *= alpha
+        end
     end
 
     # Calculate UJ with test filter
@@ -376,35 +479,60 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
     # Empty temporal memory
     zeroR::R = zero(R)
-    for p in iterator(pfield); set_M(p,zeroR); end;
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+        end
+    else
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+        end
+    end
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    Threads.@threads for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        pfield.particles[STATIC_INDEX,i] != 0 && continue
+
+        M = get_M(p)
+        J = get_J(p)
+        Gamma = get_Gamma(p)
 
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            get_M(p)[1] = get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[2]*get_Gamma(p)[2]+get_J(p)[3]*get_Gamma(p)[3]
-            get_M(p)[2] = get_J(p)[4]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[6]*get_Gamma(p)[3]
-            get_M(p)[3] = get_J(p)[7]*get_Gamma(p)[1]+get_J(p)[8]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] = J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            M[2] = J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            M[3] = J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
         else
             # Classic scheme (Γ⋅∇)U
-            get_M(p)[1] = get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[4]*get_Gamma(p)[2]+get_J(p)[7]*get_Gamma(p)[3]
-            get_M(p)[2] = get_J(p)[2]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[8]*get_Gamma(p)[3]
-            get_M(p)[3] = get_J(p)[3]*get_Gamma(p)[1]+get_J(p)[6]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] = J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            M[2] = J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            M[3] = J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
-        get_M(p)[4] = get_SFS1(p)
-        get_M(p)[5] = get_SFS2(p)
-        get_M(p)[6] = get_SFS3(p)
+        M[4] = get_SFS1(p)
+        M[5] = get_SFS2(p)
+        M[6] = get_SFS3(p)
     end
 
 
     # -------------- CALCULATIONS WITH DOMAIN FILTER WIDTH ---------------------
     # Restore domain filter width
-    for p in iterator(pfield)
-        get_sigma(p)[] /= alpha
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[SIGMA_INDEX,i] /= alpha
+        end
+    else
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[SIGMA_INDEX,i] /= alpha
+        end
     end
 
     return nothing
@@ -428,59 +556,71 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
     end
 
     # Calculate stretching and SFS
-    for p in iterator(pfield)
+    Threads.@threads for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        is_static(p) && continue
+        M = get_M(p)
+        J = get_J(p)
+        Gamma = get_Gamma(p)
 
         # Calculate stretching with domain filter and substract from test filter
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            get_M(p)[1] -= get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[2]*get_Gamma(p)[2]+get_J(p)[3]*get_Gamma(p)[3]
-            get_M(p)[2] -= get_J(p)[4]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[6]*get_Gamma(p)[3]
-            get_M(p)[3] -= get_J(p)[7]*get_Gamma(p)[1]+get_J(p)[8]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] -= J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            M[2] -= J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            M[3] -= J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
         else
             # Classic scheme (Γ⋅∇)U
-            get_M(p)[1] -= get_J(p)[1]*get_Gamma(p)[1]+get_J(p)[4]*get_Gamma(p)[2]+get_J(p)[7]*get_Gamma(p)[3]
-            get_M(p)[2] -= get_J(p)[2]*get_Gamma(p)[1]+get_J(p)[5]*get_Gamma(p)[2]+get_J(p)[8]*get_Gamma(p)[3]
-            get_M(p)[3] -= get_J(p)[3]*get_Gamma(p)[1]+get_J(p)[6]*get_Gamma(p)[2]+get_J(p)[9]*get_Gamma(p)[3]
+            M[1] -= J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            M[2] -= J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            M[3] -= J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
         # under p.M[:, 2], resulting in dEdσ
-        get_M(p)[4] -= get_SFS1(p)
-        get_M(p)[5] -= get_SFS2(p)
-        get_M(p)[6] -= get_SFS3(p)
+        M[4] -= get_SFS1(p)
+        M[5] -= get_SFS2(p)
+        M[6] -= get_SFS3(p)
     end
 
 
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     zeta0::R = pfield.kernel.zeta(0)
 
-    for p in iterator(pfield)
+    Threads.@threads for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        # Skip static particles
+        is_static(p) && continue
+        M = get_M(p)
+        C_p = get_C(p)
+        Gamma = get_Gamma(p)
 
         # Calculate numerator and denominator
-        nume = get_M(p)[1]*get_Gamma(p)[1] + get_M(p)[2]*get_Gamma(p)[2] + get_M(p)[3]*get_Gamma(p)[3]
+        nume = M[1]*Gamma[1] + M[2]*Gamma[2] + M[3]*Gamma[3]
         nume *= 3*alpha - 2
-        deno = get_M(p)[4]*get_Gamma(p)[1] + get_M(p)[5]*get_Gamma(p)[2] + get_M(p)[6]*get_Gamma(p)[3]
+        deno = M[4]*Gamma[1] + M[5]*Gamma[2] + M[6]*Gamma[3]
         deno /= zeta0/get_sigma(p)[]^3
 
         # Initialize denominator to something other than zero
-        if get_C(p)[3] == 0
-            get_C(p)[3] = deno
-            if get_C(p)[3] == 0
-                get_C(p)[3] = eps()
+        if C_p[3] == 0
+            C_p[3] = deno
+            if C_p[3] == 0
+                C_p[3] = eps()
             end
         end
 
         # Lagrangian average of numerator and denominator
-        nume = rlxf*nume + (1-rlxf)*get_C(p)[2]
-        deno = rlxf*deno + (1-rlxf)*get_C(p)[3]
+        nume = rlxf*nume + (1-rlxf)*C_p[2]
+        deno = rlxf*deno + (1-rlxf)*C_p[3]
 
         # Enforce maximum and minimum |C| values
         if abs(nume/deno) > maxC            # Case: C is too large
 
             # Avoid case of denominator becoming zero
-            if abs(deno) < abs(get_C(p)[3])
-                deno = sign(deno) * abs(get_C(p)[3])
+            if abs(deno) < abs(C_p[3])
+                deno = sign(deno) * abs(C_p[3])
             end
 
             # Enforce maximum value of |Cd|
@@ -496,27 +636,38 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Save numerator and denominator of model coefficient
-        get_C(p)[2] = nume
-        get_C(p)[3] = deno
+        C_p[2] = nume
+        C_p[3] = deno
 
         # Store model coefficient
-        get_C(p)[1] = get_C(p)[2] / get_C(p)[3]
+        C_p[1] = C_p[2] / C_p[3]
 
-        if isnan(get_C(p)[1])
+        if isnan(C_p[1])
             println("nume: ", nume)
             println("deno: ", deno)
-            println("M: ", get_M(p))
-            println("Gamma: ", get_Gamma(p))
+            println("M: ", M)
+            println("Gamma: ", Gamma)
             println("J: ", get_J(p))
             error("NaN in dynamicprocedure_pseudo3level_afterUJ")
         end
 
         # Force the coefficient to be positive
-        get_C(p)[1] *= sign(get_C(p)[1])^force_positive
+        C_p[1] *= sign(C_p[1])^force_positive
     end
 
     # Flush temporal memory
-    for p in iterator(pfield); set_M(p,zero(R)); end;
+    zeroR::R = zero(R)
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+        end
+    else
+        for i in 1:pfield.np
+            pfield.particles[STATIC_INDEX,i] != 0 && continue
+            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+        end
+    end
 
     return nothing
 end

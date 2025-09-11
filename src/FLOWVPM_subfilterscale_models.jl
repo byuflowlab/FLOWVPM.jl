@@ -31,7 +31,8 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
         S3 = (JT[3] - JS[3])*GS[1]+(JT[6] - JS[6])*GS[2]+(JT[9] - JS[9])*GS[3]
     end
 
-    zeta_sgm = zeta(r/get_sigma(source_particle)[]) / get_sigma(source_particle)[]^3
+    sigma_inv = 1.0 / get_sigma(source_particle)[]
+    zeta_sgm = zeta(r*sigma_inv) * sigma_inv * sigma_inv * sigma_inv
 
     # Add ζ_σ (Γq⋅∇)(Up - Uq)
     get_SFS(target_particle)[1] += zeta_sgm*S1
@@ -39,10 +40,124 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
-function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+function Estr_direct!(pfield)
+    if Threads.nthreads() > 1
+        Estr_direct_multithreaded(pfield)
+    else
+        Estr_direct_singlethreaded(pfield)
+    end
+end
 
-    # evaluate
+function Estr_direct_multithreaded(pfield::ParticleField)
+    n_per_thread, rem = divrem(pfield.np, Threads.nthreads())
+    n = n_per_thread + (rem > 0)
+    assignments = 1:n:pfield.np
+
+    Threads.@threads for i_assignment in eachindex(assignments)
+        start_idx = assignments[i_assignment]
+        end_idx = min(start_idx + n - 1, pfield.np)
+
+        # Calculate SFS contributions for the assigned particles
+        for i_target in start_idx:end_idx
+            target_particle = get_particle(pfield, i_target)
+            is_static(target_particle) && continue
+            tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+            for source_particle in iterator(pfield)
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+                dx, dy, dz = sx - tx, sy - ty, sz - tz
+                r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
+            end
+        end
+    end
+end
+
+function Estr_direct_singlethreaded(pfield::ParticleField)
+    for target_particle in iterator(pfield)
+        is_static(target_particle) && continue
+        tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+        for source_particle in iterator(pfield)
+            sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+            dx, dy, dz = sx - tx, sy - ty, sz - tz
+            r = sqrt(dx * dx + dy * dy + dz * dz)
+
+            Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
+        end
+    end
+end
+
+function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+    if Threads.nthreads() > 1
+        Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    else
+        Estr_fmm_singlethread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+    end
+end
+
+function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+
+    # total number of interactions
+    n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
+    n_threads = Threads.nthreads()
+
+    # interactions per thread
+    n_per_thread, rem = divrem(n_interactions, n_threads)
+    rem > 0 && (n_per_thread += 1)
+    n_per_thread < 100 && (n_per_thread = 100)
+
+    # create assignments
+    assignments = Vector{UnitRange{Int64}}(undef,n_threads)
+    for i in eachindex(assignments)
+        assignments[i] = 1:0
+    end
+    FastMultipole.make_direct_assignments!(assignments, 1, target_tree.branches, 1, source_tree.branches, direct_list, n_threads, n_per_thread, nothing)
+
+    Threads.@threads for i_task in eachindex(assignments)
+        assignment = assignments[i_task]
+
+        # evaluate
+        for i_interaction in assignment
+            i_target, i_source = direct_list[i_interaction]
+            
+            target_index = target_tree.branches[i_target].bodies_index[1]
+            source_index = source_tree.branches[i_source].bodies_index[1]
+
+            # loop over source particles
+            for i_source in source_index
+                source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+
+                # source position
+                sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
+
+                # loop over target particles
+                for i_target in target_index
+                    target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+
+                    # target position
+                    tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
+
+                    # separation distance
+                    dx, dy, dz = sx - tx, sy - ty, sz - tz
+                    r = sqrt(dx * dx + dy * dy + dz * dz)
+
+                    # add Estr contribution
+                    Estr_direct(target_particle, source_particle, r, source_pfield.kernel.zeta, source_pfield.transposed)
+
+                end
+            end
+        end
+    end
+end
+
+function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+
     for (i_target, i_source) in direct_list
+    
         target_index = target_tree.branches[i_target].bodies_index[1]
         source_index = source_tree.branches[i_source].bodies_index[1]
 
@@ -58,7 +173,7 @@ function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, t
                 target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
 
                 # target position
-                tx, ty, tz = source_particle[1], source_particle[2], source_particle[3]
+                tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
                 # separation distance
                 dx, dy, dz = sx - tx, sy - ty, sz - tz
