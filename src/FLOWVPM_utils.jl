@@ -91,9 +91,15 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     if reverse_ad_mode == "ImplicitAD"
 
-        t = range(0, nsteps*dt, nsteps)
+        t = range(0, nsteps*dt, nsteps+1)
         p = (static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield)
-        pfield.particles = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
+        #pfield.particles = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
+        output_states = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
+        check_derivs(pfield.particles; label="pfield after passing derivatives back")
+        check_derivs(output_states[1:end-1]; label="states after passing derivatives back")
+        map_flat_states_to_pfield!(pfield, output_states)
+        check_derivs(pfield.particles; label="pfield before passing derivatives back")
+        check_derivs(output_states[1:end-1]; label="states before passing derivatives back")
         finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
         return nothing
@@ -127,15 +133,12 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         end
 
         # Calls user-defined runtime function
-        #pfield.np > 0 && check_deriv_allocation(pfield.particles[:, 1:pfield.np]; label="full pfield")
-        #pfield.np > 0 && check_deriv_allocation(pfield.particles[GAMMA_INDEX, 1:pfield.np]; label="Gamma")
+        
         breakflag = runtime_function(pfield, pfield.t, dt;
         vprintln= (str)-> i%verbose_nsteps==0 ?
             vprintln(str, v_lvl+2) : nothing,
         xd=xd, xci=xci)
-        #check_derivs(pfield.particles)
-        #check_deriv_allocation(pfield.particles[:, 1:pfield.np]; label="full pfield")
-        #check_deriv_allocation(pfield.particles[GAMMA_INDEX, 1:pfield.np]; label="Gamma")
+        
         # Save particle field
         if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat
         overwrite_time = save_time ? nothing : pfield.nt

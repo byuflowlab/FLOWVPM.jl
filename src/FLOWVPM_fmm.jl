@@ -119,8 +119,19 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                 crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
                 crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
                 crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
+                #crss1 = ( dy*gamma_z - dz*gamma_y )
+                #crss2 = ( dz*gamma_x - dx*gamma_z )
+                #crss3 = ( dx*gamma_y - dy*gamma_x )
+
+                #A = -const4*g_sgm/r^3
+                if i_source_particle == 1 && j_target == 2
+                    #@show A
+                end
 
                 if VS
+                    #Ux = ( dy*gamma_z - dz*gamma_y )
+                    #Uy = ( dz*gamma_x - dx*gamma_z )
+                    #Uz = ( dx*gamma_y - dy*gamma_x )
                     # U = ∑g_σ(x-xp) * K(x-xp) × Γp
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
@@ -130,33 +141,14 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 
                     val = SVector{3}(Ux, Uy, Uz)
                     fmm.set_velocity!(target_buffer, j_target, val)
-
-                    if i_source_particle == 1 && j_target == 2
-                        h = 1e-6
-                        Ux1 = Ux
-                        Uy1 = Uy
-                        Uz1 = Uz
-                        target_x += h
-                        dx = target_x - source_x
-                        dy = target_y - source_y
-                        dz = target_z - source_z
-                        r = sqrt(dx*dx + dy*dy + dz*dz)
-                        r3inv = one(r) / (r2 * r)
-                        crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
-                        crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
-                        crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
-                        g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-
-                        Ux2 = g_sgm * crss1
-                        Uy2 = g_sgm * crss2
-                        Uz2 = g_sgm * crss3
-                        #@show (Ux2 - Ux1)/h (Uy2 - Uy1)/h (Uz2 - Uz1)/h
-                        @show (Uz2 - Uz1)/h
-                    end
                     
                 end
+
+                #crss1 = ( dy*gamma_z - dz*gamma_y )
+                #crss2 = ( dz*gamma_x - dx*gamma_z )
+                #crss3 = ( dx*gamma_y - dy*gamma_x )
                 
-                if false
+                if GS
                     # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                     # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
                     aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
@@ -164,7 +156,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     # ∂u∂xj(x) = −∑gσ/(4πr^3) δij×Γp
                     # Adds the Kronecker delta term
                     aux2 = -const4 * g_sgm * r3inv
-                    #aux2 = -const4
+                    #aux2 = 1.0
                     # j=1
                     du1x1 = aux * crss1 * dx
                     du2x1 = aux * crss2 * dx - aux2 * gamma_z
@@ -177,9 +169,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du1x3 = aux * crss1 * dz - aux2 * gamma_y
                     du2x3 = aux * crss2 * dz + aux2 * gamma_x
                     du3x3 = aux * crss3 * dz
-                    # @show aux, aux2, crss1, crss2, crss3, dx, dy, dz
-                    # @show du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3
-
+                    
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
                     fmm.set_velocity_gradient!(target_buffer, j_target, val)
                 end

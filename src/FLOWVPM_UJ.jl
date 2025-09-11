@@ -92,7 +92,8 @@ function UJ_fmm(
     else
         # Calculate FMM of vector potential
         #args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), leaf_size_source=fmm_options.ncrit, multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, shrink_recenter=fmm_options.nonzero_sigma, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
-        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=fmm_options.ε_tol, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        #args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=fmm.RelativeUpperBound{fmm_options.ε_tol}, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
+        args = fmm.fmm!(pfield; expansion_order=fmm_options.p-1+!isnothing(fmm_options.ε_tol), multipole_threshold=fmm_options.theta, ε_tol=nothing, lamb_helmholtz=true, nearfield_device=(useGPU>0), scalar_potential=false)
         _, _, target_tree, source_tree, m2l_list, direct_list, _ = args
 
         # This should be concurrent_direct=(pfield.useGPU > 0)
