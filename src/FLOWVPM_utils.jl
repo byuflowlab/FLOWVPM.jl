@@ -188,25 +188,37 @@ function save(
     #   iterators, but for some reason HDF5 always re-allocates memory
     #   when trying to write anything but arrays.
 
-    temp = zeros(1,np)
-    h5["X"] = view(self.particles, X_INDEX, 1:np)
-    h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
-    temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
-    h5["sigma"] = temp
-    temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
-    h5["circulation"] = temp
-    temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
-    h5["vol"] = temp
-    temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
-    h5["static"] = temp
-    h5["velocity"] = view(self.particles, U_INDEX, 1:np)
-    h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
-    h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
-    h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
-    h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
+    # temp = zeros(1,np)
+    h5["X"] = self.particles[X_INDEX, 1:np]
+    # h5["X"] = view(self.particles, X_INDEX, 1:np)
+    h5["Gamma"] = self.particles[GAMMA_INDEX, 1:np]
+    # h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
+    # temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
+    h5["sigma"] = self.particles[SIGMA_INDEX, 1:np]
+    # h5["sigma"] = temp
+    # temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
+    h5["circulation"] = self.particles[CIRCULATION_INDEX, 1:np]
+    # h5["circulation"] = temp
+    # temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
+    h5["vol"] = self.particles[VOL_INDEX, 1:np]
+    # h5["vol"] = temp
+    # temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
+    h5["static"] = self.particles[STATIC_INDEX, 1:np]
+    # h5["static"] = temp
+    h5["velocity"] = self.particles[U_INDEX, 1:np]
+    # h5["velocity"] = view(self.particles, U_INDEX, 1:np)
+    h5["velocity_gradient_x"] = self.particles[J_INDEX[1:3], 1:np]
+    h5["velocity_gradient_y"] = self.particles[J_INDEX[4:6], 1:np]
+    h5["velocity_gradient_z"] = self.particles[J_INDEX[7:9], 1:np]
+    h5["vorticity"] = self.particles[VORTICITY_INDEX, 1:np]
+    # h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
+    # h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
+    # h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
+    # h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
 
     if isLES(self)
-        h5["C"] = view(self.particles, C_INDEX, 1:np)
+        h5["C"] = self.particles[C_INDEX, 1:np]
+        # h5["C"] = view(self.particles, C_INDEX, 1:np)
     end
 
     # # Connectivity information
