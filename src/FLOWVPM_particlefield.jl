@@ -163,9 +163,9 @@ Add a particle to the field.
 - `C`                     : SFS parameter of the particle. Default is 0.
 - `static`                : If true, the particle is static. Default is false.
 """
-function add_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}, X, Gamma, sigma;
+function add_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, static=false) where {R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}
+                                           C=0, static=false) where {R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}
     # ERROR CASES
     if get_np(pfield)==pfield.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
@@ -179,7 +179,6 @@ function add_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tin
 
     # Add particle to the field
     pfield.np += 1
-
     # Populate the empty particle
     set_X(pfield, i_next, X)
     set_Gamma(pfield, i_next, Gamma)
@@ -444,12 +443,22 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
         if pfield.np > MIN_MT_NP
             Threads.@threads for i in 1:pfield.np
                 Ux, Uy, Uz = get_U(pfield, i)
-                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+                U2 = Ux*Ux + Uy*Uy + Uz*Uz
+                if U2 > 0
+                    set_U_prev(pfield, i, sqrt(U2))
+                else
+                    set_U_prev(pfield, i, zero(U2))
+                end
             end
         else
             for i in 1:pfield.np
                 Ux, Uy, Uz = get_U(pfield, i)
-                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+                U2 = Ux*Ux + Uy*Uy + Uz*Uz
+                if U2 > 0
+                    set_U_prev(pfield, i, sqrt(U2))
+                else
+                    set_U_prev(pfield, i, zero(U2))
+                end
             end
         end
     end
@@ -483,6 +492,19 @@ function _reset_particle(particle)
 end
 
 function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
+    if eltype(pfield.particles) <: ReverseDiff.TrackedReal
+        tp = ReverseDiff.tape(pfield)
+        zeroR = zero(eltype(pfield.particles[1].value))
+        for j=1:3
+            pfield.particles[U_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
+            pfield.particles[VORTICITY_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
+            pfield.particles[PSE_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
+        end
+        for j=1:9
+            pfield.particles[J_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
+        end
+        return nothing
+    end
     pfield.particles[U_INDEX, i] .= zeroVal
     pfield.particles[VORTICITY_INDEX, i] .= zeroVal
     pfield.particles[J_INDEX, i] .= zeroVal

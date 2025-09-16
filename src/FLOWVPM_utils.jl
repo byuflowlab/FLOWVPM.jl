@@ -57,7 +57,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       xci=nothing)
 
     # ERROR CASES
-    #check_derivs(pfield.particles)
     ## Check that viscous scheme and kernel are compatible
     compatible_kernels = _kernel_compatibility(pfield.viscous)
 
@@ -104,7 +103,6 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         return nothing
     end
-
     for i in 0:nsteps
         if i%verbose_nsteps==0
             vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
@@ -119,25 +117,31 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         if i!=0
             # Add static particles
-            remove = static_particles_function(pfield, pfield.t, dt)
+            #remove = static_particles_function(pfield, pfield.t, dt)
 
             # Step in time solving governing equations
+            #@show pfield.particles[5]
             nextstep(pfield, dt; relax, custom_UJ)
-
+            #@show pfield.particles[5]
             # Remove static particles (assumes particles remained sorted)
-            if remove===nothing || remove
-                for pi in get_np(pfield):-1:(org_np+1)
-                    remove_particle(pfield, pi)
-                end
-            end
+            #if remove===nothing || remove
+            #    for pi in get_np(pfield):-1:(org_np+1)
+            #        remove_particle(pfield, pi)
+            #    end
+            #end
         end
 
         # Calls user-defined runtime function
-        
-        breakflag = runtime_function(pfield, pfield.t, dt;
-        vprintln= (str)-> i%verbose_nsteps==0 ?
-            vprintln(str, v_lvl+2) : nothing,
-        xd=xd, xci=xci)
+        if xd === nothing && xci === nothing
+            breakflag = runtime_function(pfield, pfield.t, dt;
+            vprintln= (str)-> i%verbose_nsteps==0 ?
+                vprintln(str, v_lvl+2) : nothing)
+        else
+            breakflag = runtime_function(pfield, pfield.t, dt;
+            vprintln= (str)-> i%verbose_nsteps==0 ?
+                vprintln(str, v_lvl+2) : nothing,
+            xd=xd, xci=xci)
+        end
         
         # Save particle field
         if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat

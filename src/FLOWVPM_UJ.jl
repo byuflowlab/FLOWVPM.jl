@@ -70,7 +70,7 @@ function UJ_fmm(
         reset_sfs::Bool=false,
         autotune::Bool=true,
     ) where {useGPU}
-
+    
     # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
@@ -124,6 +124,5 @@ function UJ_fmm(
         #       therefore cannot be included in the direct function of the FMM
         sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
     end
-
     return nothing
 end

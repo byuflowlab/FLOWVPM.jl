@@ -19,7 +19,7 @@ function fmm.direct!(target_buffer::AbstractArray{<:ReverseDiff.TrackedReal{V, D
     
     target_buffer_val = ReverseDiff.value.(target_buffer)
     target_buffer_val_star = deepcopy(target_buffer_val) # since this is an in-place function, we need to save the overwritten input.
-    source_system_val = ReverseDiff.value(source_system)
+    source_system_val = ReverseDiff.value(source_system) # TODO: just pass in the particle field directly, since the actual math is done with the buffers anyway.
     source_buffer_val = ReverseDiff.value.(source_buffer)
     tp = ReverseDiff.tape(source_system)
     fmm.direct!(target_buffer_val, target_index, derivatives_switch, source_system_val, source_buffer_val, source_index)
@@ -192,7 +192,7 @@ function fmm.source_system_to_buffer!(buffer::AbstractArray{<:ReverseDiff.Tracke
     σ = system.particles[SIGMA_INDEX, i_body].value
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     for i=1:3
         buffer[i, i_buffer].value = system.particles[X_INDEX[i], i_body].value
     end
@@ -222,27 +222,25 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     end
     
     σ = system.particles[SIGMA_INDEX, i_body].value
-    ε = system.fmm.ε_tol
     Γx = system.particles[GAMMA_INDEX[1], i_body].value
     Γy = system.particles[GAMMA_INDEX[2], i_body].value
     Γz = system.particles[GAMMA_INDEX[3], i_body].value
     Γ = sqrt(Γx^2 + Γy^2 + Γz^2)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.ε_tol)
-
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     for i=1:3
         ReverseDiff._add_to_deriv!(system.particles[X_INDEX[i], i_body], buffer[i, i_buffer].deriv)
         ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[i], i_body], buffer[i+4, i_buffer].deriv)
     end
     ReverseDiff._add_to_deriv!(system.particles[SIGMA_INDEX, i_body], buffer[8, i_buffer].deriv)
 
-    dr_dρ_σ = ForwardDiff.derivative((_ρ_σ)->residual(_ρ_σ, σ, Γ, ε), ρ_σ)
-    dr_dσ = ForwardDiff.derivative((_σ)->residual(ρ_σ, _σ, Γ, ε), σ)
-    dr_dω = ForwardDiff.derivative((_Γ)->residual(ρ_σ, σ, _Γ, ε), Γ)
+    dρ_σ_dσ = ForwardDiff.derivative(_σ->(solve_ρ_over_σ(_σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)), σ)
+    dρ_σ_dΓ = ForwardDiff.derivative(_Γ->(solve_ρ_over_σ(σ, _Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)), Γ)
 
-    ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[1], i_body], -buffer[4, i_buffer].deriv/dr_dρ_σ*dr_dω*Γx/Γ)
-    ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[2], i_body], -buffer[4, i_buffer].deriv/dr_dρ_σ*dr_dω*Γy/Γ)
-    ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[3], i_body], -buffer[4, i_buffer].deriv/dr_dρ_σ*dr_dω*Γz/Γ)
-    ReverseDiff._add_to_deriv!(system.particles[SIGMA_INDEX, i_body], buffer[4, i_buffer].deriv*(-1/dr_dρ_σ * dr_dσ + ρ_σ))
+    for j=1:3
+        ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[j], i_body], buffer[4, i_buffer].deriv * dρ_σ_dΓ * system.particles[GAMMA_INDEX[j], i_body].value / Γ)
+    end
+    ReverseDiff._add_to_deriv!(system.particles[SIGMA_INDEX, i_body], buffer[4, i_buffer].deriv * (dρ_σ_dσ + ρ_σ))
+
     T = eltype(buffer[1].deriv)
     
     # manual unseed - we do not want to keep derivatives in the buffer after we map derivatives back to the particle field.
@@ -251,6 +249,30 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     end
     
     return nothing
+
+end
+
+function ρ_σ_residual(ρ_σ, σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
+
+    if false#autotune_reg_error
+        if ω < 10*eps()
+            return zero(eltype(ω))
+        end
+
+        if ε_rel<=eps(10.0)
+            return ε_abs <= eps(10.0) ? zero(eltype(σ)) : residual_abs(ρ_σ, σ, ω, ε_abs)
+        end
+        if ε_abs<=eps(10.0)
+            return residual_rel(ρ_σ, ε_rel)
+        end
+
+        ρ_over_σ_rel = ε_rel<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_rel(x, ε_rel), (0.0, upper_bound_rel()), Roots.Brent())
+        ρ_over_σ_abs = ε_abs<=eps(10.0) ? one(σ) : Roots.find_zero((x) -> residual_abs(x, σ, ω, ε_abs), (0.0, upper_bound_abs(σ, ω, ε_abs)), Roots.Brent())
+        return (ρ_over_σ_rel < ρ_over_σ_abs) ? residual_rel(ρ_σ, ε_rel) : residual_abs(ρ_σ, σ, ω, ε_abs)
+
+    else
+        return zero(eltype(default_rho_over_sigma))
+    end
 
 end
 
@@ -456,7 +478,7 @@ end
 end
 
 # automatically constructed pullback for adding particles seems to not work properly. probably because it's an in-place operation.
-function add_particle(pfield::ParticleField{ReverseDiff.TrackedReal{R, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}, X, Gamma, sigma; vol=0, circulation=1, C=0, static=false) where {R, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU, TEPS}
+function add_particle(pfield::ParticleField{ReverseDiff.TrackedReal{R, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, X, Gamma, sigma; vol=0, circulation=1, C=0, static=false) where {R, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}
 
     # we still need the error checking
     if get_np(pfield)==pfield.maxparticles
@@ -661,8 +683,8 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
 end
 =#
 
-function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}
-    return ParticleField{_V, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}(
+function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+    return ParticleField{_V, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
                         pfield.maxparticles,
                         #view(ReverseDiff.value(pfield.particles)), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
                         ReverseDiff.value.(pfield.particles),
@@ -679,16 +701,12 @@ function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, 
                         pfield.transposed,
                         pfield.relaxation,
                         pfield.fmm,
-                        pfield.useGPU,
-                        #view(ReverseDiff.value(pfield.M)),
-                        ReverseDiff.value.(pfield.M),
-                        pfield.toggle_rbf,
-                        pfield.toggle_sfs
+                        pfield.useGPU
                         )
 end
 
-function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}
-    return ParticleField{D, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU, TEPS}(
+function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+    return ParticleField{D, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
                         pfield.maxparticles,
                         #view(ReverseDiff.deriv.(pfield.particles), :), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
                         ReverseDiff.deriv.(pfield.particles),
@@ -705,11 +723,7 @@ function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, 
                         pfield.transposed,
                         pfield.relaxation,
                         pfield.fmm,
-                        pfield.useGPU,
-                        #view(ReverseDiff.deriv.(pfield.M), :),
-                        ReverseDiff.deriv.(pfield.M),
-                        pfield.toggle_rbf,
-                        pfield.toggle_sfs
+                        pfield.useGPU
                         )
 end
 
@@ -962,7 +976,7 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
 
 end
 
-add!(A::Number,B::Number) = A += B
+add!(A,B) = A += B
 add!_trackedreal() = error("dummy function")
 function add!(A::ReverseDiff.TrackedReal, B::ReverseDiff.TrackedReal)
     Astar = A.value

@@ -55,7 +55,7 @@ function relax_pedrizzetti(rlxf::Real, p)
         G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
         G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
     end
-
+    
     return nothing
 end
 
@@ -63,7 +63,7 @@ function relax_pedrizzetti(rlxf::Real, pfield, i)
 
     J = get_J(pfield, i)
     G = get_Gamma(pfield, i)
-
+    
     nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
                 (J[7]-J[3])*(J[7]-J[3]) +
                 (J[2]-J[4])*(J[2]-J[4]))
@@ -72,9 +72,18 @@ function relax_pedrizzetti(rlxf::Real, pfield, i)
     
         nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
 
-        G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
-        G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
-        G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+        #G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+        #G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+        #G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+        if eltype(pfield) <: ReverseDiff.TrackedReal
+            add!(G[1], (-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw)
+            add!(G[2], (-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw)
+            add!(G[3], (-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw)
+        else
+            G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+            G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+            G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+        end
     end
 
     return nothing
