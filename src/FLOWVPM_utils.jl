@@ -544,20 +544,21 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
     end_i = start_i + np - 1
 
     Threads.@threads for i in start_i:end_i
-        pfield.particles[X_INDEX[1], i] = X[1, i]
-        pfield.particles[X_INDEX[2], i] = X[2, i]
-        pfield.particles[X_INDEX[3], i] = X[3, i]
-        pfield.particles[GAMMA_INDEX[1], i] = Gamma[1, i]
-        pfield.particles[GAMMA_INDEX[2], i] = Gamma[2, i]
-        pfield.particles[GAMMA_INDEX[3], i] = Gamma[3, i]
-        pfield.particles[SIGMA_INDEX, i] = sigma[i]
-        pfield.particles[VOL_INDEX, i] = vol[i]
-        pfield.particles[CIRCULATION_INDEX, i] = circulation[i]
-        pfield.particles[STATIC_INDEX, i] = static_bool ? Float64(static[i]) : Float64(false)
+        j = i - start_i + 1
+        pfield.particles[X_INDEX[1], i] = X[1, j]
+        pfield.particles[X_INDEX[2], i] = X[2, j]
+        pfield.particles[X_INDEX[3], i] = X[3, j]
+        pfield.particles[GAMMA_INDEX[1], i] = Gamma[1, j]
+        pfield.particles[GAMMA_INDEX[2], i] = Gamma[2, j]
+        pfield.particles[GAMMA_INDEX[3], i] = Gamma[3, j]
+        pfield.particles[SIGMA_INDEX, i] = sigma[j]
+        pfield.particles[VOL_INDEX, i] = vol[j]
+        pfield.particles[CIRCULATION_INDEX, i] = circulation[j]
+        pfield.particles[STATIC_INDEX, i] = static_bool ? Float64(static[j]) : Float64(false)
         if C_bool
-            pfield.particles[C_INDEX[1], i] = C[1, i]
-            pfield.particles[C_INDEX[2], i] = C[2, i]
-            pfield.particles[C_INDEX[3], i] = C[3, i]
+            pfield.particles[C_INDEX[1], i] = C[1, j]
+            pfield.particles[C_INDEX[2], i] = C[2, j]
+            pfield.particles[C_INDEX[3], i] = C[3, j]
         else
             pfield.particles[C_INDEX, i] .= 0
         end
