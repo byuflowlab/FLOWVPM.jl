@@ -157,8 +157,12 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
     if pfield.integration == euler
 
         # Core spreading
-        for p in iterator(pfield)
-            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
+        # for p in iterator(pfield)
+        #     get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
+        # end
+
+        for i in 1:pfield.np
+            get_sigma(pfield, i)[] = sqrt(get_sigma(pfield, i)[]^2 + 2*scheme.nu*dt)
         end
 
         proceed = true
@@ -167,11 +171,18 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
     elseif pfield.integration == rungekutta3
 
         # Core spreading
-        for p in iterator(pfield)
+        # for p in iterator(pfield)
+        #     # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
+        #     # Should I be solving dsigmadt = nu/sigma instead?
+        #     get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
+        #     get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
+        # end
+
+        for i in 1:pfield.np
             # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
             # Should I be solving dsigmadt = nu/sigma instead?
-            get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
-            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
+            get_M(pfield, i)[7] = aux1*get_M(pfield, i)[7] + dt*2*scheme.nu
+            get_sigma(pfield, i)[] = sqrt(get_sigma(pfield, i)[]^2 + aux2*get_M(pfield, i)[7])
         end
 
         # Update things in the last RK inner iteration
@@ -203,13 +214,23 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
             # Calculate approximated vorticity (stored under P.J[1:3])
             scheme.zeta(pfield)
 
-            for p in iterator(pfield)
+            # for p in iterator(pfield)
+            #     # Use approximated vorticity as target vorticity (stored under P.J[7:9])
+            #     for i in 1:3
+            #         get_M(p)[6+i] = get_J(p)[i]
+            #     end
+            #     # Reset core sizes
+            #     get_sigma(p)[] = scheme.sgm0
+            # end
+
+            for i in 1:pfield.np
                 # Use approximated vorticity as target vorticity (stored under P.J[7:9])
-                for i in 1:3
-                    get_M(p)[6+i] = get_J(p)[i]
+                J = get_J(pfield, i)
+                for j in 1:3
+                    get_M(pfield, i)[6+j] = J[j]
                 end
                 # Reset core sizes
-                get_sigma(p)[] = scheme.sgm0
+                get_sigma(pfield, i)[] = scheme.sgm0
             end
 
             # Calculate new strengths through RBF to preserve original vorticity
