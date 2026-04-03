@@ -32,7 +32,10 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
+    @show get_X(pfield, pfield.np)
+
     fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    @show get_U(pfield, pfield.np)
     sfs && Estr_direct!(pfield)
 end
 
@@ -87,11 +90,11 @@ function UJ_fmm(
         zeta_fmm(pfield)
     else
         # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield; 
-                        expansion_order=fmm_options.p-1, 
-                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit), 
-                        multipole_acceptance=fmm_options.theta, 
-                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
+        args = fmm.fmm!(pfield;
+                        expansion_order=fmm_options.p-1,
+                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
+                        multipole_acceptance=fmm_options.theta,
+                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
                         tune=true,
                         shrink_recenter=fmm_options.shrink_recenter,
                         nearfield_device=(useGPU>0),

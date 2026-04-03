@@ -63,6 +63,7 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    # @show σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
@@ -167,11 +168,19 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
     return nothing
 end
 
-function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
-    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
-    j = fmm.get_hessian(target_buffer, i_buffer)
-    for i = 1:9
-        target_system.particles[J_INDEX[i], i_target] += j[i]
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::FastMultipole.DerivativesSwitch{PS,VS,GS}, target_buffer, i_buffer) where {PS,VS,GS}
+    if VS
+        @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
+    end
+    if GS
+        j = fmm.get_hessian(target_buffer, i_buffer)
+        if any(isnan, j)
+            println("[DEBUG b2t] NaN hessian in buffer for particle $i_target, buffer_idx=$i_buffer")
+            println("  buffer_size=$(size(target_buffer)), buffer_col=$(target_buffer[:, i_buffer])")
+        end
+        for i = 1:9
+            target_system.particles[J_INDEX[i], i_target] += j[i]
+        end
     end
 end
 

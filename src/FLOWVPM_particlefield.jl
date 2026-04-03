@@ -125,7 +125,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         fmm::FMM=FMM(),
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
-        relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
+        relaxation::TR=Relaxation(relax_correctedpedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
@@ -438,7 +438,7 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     if get_np(pfield)!=0
         pfield.integration(pfield, dt; optargs...)
     end
-    
+
     # update U_prev
     if update_U_prev
         if pfield.np > MIN_MT_NP
