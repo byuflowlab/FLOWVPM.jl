@@ -43,7 +43,7 @@ export ParticleField,
        NoSFS, ConstantSFS, DynamicSFS,
        U_INDEX, J_INDEX,
        SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX,
-       add_particle, remove_particle, run_vpm!
+       add_particle, remove_particle, merge_particles!, run_vpm!
 
 const fmm = FastMultipole
 
@@ -68,7 +68,7 @@ const sqr2 = sqrt(2)
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
-                    "particlefield", "fmm",
+                    "particlefield", "fmm", "merging",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",

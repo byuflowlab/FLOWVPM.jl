@@ -28,6 +28,9 @@ Solves `nsteps` of the particle field with a time step of `dt`.
                             solving the governing equations, and any new
                             particles added by this function are immediately
                             removed.
+* `merge_every::Int`    : Merge particles every this many time steps. Disabled
+                            when set to 0.
+* `merge_kwargs::NamedTuple` : Keyword arguments passed to `merge_particles!`.
 * `save_path::String`   : Give it a string for saving VTKs of the particle
                             field. Creates the given path.
 * `run_name::String`    : Name of output files.
@@ -42,6 +45,8 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       # RUNTIME OPTIONS
                       runtime_function::Function=runtime_default,
                       static_particles_function::Function=static_particles_default,
+                      merge_every::Int=0,
+                      merge_kwargs::NamedTuple=(;),
                       custom_UJ=nothing,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
@@ -110,6 +115,10 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 for pi in get_np(pfield):-1:(org_np+1)
                     remove_particle(pfield, pi)
                 end
+            end
+
+            if merge_every > 0 && i > 0 && i % merge_every == 0
+                merge_particles!(pfield; merge_kwargs...)
             end
         end
 
