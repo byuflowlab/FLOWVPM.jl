@@ -32,10 +32,7 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    @show get_X(pfield, pfield.np)
-
     fmm.direct!(pfield; scalar_potential=false, hessian=true)
-    @show get_U(pfield, pfield.np)
     sfs && Estr_direct!(pfield)
 end
 
