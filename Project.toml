@@ -1,7 +1,7 @@
 name = "FLOWVPM"
 uuid = "6e19019d-7c31-4940-9d16-c3f15dfe6020"
-authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
 version = "4.0.3"
+authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>"]
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
@@ -27,7 +27,7 @@ FastMultipole = "2"
 HCubature = "1"
 HDF5 = "0.17"
 Primes = "0.5"
-Roots = "2"
+Roots = "2, 3"
 SpecialFunctions = "2"
 StaticArrays = "1"
 TestEnv = "1"
