@@ -105,6 +105,8 @@ function _finalize_merged_particle!(
     weight_sum,
     vol_sum,
     sigma3_sum,
+    circulation_weighted_sum,
+    sigma_sum,
 )
     R = eltype(pfield.particles)
     zeroR = zero(R)
@@ -135,14 +137,14 @@ function _finalize_merged_particle!(
         c_z = c_unweighted_z * inv_members
     end
 
-    gamma_norm = sqrt(gamma_x * gamma_x + gamma_y * gamma_y + gamma_z * gamma_z)
     sigma = cbrt(sigma3_sum)
+    circulation = circulation_weighted_sum / sigma_sum
 
     set_X(pfield, representative, (x_x, x_y, x_z))
     set_Gamma(pfield, representative, (gamma_x, gamma_y, gamma_z))
     set_sigma(pfield, representative, sigma)
     set_vol(pfield, representative, vol_sum)
-    set_circulation(pfield, representative, gamma_norm)
+    set_circulation(pfield, representative, circulation)
     set_C(pfield, representative, (c_x, c_y, c_z))
     set_U(pfield, representative, zeroR)
     set_vorticity(pfield, representative, zeroR)
@@ -187,6 +189,8 @@ function _merge_clusters_aggressive!(
     weight_sum = fill(zeroR, np)
     vol_sum = fill(zeroR, np)
     sigma3_sum = fill(zeroR, np)
+    circulation_weighted_sum = fill(zeroR, np)
+    sigma_sum = fill(zeroR, np)
 
     for i in candidate_indices
         root = _uf_find!(parent, i)
@@ -215,6 +219,8 @@ function _merge_clusters_aggressive!(
         gamma_z[root] += gamma_i_z
         vol_sum[root] += pfield.particles[VOL_INDEX, i]
         sigma3_sum[root] += sigma * sigma * sigma
+        circulation_weighted_sum[root] += sigma * pfield.particles[CIRCULATION_INDEX, i]
+        sigma_sum[root] += sigma
 
         x_unweighted_x[root] += pos_x
         x_unweighted_y[root] += pos_y
@@ -264,6 +270,8 @@ function _merge_clusters_aggressive!(
             weight_sum[root],
             vol_sum[root],
             sigma3_sum[root],
+            circulation_weighted_sum[root],
+            sigma_sum[root],
         )
     end
 
@@ -280,6 +288,7 @@ end
 function merge_particles!(
     pfield::ParticleField;
     r_merge::Real=0.5,
+    r_hash::Real=-1.0,
     sigma_relative::Bool=true,
     check_neighboring_cells::Bool=true,
     max_sigma_ratio::Real=2.0,
@@ -300,7 +309,7 @@ function merge_particles!(
     xmax = typemin(eltype(pfield.particles))
     ymax = typemin(eltype(pfield.particles))
     zmax = typemin(eltype(pfield.particles))
-    max_sigma = zero(eltype(pfield.particles))
+    sigma_sum = zero(eltype(pfield.particles))
 
     for i in 1:np
         if skip_static && get_static(pfield, i)
@@ -320,12 +329,14 @@ function merge_particles!(
         xmax = max(xmax, x)
         ymax = max(ymax, y)
         zmax = max(zmax, z)
-        max_sigma = max(max_sigma, sigma)
+        sigma_sum += sigma
     end
 
     length(candidate_indices) <= 1 && return 0
 
-    cell_size = sigma_relative ? r_merge * max_sigma : r_merge
+    effective_r_hash = r_hash < 0.0 ? r_merge : r_hash
+    mean_sigma = sigma_sum / length(candidate_indices)
+    cell_size = sigma_relative ? effective_r_hash * mean_sigma : effective_r_hash
     if !(cell_size > 0)
         return 0
     end
