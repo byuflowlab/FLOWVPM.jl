@@ -93,7 +93,7 @@ function UJ_fmm(
                         multipole_acceptance=fmm_options.theta, 
                         error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
                         tune=true,
-                        shrink_recenter=fmm_options.shrink_recenter,
+                        # shrink_recenter=fmm_options.shrink_recenter,
                         nearfield_device=(useGPU>0),
                         scalar_potential=false,
                         hessian=true,

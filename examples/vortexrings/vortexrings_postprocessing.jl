@@ -43,7 +43,7 @@ function plot_dynamics(read_path;
     plot_gridt = [size(to_plot, 2), size(to_plot, 1)]
 
     fig = _fig == nothing ? plt.figure(figname, figsize=figsize.*plot_grid) : _fig
-    axs = _axs == nothing ? fig.subplots(plot_gridt...) : _axs
+    axs = _axs == nothing ? pyconvert(Array, fig.subplots(plot_gridt...)) : _axs
 
     if length(to_plot)==1 && _axs==nothing; axs = [axs]; end;
 
