@@ -18,7 +18,8 @@ const useGPU_default = 0
     `FMM(; p::Int=4, ncrit::Int=10, theta::Real=0.5, shrink_recenter::Bool=true,
           relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-6,
           autotune_p::Bool=true, autotune_ncrit::Bool=true,
-          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0)`
+          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0,
+          min_ncrit::Int=50)`
 
 Parameters for FMM solver.
 
@@ -41,6 +42,7 @@ Parameters for FMM solver.
 * `autotune_ncrit` : If true, automatically adjust ncrit to optimize performance.
 * `autotune_reg_error` : If true, constrain regularization error in FMM calls.
 * `default_rho_over_sigma` : Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true).
+* `min_ncrit` : Lower bound for auto-tuned leaf size (`ncrit`) when `autotune_ncrit=true`.
 
 """
 struct FMM
@@ -54,10 +56,10 @@ struct FMM
   autotune_ncrit::Bool            # If true, automatically adjust ncrit to optimize performance
   autotune_reg_error::Bool        # If true, automatically calculate rho/sigma to constrain regularization error
   default_rho_over_sigma::FLOAT_TYPE # Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true)
-  min_ncrit::Int64                 # Minimum number of particles per leaf (default to 3 for safety)
+  min_ncrit::Int64                 # Minimum number of particles per leaf (default to 50 for SFS robustness)
 end
 
-function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=50)
     return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma, min_ncrit)
 end
 
