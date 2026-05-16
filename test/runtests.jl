@@ -8,6 +8,11 @@ using Test
 import FLOWVPM
 # using FLOWVPM.CUDA
 
+@testset "FMM defaults" begin
+    @test FLOWVPM.FMM().min_ncrit == 50
+    @test FLOWVPM.FMM(min_ncrit=7).min_ncrit == 7
+end
+
 # Run tests on CPU
 const test_using_GPU = fill(0)
 include("runtests_singlevortexring.jl")
