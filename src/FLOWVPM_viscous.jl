@@ -528,7 +528,7 @@ function zeta_fmm(pfield)
     zeta = pfield.kernel.zeta
 
     # create tree
-    tree = FastMultipole.Tree((pfield,); leaf_size, shrink_recenter)
+    tree = FastMultipole.Tree((pfield,); leaf_size, shrink=shrink_recenter, recenter=shrink_recenter)
     _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_acceptance, false, true, true)
     sort_index = tree.sort_index_list[1]
 

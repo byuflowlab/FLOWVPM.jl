@@ -130,6 +130,7 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
             # loop over source particles
             for i_source in source_index
                 source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+                is_static(source_particle) && continue
 
                 # source position
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
@@ -137,6 +138,7 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
                 # loop over target particles
                 for i_target in target_index
                     target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+                    is_static(target_particle) && continue
 
                     # target position
                     tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
@@ -164,6 +166,7 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
         # loop over source particles
         for i_source in source_index
             source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+            is_static(source_particle) && continue
 
             # source position
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
@@ -171,6 +174,7 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
             # loop over target particles
             for i_target in target_index
                 target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+                is_static(target_particle) && continue
 
                 # target position
                 tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]

@@ -13,6 +13,7 @@ const test_using_GPU = fill(0)
 include("runtests_singlevortexring.jl")
 include("runtests_leapfrog.jl")
 include("runtests_merging.jl")
+include("runtests_subfilterscale.jl")
 
 # Run tests on GPU if device is functional
 # if CUDA.functional()

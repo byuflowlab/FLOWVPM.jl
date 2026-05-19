@@ -58,7 +58,7 @@ function plot_dynamics(read_path;
                  index_y isa Function ? index_y(data, ri, cols_per_ring) :
                                         data[!, 1 + cols_per_ring*(ri - 1) + index_y]
 
-            ax = axs[ploti]
+            ax = axs[ploti-1]
 
             if plot_ana
                 xs_ana =     index_x=="t" ? ts_ana :
