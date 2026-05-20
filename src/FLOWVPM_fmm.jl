@@ -88,10 +88,21 @@ function fmm.has_vector_potential(system::ParticleField)
     return true
 end
 
-function fmm.get_previous_influence(system::ParticleField, i)
+function previous_influence(system::ParticleField, i)
     prev_potential = zero(eltype(system))
     gx, gy, gz = get_U(system, i)
     return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+end
+
+fmm.metadata_per_body(system::ParticleField) = 2
+fmm.previous_potential_metadata_index(system::ParticleField) = 1
+fmm.previous_gradient_metadata_index(system::ParticleField) = 2
+
+function fmm.metadata_to_buffer!(buffer, switch, i_buffer, system::ParticleField, i_body)
+    prev_potential, prev_gradient = previous_influence(system, i_body)
+    buffer[fmm.metadata_index(switch, 1), i_buffer] = prev_potential
+    buffer[fmm.metadata_index(switch, 2), i_buffer] = prev_gradient
+    return nothing
 end
 
 fmm.get_n_bodies(system::ParticleField) = system.np
@@ -100,7 +111,8 @@ function fmm.body_to_multipole!(system::ParticleField, args...)
     return fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, system, args...)
 end
 
-function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS}
+function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,GS,HS,NO,NM}, source_system::ParticleField, source_buffer, source_index) where {PS,GS,HS,NO,NM}
+    compute_vorticity = NO >= 3
 
     for i_source_particle in source_index
 
@@ -128,17 +140,17 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                 crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
                 crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
 
-                if VS
+                if GS
                     # U = ∑g_σ(x-xp) * K(x-xp) × Γp
                     Ux = g_sgm * crss1
                     Uy = g_sgm * crss2
                     Uz = g_sgm * crss3
 
                     val = SVector{3}(Ux, Uy, Uz)
-                    fmm.set_gradient!(target_buffer, j_target, val)
+                    fmm.set_gradient!(target_buffer, derivatives_switch, j_target, val)
                 end
 
-                if GS
+                if HS || compute_vorticity
                     # ∂u∂xj(x) = ∑[ ∂gσ∂xj(x−xp) * K(x−xp)×Γp + gσ(x−xp) * ∂K∂xj(x−xp)×Γp ]
                     # ∂u∂xj(x) = ∑p[(Δxj∂gσ∂r/(σr) − 3Δxjgσ/r^2) K(Δx)×Γp
                     aux = dg_sgmdr/(sigma*r) - 3*g_sgm / r2
@@ -159,7 +171,14 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du3x3 = aux * crss3 * dz
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
-                    fmm.set_hessian!(target_buffer, j_target, val)
+                    if HS
+                        fmm.set_hessian!(target_buffer, derivatives_switch, j_target, val)
+                    end
+                    if compute_vorticity
+                        fmm.set_extra_output!(target_buffer, derivatives_switch, j_target, 1, val[6] - val[8])
+                        fmm.set_extra_output!(target_buffer, derivatives_switch, j_target, 2, val[7] - val[3])
+                        fmm.set_extra_output!(target_buffer, derivatives_switch, j_target, 3, val[2] - val[4])
+                    end
                 end
             end
         end
@@ -168,18 +187,30 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
     return nothing
 end
 
-function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::FastMultipole.DerivativesSwitch{PS,VS,GS}, target_buffer, i_buffer) where {PS,VS,GS}
-    if VS
-        @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
-    end
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::FastMultipole.DerivativesSwitch{PS,GS,HS,NO,NM}, target_buffer, i_buffer) where {PS,GS,HS,NO,NM}
     if GS
-        j = fmm.get_hessian(target_buffer, i_buffer)
+        @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, derivatives_switch, i_buffer)
+    end
+    j = nothing
+    if HS
+        j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
         if any(isnan, j)
             println("[DEBUG b2t] NaN hessian in buffer for particle $i_target, buffer_idx=$i_buffer")
             println("  buffer_size=$(size(target_buffer)), buffer_col=$(target_buffer[:, i_buffer])")
         end
         for i = 1:9
             target_system.particles[J_INDEX[i], i_target] += j[i]
+        end
+    end
+    if NO >= 3
+        if HS
+            target_system.particles[VORTICITY_INDEX[1], i_target] += j[6] - j[8]
+            target_system.particles[VORTICITY_INDEX[2], i_target] += j[7] - j[3]
+            target_system.particles[VORTICITY_INDEX[3], i_target] += j[2] - j[4]
+        else
+            for i in 1:3
+                target_system.particles[VORTICITY_INDEX[i], i_target] += fmm.get_extra_output(target_buffer, derivatives_switch, i_buffer, i)
+            end
         end
     end
 end

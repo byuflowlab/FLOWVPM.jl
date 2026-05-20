@@ -251,7 +251,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
 
         if restart_sigma != nothing
 
-            # Evaluate current vorticity field (gets stored under get_J(P)[1:3])
+            # Evaluate current vorticity field into the dedicated vorticity storage.
             vpm.zeta_fmm(pfield)
 
             # Resize particle cores and store target vorticity under P.M[7:9]
@@ -260,7 +260,7 @@ function run_roundjet_simulation(pfield::vpm.ParticleField,
                 P.sigma[1] = restart_sigma
 
                 for i in 1:3
-                    P.M[i+6] = get_J(P)[i]
+                    P.M[i+6] = vpm.get_vorticity(P)[i]
                 end
             end
 

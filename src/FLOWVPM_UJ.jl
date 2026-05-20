@@ -62,7 +62,7 @@ every particle without previously emptying those properties.
 function UJ_fmm(
         pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
         verbose::Bool=false,
-        rbf::Bool=false,
+        vorticity::Bool=false,
         sfs::Bool=false,
         sfs_type::Int=-1, # unused
         transposed_sfs::Bool=true, # unused
@@ -82,49 +82,49 @@ function UJ_fmm(
     # extract FMM options
     fmm_options = pfield.fmm
 
-    if rbf
-        # calculate vorticity
-        zeta_fmm(pfield)
-    else
-        # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield;
-                        expansion_order=fmm_options.p-1,
-                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
-                        multipole_acceptance=fmm_options.theta,
-                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
-                        tune=true,
-                        shrink=fmm_options.shrink_recenter,
-                        recenter=fmm_options.shrink_recenter,
-                        nearfield_device=(useGPU>0),
-                        scalar_potential=false,
-                        hessian=true,
-                        silence_warnings=!verbose)
-        optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = args
-
-        # autotune p and ncrit
-        if autotune
-            new_p = fmm_options.autotune_p ? optargs.expansion_order+1 : fmm_options.p
-            new_ncrit = fmm_options.autotune_ncrit ? optargs.leaf_size_source[1] : fmm_options.ncrit
-            pfield.fmm = FMM(new_p, new_ncrit, fmm_options.theta,
-                            fmm_options.shrink_recenter,
-                            fmm_options.relative_tolerance,
-                            fmm_options.absolute_tolerance,
-                            fmm_options.autotune_p,
-                            fmm_options.autotune_ncrit,
-                            fmm_options.autotune_reg_error,
-                            fmm_options.default_rho_over_sigma,
-                            fmm_options.min_ncrit)
-        end
-
-        # This should be concurrent_direct=(pfield.useGPU > 0)
-        # But until multithread_direct!() works for the target_indices argument,
-        # we'll leave it true
-
-        # now calculate SFS contribution
-        # NOTE: this must be performed after velocity gradients are calculated, and
-        #       therefore cannot be included in the direct function of the FMM
-        sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
+    if vorticity && useGPU > 0
+        error("UJ_fmm(...; vorticity=true) is currently CPU-only because the GPU nearfield path still assumes a fixed U/J target buffer.")
     end
+
+    # Calculate FMM of vector potential and, optionally, the induced vorticity.
+    args = fmm.fmm!(pfield;
+                    expansion_order=fmm_options.p-1,
+                    leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
+                    multipole_acceptance=fmm_options.theta,
+                    error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
+                    tune=true,
+                    shrink=fmm_options.shrink_recenter,
+                    recenter=fmm_options.shrink_recenter,
+                    nearfield_device=(useGPU>0),
+                    scalar_potential=false,
+                    hessian=true,
+                    extra_outputs=vorticity ? 3 : 0,
+                    silence_warnings=!verbose)
+    optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = args
+
+    # autotune p and ncrit
+    if autotune
+        new_p = fmm_options.autotune_p ? optargs.expansion_order+1 : fmm_options.p
+        new_ncrit = fmm_options.autotune_ncrit ? optargs.leaf_size_source[1] : fmm_options.ncrit
+        pfield.fmm = FMM(new_p, new_ncrit, fmm_options.theta,
+                        fmm_options.shrink_recenter,
+                        fmm_options.relative_tolerance,
+                        fmm_options.absolute_tolerance,
+                        fmm_options.autotune_p,
+                        fmm_options.autotune_ncrit,
+                        fmm_options.autotune_reg_error,
+                        fmm_options.default_rho_over_sigma,
+                        fmm_options.min_ncrit)
+    end
+
+    # This should be concurrent_direct=(pfield.useGPU > 0)
+    # But until multithread_direct!() works for the target_indices argument,
+    # we'll leave it true
+
+    # now calculate SFS contribution
+    # NOTE: this must be performed after velocity gradients are calculated, and
+    #       therefore cannot be included in the direct function of the FMM
+    sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
 
     return nothing
 end

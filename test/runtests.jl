@@ -14,6 +14,7 @@ include("runtests_singlevortexring.jl")
 include("runtests_leapfrog.jl")
 include("runtests_merging.jl")
 include("runtests_subfilterscale.jl")
+include("runtests_vorticity_storage.jl")
 
 # Run tests on GPU if device is functional
 # if CUDA.functional()

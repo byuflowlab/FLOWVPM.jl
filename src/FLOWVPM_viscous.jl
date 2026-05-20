@@ -200,13 +200,13 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Reset core sizes if cores have overgrown
         if beta_cur >= scheme.beta
-            # Calculate approximated vorticity (stored under P.J[1:3])
+            # Calculate approximated vorticity into the dedicated vorticity field.
             scheme.zeta(pfield)
 
             for p in iterator(pfield)
-                # Use approximated vorticity as target vorticity (stored under P.J[7:9])
+                # Use approximated vorticity as target vorticity (stored under P.M[7:9]).
                 for i in 1:3
-                    get_M(p)[6+i] = get_J(p)[i]
+                    get_M(p)[6+i] = get_vorticity(p)[i]
                 end
                 # Reset core sizes
                 get_sigma(p)[] = scheme.sgm0
@@ -317,8 +317,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     * The target vorticity (`omega_targ`) is expected to be stored in P.M[7:9]
     (give it the basis-approximated vorticity instead of the UJ-calculated
     one or the method will diverge).
-    * The basis function evaluation (`omega_cur`) is stored in J[1:3] (it
-    used to be p).
+    * The basis function evaluation (`omega_cur`) is stored in the vorticity
+    field.
     * The solution is built under P.M[1:3] (it used to be x).
     * The current residual is stored under P.M[4:6] (it used to be r).
     =#
@@ -343,13 +343,13 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
     end
 
-    # Current vorticity: Evaluate basis function storing results under P.J[1:3]
+    # Current vorticity: evaluate basis functions into the vorticity field.
     cs.zeta(pfield)
 
     for P in iterator(pfield)
         for i in 1:3
             # Residual of initial guess (r0=b-Ax0)
-            get_M(P)[3+i] = get_M(P)[6+i] - get_J(P)[i]    # r = omega_targ - omega_cur
+            get_M(P)[3+i] = get_M(P)[6+i] - get_vorticity(P)[i]    # r = omega_targ - omega_cur
 
             # Update coefficients
             get_Gamma(P)[i] = get_M(P)[3+i]             # p0 = r0
@@ -377,7 +377,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.pAps .= 0
         for P in iterator(pfield)
             for i in 1:3
-                cs.pAps[i] += get_Gamma(P)[i] .* get_J(P)[i]
+                cs.pAps[i] += get_Gamma(P)[i] .* get_vorticity(P)[i]
             end
         end
 
@@ -392,7 +392,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         for P in iterator(pfield)
             for i in 1:3
                 get_M(P)[i] += cs.alphas[i]*get_Gamma(P)[i]   # x = x + alpha*p
-                get_M(P)[i+3] -= cs.alphas[i].*get_J(P)[i] # r = r - alpha*Ap
+                get_M(P)[i+3] -= cs.alphas[i].*get_vorticity(P)[i] # r = r - alpha*Ap
                 cs.rrs[i] += get_M(P)[i+3]^2             # Update field residual
             end
         end
@@ -455,7 +455,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.zeta(pfield)
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
                 "\t"^(cs.v_lvl+2)*"Final Gamma:\t$(round.(get_Gamma(pfield, 1), digits=8))\n"*
-                "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_J(pfield, 1)[1:3], digits=8))")
+                "\t"^(cs.v_lvl+2)*"Final w:\t$(round.(get_vorticity(pfield, 1), digits=8))")
         println("\t"^(cs.v_lvl+1)*"***** COMPLETED RBF ******\n")
 
         rms_ini, rms_resend = zeros(3), zeros(3)
@@ -463,7 +463,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         for P in iterator(pfield)
             for i in 1:3
                 rms_ini[i] += get_M(P)[i+6]^2
-                rms_resend[i] += (get_J(P)[i] - get_M(P)[i+6])^2
+                rms_resend[i] += (get_vorticity(P)[i] - get_M(P)[i+6])^2
             end
         end
         for i in 1:3
@@ -483,11 +483,11 @@ end
   `zeta_direct(pfield)`
 
 Evaluates the basis function that the field exerts on itself through direct
-particle-to-particle interactions, saving the results under P.J[1:3].
+particle-to-particle interactions, saving the results under `VORTICITY_INDEX`.
 """
 function zeta_direct(pfield)
     for P in iterator(pfield; include_static=true)
-        get_J(P)[1:3] .= 0
+        get_vorticity(P) .= 0
     end
     return zeta_direct( iterator(pfield; include_static=true),
                         iterator(pfield; include_static=true),
@@ -506,9 +506,9 @@ function zeta_direct(sources, targets, zeta::Function)
 
             zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
 
-            get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
-            get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
-            get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+            get_vorticity(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+            get_vorticity(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+            get_vorticity(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
 
         end
     end
@@ -518,7 +518,7 @@ end
   `zeta_fmm(pfield)`
 
 Evaluates the basis function that the field exerts on itself through
-the FMM neglecting the far field, saving the results under P.W.
+the FMM neglecting the far field, saving the results under `VORTICITY_INDEX`.
 """
 function zeta_fmm(pfield)
     fmm_options = pfield.fmm
@@ -528,9 +528,19 @@ function zeta_fmm(pfield)
     zeta = pfield.kernel.zeta
 
     # create tree
-    tree = FastMultipole.Tree((pfield,); leaf_size, shrink=shrink_recenter, recenter=shrink_recenter)
-    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_acceptance, false, true, true)
+    switches = FastMultipole.DerivativesSwitch(false, true, false, (pfield,))
+    leaf_sizes = SVector(leaf_size)
+    tree = FastMultipole.Tree((pfield,), false, switches;
+                              leaf_size=leaf_sizes,
+                              shrink=shrink_recenter,
+                              recenter=shrink_recenter,
+                              interaction_list_method=FastMultipole.SelfTuningTargetStop())
+    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_sizes, multipole_acceptance, false, true, true)
     sort_index = tree.sort_index_list[1]
+
+    for P in iterator(pfield; include_static=true)
+        get_vorticity(P) .= 0
+    end
 
     # loop over direct list
     for (i_target, i_source) in direct_list
@@ -549,9 +559,9 @@ function zeta_fmm(pfield)
 
                 zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
 
-                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
-                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
-                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+                get_vorticity(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_vorticity(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_vorticity(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
             end
         end
     end

@@ -1,6 +1,6 @@
 name = "FLOWVPM"
 uuid = "6e19019d-7c31-4940-9d16-c3f15dfe6020"
-version = "4.0.2"
+version = "4.1.0"
 authors = ["Eduardo J. Alvarez <Edo.AlvarezR@gmail.com>", "Ryan Anderson <rymanderson@gmail.com>"]
 
 [deps]
@@ -23,7 +23,7 @@ WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 BSON = "0.3"
 DataStructures = "0.18"
 EllipticFunctions = "2"
-FastMultipole = "2"
+FastMultipole = "2.2.0"
 HCubature = "1"
 HDF5 = "0.17"
 Primes = "0.5"
