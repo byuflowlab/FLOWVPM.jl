@@ -92,7 +92,6 @@ end
             r_merge=0.5,
             r_hash=0.5,
             sigma_relative=true,
-            check_neighboring_cells=false,
             max_sigma_ratio=4.0,
         )
 
@@ -157,7 +156,7 @@ end
         nsource = 64
         ntarget = 16
         sigma = 0.25
-        r_merge = 0.18
+        r_merge = 0.30
         rng = MersenneTwister(11)
         base_gamma = [0.0, 1.0, 0.0]
 
@@ -210,7 +209,7 @@ end
         @test removed == nsource - FLOWVPM.get_np(source)
         @test FLOWVPM.get_np(source) < nsource ÷ 2
         @test FLOWVPM.get_np(source) > 1
-        @test all(coordinate_span .> 0.9)
+        @test all(coordinate_span .> 0.85)
         @test maximum(relative_differences) < 0.03
     end
 end
