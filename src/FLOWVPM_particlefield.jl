@@ -62,6 +62,33 @@ function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_toleranc
 end
 
 ################################################################################
+# MERGING WORKSPACE
+################################################################################
+# Scratch buffers reused across calls to `merge_particles!` to avoid heap
+# allocations in the simulation hot loop. All Int — float accumulators are
+# stack-local scalars in the merge routine.
+mutable struct MergingWorkspace
+    candidate_indices::Vector{Int}
+    sorted_indices::Vector{Int}
+    offsets::Vector{Int}
+    counts::Vector{Int}
+    keys::Vector{Int}
+    parent::Vector{Int}
+    rank::Vector{Int}
+    root_count::Vector{Int}
+    representative::Vector{Int}
+    roots::Vector{Int}
+    root_offset::Vector{Int}
+    candidates_by_root::Vector{Int}
+    to_remove::Vector{Int}
+end
+
+MergingWorkspace() = MergingWorkspace(
+    Int[], Int[], Int[], Int[], Int[], Int[], Int[],
+    Int[], Int[], Int[], Int[], Int[], Int[],
+)
+
+################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
 mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
@@ -88,6 +115,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
+    merging_workspace::MergingWorkspace         # Scratch buffers for merge_particles!
 end
 
 """
@@ -137,7 +165,8 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm, useGPU)
+                                            transposed, relaxation, fmm, useGPU,
+                                            MergingWorkspace())
 end
 
 """

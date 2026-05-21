@@ -26,6 +26,7 @@ end
 function _build_cell_list!(
     sorted_indices::Vector{Int},
     offsets::Vector{Int},
+    counts::Vector{Int},
     keys::Vector{Int},
     candidate_indices::Vector{Int},
     pfield::ParticleField,
@@ -52,7 +53,7 @@ function _build_cell_list!(
         offsets[i] += offsets[i - 1]
     end
 
-    counts = copy(offsets)
+    copyto!(counts, 1, offsets, 1, n_cells + 1)
     for i in candidate_indices
         key = keys[i] + 1
         counts[key] += 1
@@ -60,27 +61,6 @@ function _build_cell_list!(
     end
 
     return nothing
-end
-
-function _cell_triplet(key::Int, Nx::Int, Ny::Int)
-    layer = Nx * Ny
-    iz = div(key, layer)
-    rem_key = key - iz * layer
-    iy = div(rem_key, Nx)
-    ix = rem_key - iy * Nx
-    return ix, iy, iz
-end
-
-function _apply_cluster_removals!(pfield::ParticleField, to_remove::Vector{Int})
-    sort!(to_remove; rev=true)
-
-    n_removed = 0
-    for idx in to_remove
-        remove_particle(pfield, idx)
-        n_removed += 1
-    end
-
-    return n_removed
 end
 
 function _finalize_merged_particle!(
@@ -157,50 +137,25 @@ function _finalize_merged_particle!(
     return nothing
 end
 
-function _merge_clusters_aggressive!(
+# Accumulate all per-cluster scalar sums for a single root, then finalize.
+# Members of `root` live contiguously in `candidates_by_root[range_start:range_end]`
+# (preserving the original `candidate_indices` traversal order, so floating-point
+# sums are bit-identical to the historical row-wise accumulation).
+# Accumulators are heap-allocated (zeros(R, 20)) rather than stack scalars so that
+# dual-number types (e.g. ForwardDiff) don't blow out the stack frame.
+function _accumulate_and_finalize_root!(
     pfield::ParticleField,
-    parent::Vector{Int},
-    candidate_indices::Vector{Int},
+    candidates_by_root::Vector{Int},
+    range_start::Int,
+    range_end::Int,
+    representative::Int,
 )
-    np = get_np(pfield)
     R = eltype(pfield.particles)
     zeroR = zero(R)
+    acc = zeros(R, 20)
 
-    root_count = zeros(Int, np)
-    representative = zeros(Int, np)
-    roots = Int[]
-    sizehint!(roots, length(candidate_indices))
-
-    gamma_x = fill(zeroR, np)
-    gamma_y = fill(zeroR, np)
-    gamma_z = fill(zeroR, np)
-    x_weighted_x = fill(zeroR, np)
-    x_weighted_y = fill(zeroR, np)
-    x_weighted_z = fill(zeroR, np)
-    c_weighted_x = fill(zeroR, np)
-    c_weighted_y = fill(zeroR, np)
-    c_weighted_z = fill(zeroR, np)
-    x_unweighted_x = fill(zeroR, np)
-    x_unweighted_y = fill(zeroR, np)
-    x_unweighted_z = fill(zeroR, np)
-    c_unweighted_x = fill(zeroR, np)
-    c_unweighted_y = fill(zeroR, np)
-    c_unweighted_z = fill(zeroR, np)
-    weight_sum = fill(zeroR, np)
-    vol_sum = fill(zeroR, np)
-    sigma3_sum = fill(zeroR, np)
-    circulation_weighted_sum = fill(zeroR, np)
-    sigma_sum = fill(zeroR, np)
-
-    for i in candidate_indices
-        root = _uf_find!(parent, i)
-        if root_count[root] == 0
-            push!(roots, root)
-            representative[root] = i
-        else
-            representative[root] = min(representative[root], i)
-        end
-        root_count[root] += 1
+    for k in range_start:range_end
+        i = candidates_by_root[k]
 
         gamma_i_x = pfield.particles[GAMMA_INDEX.start, i]
         gamma_i_y = pfield.particles[GAMMA_INDEX.start + 1, i]
@@ -214,75 +169,143 @@ function _merge_clusters_aggressive!(
         gamma_mag = sqrt(gamma_i_x * gamma_i_x + gamma_i_y * gamma_i_y + gamma_i_z * gamma_i_z)
         sigma = pfield.particles[SIGMA_INDEX, i]
 
-        gamma_x[root] += gamma_i_x
-        gamma_y[root] += gamma_i_y
-        gamma_z[root] += gamma_i_z
-        vol_sum[root] += pfield.particles[VOL_INDEX, i]
-        sigma3_sum[root] += sigma * sigma * sigma
-        circulation_weighted_sum[root] += sigma * pfield.particles[CIRCULATION_INDEX, i]
-        sigma_sum[root] += sigma
-
-        x_unweighted_x[root] += pos_x
-        x_unweighted_y[root] += pos_y
-        x_unweighted_z[root] += pos_z
-        c_unweighted_x[root] += c_i_x
-        c_unweighted_y[root] += c_i_y
-        c_unweighted_z[root] += c_i_z
+        acc[1]  += gamma_i_x
+        acc[2]  += gamma_i_y
+        acc[3]  += gamma_i_z
+        acc[17] += pfield.particles[VOL_INDEX, i]
+        acc[18] += sigma * sigma * sigma
+        acc[19] += sigma * pfield.particles[CIRCULATION_INDEX, i]
+        acc[20] += sigma
+        acc[10] += pos_x
+        acc[11] += pos_y
+        acc[12] += pos_z
+        acc[13] += c_i_x
+        acc[14] += c_i_y
+        acc[15] += c_i_z
 
         if gamma_mag > zeroR
-            weight_sum[root] += gamma_mag
-            x_weighted_x[root] += gamma_mag * pos_x
-            x_weighted_y[root] += gamma_mag * pos_y
-            x_weighted_z[root] += gamma_mag * pos_z
-            c_weighted_x[root] += gamma_mag * c_i_x
-            c_weighted_y[root] += gamma_mag * c_i_y
-            c_weighted_z[root] += gamma_mag * c_i_z
+            acc[16] += gamma_mag
+            acc[4]  += gamma_mag * pos_x
+            acc[5]  += gamma_mag * pos_y
+            acc[6]  += gamma_mag * pos_z
+            acc[7]  += gamma_mag * c_i_x
+            acc[8]  += gamma_mag * c_i_y
+            acc[9]  += gamma_mag * c_i_z
         end
     end
 
-    to_remove = Int[]
-    sizehint!(to_remove, length(candidate_indices) - 1)
+    n_members = range_end - range_start + 1
+    _finalize_merged_particle!(
+        pfield,
+        representative,
+        n_members,
+        acc[1],  acc[2],  acc[3],   # gamma
+        acc[4],  acc[5],  acc[6],   # x_weighted
+        acc[7],  acc[8],  acc[9],   # c_weighted
+        acc[10], acc[11], acc[12],  # x_unweighted
+        acc[13], acc[14], acc[15],  # c_unweighted
+        acc[16],                    # weight_sum
+        acc[17],                    # vol_sum
+        acc[18],                    # sigma3_sum
+        acc[19],                    # circulation_weighted_sum
+        acc[20],                    # sigma_sum
+    )
 
-    for root in roots
-        count = root_count[root]
-        count <= 1 && continue
+    return nothing
+end
 
-        rep = representative[root]
-        _finalize_merged_particle!(
-            pfield,
-            rep,
-            count,
-            gamma_x[root],
-            gamma_y[root],
-            gamma_z[root],
-            x_weighted_x[root],
-            x_weighted_y[root],
-            x_weighted_z[root],
-            c_weighted_x[root],
-            c_weighted_y[root],
-            c_weighted_z[root],
-            x_unweighted_x[root],
-            x_unweighted_y[root],
-            x_unweighted_z[root],
-            c_unweighted_x[root],
-            c_unweighted_y[root],
-            c_unweighted_z[root],
-            weight_sum[root],
-            vol_sum[root],
-            sigma3_sum[root],
-            circulation_weighted_sum[root],
-            sigma_sum[root],
-        )
-    end
+function _merge_clusters_aggressive!(
+    pfield::ParticleField,
+    ws::MergingWorkspace,
+)
+    np = get_np(pfield)
+    candidate_indices = ws.candidate_indices
+    parent = ws.parent
+    n_candidates = length(candidate_indices)
 
+    # Workspace buffers indexed by raw particle index (0..np-1 maps to 1..np)
+    root_count = ws.root_count
+    representative = ws.representative
+    resize!(root_count, np); fill!(root_count, 0)
+    resize!(representative, np)  # written before read; no fill needed
+
+    # Pass 1: compute root for each candidate and count members per root.
+    # Track which roots have at least one member ("seen roots") and assign
+    # the representative as the minimum-index member of each root.
+    roots = ws.roots
+    empty!(roots)
+    sizehint!(roots, n_candidates)
     for i in candidate_indices
         root = _uf_find!(parent, i)
-        root_count[root] <= 1 && continue
-        i == representative[root] && continue
-        push!(to_remove, i)
+        if root_count[root] == 0
+            push!(roots, root)
+            representative[root] = i
+        elseif i < representative[root]
+            representative[root] = i
+        end
+        root_count[root] += 1
     end
 
-    return _apply_cluster_removals!(pfield, to_remove)
+    # Pass 2: counting-sort candidates by root into CSR layout.
+    # root_offset[root+1] = exclusive prefix start for `root`'s members.
+    # Stable: members appear in original candidate_indices order.
+    root_offset = ws.root_offset
+    resize!(root_offset, np + 1); fill!(root_offset, 0)
+    for r in roots
+        root_offset[r + 1] = root_count[r]
+    end
+    for i in 2:(np + 1)
+        root_offset[i] += root_offset[i - 1]
+    end
+    # Write cursor reuses root_count (decremented to base, then incremented per write)
+    counts = ws.counts  # reuse cell-list cursor buffer
+    resize!(counts, np + 1)
+    copyto!(counts, 1, root_offset, 1, np + 1)
+
+    candidates_by_root = ws.candidates_by_root
+    resize!(candidates_by_root, n_candidates)
+    # Cursor for root r lives at counts[r] and starts at root_offset[r]
+    # (exclusive prefix). Increment-then-write places members in root r's
+    # slot range root_offset[r]+1 : root_offset[r+1].
+    for i in candidate_indices
+        root = _uf_find!(parent, i)  # cached path-compressed lookup; cheap
+        counts[root] += 1
+        candidates_by_root[counts[root]] = i
+    end
+
+    # Pass 3: for each root with count > 1, accumulate per-cluster sums on the
+    # stack and finalize the representative.
+    to_remove = ws.to_remove
+    empty!(to_remove)
+    sizehint!(to_remove, n_candidates)
+
+    for r in roots
+        count = root_count[r]
+        count <= 1 && continue
+
+        range_start = root_offset[r] + 1
+        range_end = root_offset[r + 1]
+        rep = representative[r]
+
+        _accumulate_and_finalize_root!(
+            pfield, candidates_by_root, range_start, range_end, rep,
+        )
+
+        # Queue all members except the representative for removal.
+        for k in range_start:range_end
+            idx = candidates_by_root[k]
+            idx == rep && continue
+            push!(to_remove, idx)
+        end
+    end
+
+    # Remove in descending order to keep indices stable.
+    sort!(to_remove; rev=true)
+    for idx in to_remove
+        remove_particle(pfield, idx)
+    end
+
+    return length(to_remove)
 end
 
 function merge_particles!(
@@ -290,7 +313,6 @@ function merge_particles!(
     r_merge::Real=0.5,
     r_hash::Real=-1.0,
     sigma_relative::Bool=true,
-    check_neighboring_cells::Bool=true,
     max_sigma_ratio::Real=2.0,
     skip_static::Bool=true,
     verbose::Bool=false,
@@ -300,7 +322,9 @@ function merge_particles!(
     r_merge <= 0 && return 0
     max_sigma_ratio < 1 && return 0
 
-    candidate_indices = Int[]
+    ws = pfield.merging_workspace
+    candidate_indices = ws.candidate_indices
+    empty!(candidate_indices)
     sizehint!(candidate_indices, np)
 
     xmin = typemax(eltype(pfield.particles))
@@ -346,22 +370,34 @@ function merge_particles!(
     Nz = max(1, floor(Int, (zmax - zmin) / cell_size) + 1)
     n_cells = Nx * Ny * Nz
 
-    sorted_indices = Vector{Int}(undef, length(candidate_indices))
-    offsets = zeros(Int, n_cells + 1)
-    keys = zeros(Int, np)
+    sorted_indices = ws.sorted_indices
+    resize!(sorted_indices, length(candidate_indices))
+
+    offsets = ws.offsets
+    resize!(offsets, n_cells + 1); fill!(offsets, 0)
+
+    counts = ws.counts
+    resize!(counts, n_cells + 1)
+
+    keys = ws.keys
+    resize!(keys, np)  # written before read for every candidate; no fill needed
+
     origin = (xmin, ymin, zmin)
 
-    _build_cell_list!(sorted_indices, offsets, keys, candidate_indices, pfield, cell_size, origin, Nx, Ny, Nz)
+    _build_cell_list!(sorted_indices, offsets, counts, keys, candidate_indices, pfield, cell_size, origin, Nx, Ny, Nz)
 
-    parent = collect(1:np)
-    rank = zeros(Int, np)
+    parent = ws.parent
+    rank = ws.rank
+    resize!(parent, np)
+    resize!(rank, np); fill!(rank, 0)
+    @inbounds for i in 1:np
+        parent[i] = i
+    end
 
     for key in 0:(n_cells - 1)
         range_start = offsets[key + 1] + 1
         range_stop = offsets[key + 2]
         range_start > range_stop && continue
-
-        cell_indices = @view sorted_indices[range_start:range_stop]
 
         for a in range_start:range_stop
             ia = sorted_indices[a]
@@ -386,56 +422,9 @@ function merge_particles!(
                 dist2 < r_pair * r_pair && _uf_union!(parent, rank, ia, ib)
             end
         end
-
-        if check_neighboring_cells
-
-            ix, iy, iz = _cell_triplet(key, Nx, Ny)
-
-            for dz in -1:1, dy in -1:1, dx in -1:1
-                dx == 0 && dy == 0 && dz == 0 && continue
-
-                nix = ix + dx
-                niy = iy + dy
-                niz = iz + dz
-
-                (0 <= nix < Nx) || continue
-                (0 <= niy < Ny) || continue
-                (0 <= niz < Nz) || continue
-
-                neighbor_key = nix + niy * Nx + niz * Nx * Ny
-                neighbor_key <= key && continue
-
-                neighbor_start = offsets[neighbor_key + 1] + 1
-                neighbor_stop = offsets[neighbor_key + 2]
-                neighbor_start > neighbor_stop && continue
-
-                for ia in cell_indices
-                    xi = pfield.particles[1, ia]
-                    yi = pfield.particles[2, ia]
-                    zi = pfield.particles[3, ia]
-                    sigma_i = pfield.particles[SIGMA_INDEX, ia]
-
-                    for b in neighbor_start:neighbor_stop
-                        ib = sorted_indices[b]
-                        sigma_j = pfield.particles[SIGMA_INDEX, ib]
-                        sigma_min = min(sigma_i, sigma_j)
-                        sigma_max = max(sigma_i, sigma_j)
-                        sigma_min <= 0 && continue
-                        sigma_max / sigma_min > max_sigma_ratio && continue
-
-                        dx = pfield.particles[1, ib] - xi
-                        dy = pfield.particles[2, ib] - yi
-                        dz = pfield.particles[3, ib] - zi
-                        dist2 = dx * dx + dy * dy + dz * dz
-                        r_pair = sigma_relative ? r_merge * sigma_min : r_merge
-                        dist2 < r_pair * r_pair && _uf_union!(parent, rank, ia, ib)
-                    end
-                end
-            end
-        end
     end
 
-    n_removed = _merge_clusters_aggressive!(pfield, parent, candidate_indices)
+    n_removed = _merge_clusters_aggressive!(pfield, ws)
 
     if verbose && n_removed > 0
         println("Merged $(length(candidate_indices)) candidate particles into $(length(candidate_indices) - n_removed) particles")
