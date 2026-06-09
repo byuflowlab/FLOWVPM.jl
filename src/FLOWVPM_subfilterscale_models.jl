@@ -91,15 +91,19 @@ function Estr_direct_singlethreaded(pfield::ParticleField)
     end
 end
 
-function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+function Estr_fmm!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list;
+        i_target_system::Int=1, i_source_system::Int=1)
     if Threads.nthreads() > 1
-        Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+        Estr_fmm_multithread!(target_pfield, source_pfield, target_tree, source_tree, direct_list;
+            i_target_system, i_source_system)
     else
-        Estr_fmm_singlethread!(target_pfield, source_pfield, target_tree, source_tree, direct_list)
+        Estr_fmm_singlethread!(target_pfield, source_pfield, target_tree, source_tree, direct_list;
+            i_target_system, i_source_system)
     end
 end
 
-function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list;
+        i_target_system::Int=1, i_source_system::Int=1)
 
     # total number of interactions
     n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
@@ -124,12 +128,12 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
         for i_interaction in assignment
             i_target, i_source = direct_list[i_interaction]
             
-            target_index = target_tree.branches[i_target].bodies_index[1]
-            source_index = source_tree.branches[i_source].bodies_index[1]
+            target_index = target_tree.branches[i_target].bodies_index[i_target_system]
+            source_index = source_tree.branches[i_source].bodies_index[i_source_system]
 
             # loop over source particles
             for i_source in source_index
-                source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+                source_particle = get_particle(source_pfield, source_tree.sort_index_list[i_source_system][i_source])
                 is_static(source_particle) && continue
 
                 # source position
@@ -137,7 +141,7 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
 
                 # loop over target particles
                 for i_target in target_index
-                    target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+                    target_particle = get_particle(target_pfield, target_tree.sort_index_list[i_target_system][i_target])
                     is_static(target_particle) && continue
 
                     # target position
@@ -156,16 +160,17 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
     end
 end
 
-function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list)
+function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::ParticleField, target_tree, source_tree, direct_list;
+        i_target_system::Int=1, i_source_system::Int=1)
 
     for (i_target, i_source) in direct_list
-    
-        target_index = target_tree.branches[i_target].bodies_index[1]
-        source_index = source_tree.branches[i_source].bodies_index[1]
+
+        target_index = target_tree.branches[i_target].bodies_index[i_target_system]
+        source_index = source_tree.branches[i_source].bodies_index[i_source_system]
 
         # loop over source particles
         for i_source in source_index
-            source_particle = get_particle(source_pfield, source_tree.sort_index_list[1][i_source])
+            source_particle = get_particle(source_pfield, source_tree.sort_index_list[i_source_system][i_source])
             is_static(source_particle) && continue
 
             # source position
@@ -173,7 +178,7 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
 
             # loop over target particles
             for i_target in target_index
-                target_particle = get_particle(target_pfield, target_tree.sort_index_list[1][i_target])
+                target_particle = get_particle(target_pfield, target_tree.sort_index_list[i_target_system][i_target])
                 is_static(target_particle) && continue
 
                 # target position
