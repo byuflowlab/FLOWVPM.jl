@@ -11,6 +11,79 @@
 
 
 ################################################################################
+# DIAGNOSTIC: env-gated per-particle CSV logger for the dynamic procedure
+################################################################################
+# Set SFS_WATCH_INDICES="3475,3476" (or "100:110" or comma-mix) and
+# SFS_WATCH_LOG="debug/logs/sfs_watch.csv" to record, every time
+# dynamicprocedure_pseudo3level_afterUJ runs, the raw nume/deno, the
+# previous Lagrangian-average state, the clamp path, and the final C[1]
+# for each watched particle index. A separate row is emitted from
+# `clipping_backscatter` whenever it fires on a watched particle.
+
+const _SFS_WATCH = Base.RefValue{Any}(:uninit)
+const _SFS_WATCH_LOCK = ReentrantLock()
+const _SFS_WATCH_STEP = Threads.Atomic{Int}(-1)
+_sfs_watch_step_tick() = Threads.atomic_add!(_SFS_WATCH_STEP, 1) + 1
+_sfs_watch_step_now()  = _SFS_WATCH_STEP[]
+
+function _sfs_watch_state()
+    s = _SFS_WATCH[]
+    s === :uninit || return s
+    spec = get(ENV, "SFS_WATCH_INDICES", "")
+    if isempty(spec)
+        _SFS_WATCH[] = nothing
+        return nothing
+    end
+    inds = Set{Int}()
+    for tok in split(spec, ",")
+        tok = strip(tok)
+        isempty(tok) && continue
+        if occursin(":", tok)
+            a, b = split(tok, ":")
+            for k in parse(Int, a):parse(Int, b)
+                push!(inds, k)
+            end
+        else
+            push!(inds, parse(Int, tok))
+        end
+    end
+    path = get(ENV, "SFS_WATCH_LOG", "debug/logs/sfs_watch.csv")
+    mkpath(dirname(path))
+    io = open(path, "w")
+    println(io, "phase,nt,idx,sigma,G1,G2,G3,",
+                "M1,M2,M3,M4,M5,M6,",
+                "nume_raw,deno_raw,",
+                "C2_old,C3_old,nume_rlx,deno_rlx,",
+                "abs_ratio,clamp,C1_pre_force,C1_final,",
+                "SFS1,SFS2,SFS3,GdotSFS")
+    flush(io)
+    _SFS_WATCH[] = (inds, io)
+    return _SFS_WATCH[]
+end
+
+function _sfs_watch_row(phase, nt, idx, σ, G, M, nume_raw, deno_raw,
+                       C2_old, C3_old, nume_rlx, deno_rlx, absratio, clamp,
+                       C1_pre, C1_final, SFS)
+    s = _sfs_watch_state()
+    s === nothing && return
+    inds, io = s
+    idx in inds || return
+    GdotSFS = G[1]*SFS[1] + G[2]*SFS[2] + G[3]*SFS[3]
+    lock(_SFS_WATCH_LOCK) do
+        print(io, phase, ",", nt, ",", idx, ",", σ)
+        for v in G; print(io, ",", v); end
+        for j in 1:6; print(io, ",", M[j]); end
+        print(io, ",", nume_raw, ",", deno_raw, ",",
+                    C2_old, ",", C3_old, ",", nume_rlx, ",", deno_rlx, ",",
+                    absratio, ",", clamp, ",", C1_pre, ",", C1_final)
+        for v in SFS; print(io, ",", v); end
+        println(io, ",", GdotSFS)
+        flush(io)
+    end
+    return nothing
+end
+
+################################################################################
 # ABSTRACT SFS SCHEME TYPE
 ################################################################################
 abstract type SubFilterScale{R} end
@@ -228,20 +301,24 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
                     # Skip static particles
                     pfield.particles[STATIC_INDEX,i] != 0 && continue
 
-                    if clipping(pfield, i)
+                    fired = clipping(pfield, i)
+                    if fired
                         # Clip SFS model by nullifying the model coefficient
                         pfield.particles[C_INDEX[1],i] *= 0
                     end
+                    _sfs_watch_clip(pfield, i, fired)
                 end
             else
                 for i in 1:pfield.np
                     # Skip static particles
                     pfield.particles[STATIC_INDEX,i] != 0 && continue
 
-                    if clipping(pfield, i)
+                    fired = clipping(pfield, i)
+                    if fired
                         # Clip SFS model by nullifying the model coefficient
                         pfield.particles[C_INDEX[1],i] *= 0
                     end
+                    _sfs_watch_clip(pfield, i, fired)
                 end
             end
         end
@@ -264,6 +341,30 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
             end
         end
 
+    end
+end
+
+function _sfs_watch_clip(pfield, i::Int, fired::Bool)
+    s = _sfs_watch_state()
+    s === nothing && return
+    inds, io = s
+    i in inds || return
+    p = get_particle(pfield, i)
+    G = get_Gamma(p)
+    SFS = get_SFS(p)
+    GdotSFS = G[1]*SFS[1] + G[2]*SFS[2] + G[3]*SFS[3]
+    C = get_C(p)
+    lock(_SFS_WATCH_LOCK) do
+        # phase="clip-fired"/"clip-pass", many fields blank, C1_final and Γ·SFS populated
+        print(io, fired ? "clip-fired" : "clip-pass", ",", _sfs_watch_step_now(), ",", i, ",",
+                  get_sigma(p)[])
+        for v in G; print(io, ",", v); end
+        for _ in 1:6; print(io, ","); end  # M empty
+        # nume_raw,deno_raw,C2_old,C3_old,nume_rlx,deno_rlx,absratio,clamp,C1_pre,C1_final
+        print(io, ",,,,,,,,,", C[1])
+        for v in SFS; print(io, ",", v); end
+        println(io, ",", GdotSFS)
+        flush(io)
     end
 end
 ##### END OF DYNAMIC SFS SCHEME ################################################
@@ -331,6 +432,49 @@ function control_directional(pfield, i::Int)
     pfield.particles[SFS_INDEX[1], i] = aux*G1
     pfield.particles[SFS_INDEX[2], i] = aux*G2
     pfield.particles[SFS_INDEX[3], i] = aux*G3
+end
+
+"""
+    Forward-scatter projection control: keep SFS unchanged where the model
+forward-scatters (Γ·SFS ≥ 0), and subtract only the backscatter-pointing
+parallel component otherwise. The perpendicular (vortex-tilting) component
+is preserved in either case. Equivalent to projecting SFS onto the
+half-space {v : Γ·v ≥ 0}.
+
+Softer alternative to `clipping_backscatter`: where the clip nullifies the
+dynamic coefficient (removing all SFS regularization on backscatter
+particles), this control preserves SFS magnitude in the dissipative and
+rotational directions and only removes the directional component that
+would amplify |Γ|.
+"""
+function control_no_backscatter_projection(P)
+    Γ = get_Gamma(P)
+    SFS = get_SFS(P)
+    g2 = Γ[1]*Γ[1] + Γ[2]*Γ[2] + Γ[3]*Γ[3]
+    g2 > 0 || return
+    aux = (SFS[1]*Γ[1] + SFS[2]*Γ[2] + SFS[3]*Γ[3]) / g2
+    if aux < 0
+        SFS[1] -= aux*Γ[1]
+        SFS[2] -= aux*Γ[2]
+        SFS[3] -= aux*Γ[3]
+    end
+end
+
+function control_no_backscatter_projection(pfield, i::Int)
+    G1 = pfield.particles[GAMMA_INDEX[1], i]
+    G2 = pfield.particles[GAMMA_INDEX[2], i]
+    G3 = pfield.particles[GAMMA_INDEX[3], i]
+    g2 = G1*G1 + G2*G2 + G3*G3
+    g2 > 0 || return
+    S1 = pfield.particles[SFS_INDEX[1], i]
+    S2 = pfield.particles[SFS_INDEX[2], i]
+    S3 = pfield.particles[SFS_INDEX[3], i]
+    aux = (S1*G1 + S2*G2 + S3*G3) / g2
+    if aux < 0
+        pfield.particles[SFS_INDEX[1], i] = S1 - aux*G1
+        pfield.particles[SFS_INDEX[2], i] = S2 - aux*G2
+        pfield.particles[SFS_INDEX[3], i] = S3 - aux*G3
+    end
 end
 
 """
@@ -447,6 +591,7 @@ small enough to approximate the singular velocity field as \$\\mathbf{u} \\appro
 function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
                                        minC::Real, maxC::Real) where {R}
+    haskey(ENV, "SFS_WATCH_INDICES") && println("[sfs_watch] beforeUJ called, np=", pfield.np)
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
     #                C=<Γ⋅L>/<Γ⋅m> <=> get_C(P)[1], <Γ⋅L> <=> get_C(p)[2], <Γ⋅m> <=> get_C(p)[3]
@@ -535,7 +680,31 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
         end
     end
 
+    _sfs_watch_beforeUJ_dump(pfield)
+
     return nothing
+end
+
+function _sfs_watch_beforeUJ_dump(pfield)
+    s = _sfs_watch_state()
+    s === nothing && return
+    inds, io = s
+    lock(_SFS_WATCH_LOCK) do
+        for i in 1:pfield.np
+            i in inds || continue
+            p = get_particle(pfield, i)
+            M = get_M(p)
+            G = get_Gamma(p)
+            σ = get_sigma(p)[]
+            print(io, "beforeUJ_end,", _sfs_watch_step_now(), ",", i, ",", σ)
+            for v in G; print(io, ",", v); end
+            for j in 1:6; print(io, ",", M[j]); end
+            print(io, ",,,,,,,,,,")  # nume_raw..C1_final fields blank
+            print(io, ",,,,")        # SFS fields blank
+            println(io)
+        end
+        flush(io)
+    end
 end
 
 function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
@@ -588,6 +757,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
     # -------------- CALCULATE COEFFICIENT -------------------------------------
     zeta0::R = pfield.kernel.zeta(0)
+    _sfs_step = _sfs_watch_step_tick()
 
     Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -603,6 +773,12 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         deno = M[4]*Gamma[1] + M[5]*Gamma[2] + M[6]*Gamma[3]
         deno /= zeta0/get_sigma(p)[]^3
 
+        # Snapshot raw values + prior Lagrangian state for diagnostics.
+        nume_raw = nume
+        deno_raw = deno
+        C2_old = C_p[2]
+        C3_old = C_p[3]
+
         # Initialize denominator to something other than zero
         if C_p[3] == 0
             C_p[3] = deno
@@ -615,12 +791,18 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         nume = rlxf*nume + (1-rlxf)*C_p[2]
         deno = rlxf*deno + (1-rlxf)*C_p[3]
 
+        nume_rlx = nume
+        deno_rlx = deno
+        absratio = abs(nume/deno)
+        clamp_path = 0  # 0=none, 1=maxC, 2=maxC+deno_bump, 3=minC
+
         # Enforce maximum and minimum |C| values
         if abs(nume/deno) > maxC            # Case: C is too large
-
+            clamp_path = 1
             # Avoid case of denominator becoming zero
             if abs(deno) < abs(C_p[3])
                 deno = sign(deno) * abs(C_p[3])
+                clamp_path = 2
             end
 
             # Enforce maximum value of |Cd|
@@ -629,7 +811,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
             end
 
         elseif abs(nume/deno) < minC        # Case: C is too small
-
+            clamp_path = 3
             # Enforce minimum value of |Cd|
             nume = sign(nume) * abs(deno) * minC
 
@@ -651,8 +833,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
             error("NaN in dynamicprocedure_pseudo3level_afterUJ")
         end
 
+        C1_pre = C_p[1]
         # Force the coefficient to be positive
         C_p[1] *= sign(C_p[1])^force_positive
+
+        _sfs_watch_row("dyn", _sfs_step, i, get_sigma(p)[], Gamma, M,
+                       nume_raw, deno_raw, C2_old, C3_old,
+                       nume_rlx, deno_rlx, absratio, clamp_path,
+                       C1_pre, C_p[1], get_SFS(p))
     end
 
     # Flush temporal memory

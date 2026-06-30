@@ -89,6 +89,128 @@ MergingWorkspace() = MergingWorkspace(
 )
 
 ################################################################################
+# SPLITTING STATE AND WORKSPACE
+################################################################################
+# Per-particle persistent state for splitting. All vectors are sized to
+# maxparticles and indexed in lockstep with `pfield.particles` columns.
+# add_particle initializes the new slot; remove_particle's swap-with-last
+# semantics copy entries `i ← np` so that data tracks the particle that
+# now occupies slot `i`.
+mutable struct SplittingState{R}
+    sigma_0::Vector{R}              # reference smoothing radius at creation
+    H_chi::Vector{R}                # accumulated overlap-loss exposure
+    hold_counter::Vector{Int}       # consecutive steps trigger has held
+    cooldown_counter::Vector{Int}   # remaining steps a child cannot re-split
+end
+
+SplittingState{R}(maxparticles::Int) where {R} = SplittingState{R}(
+    zeros(R, maxparticles),
+    zeros(R, maxparticles),
+    zeros(Int, maxparticles),
+    zeros(Int, maxparticles),
+)
+
+# Scratch buffers reused across calls to `split_particles!` to avoid heap
+# allocations in the simulation hot loop.
+mutable struct SplittingWorkspace{R}
+    candidate_indices::Vector{Int}
+    severity::Vector{R}
+    order::Vector{Int}
+end
+
+SplittingWorkspace{R}() where {R} = SplittingWorkspace{R}(Int[], R[], Int[])
+
+################################################################################
+# FILAMENT EDGE GRAPH (hybrid filament-edge refinement, Phase 2)
+################################################################################
+# Bounded directed edge graph: each particle has ≤2 upstream and ≤2 downstream
+# active edges. Adjacency-only — no separate edge list. An edge from src→dst
+# is represented by matching slots: `down_neighbor[k, src] == dst` and
+# `up_neighbor[k′, dst] == src`. Per-edge state (coherence, score) lives
+# once, on the canonical (downstream) side. Read an upstream-incident edge's
+# state by following `up_neighbor[k, i]` back to src and looking up src's
+# down_* slot that points at i. Slot value 0 = empty. `degree` packs both
+# counts into one byte: low nibble = up_count, high nibble = down_count.
+mutable struct FilamentEdgeGraph{R}
+    up_neighbor::Matrix{Int}     # (2, maxparticles)
+    down_neighbor::Matrix{Int}   # (2, maxparticles)
+    down_coherent::BitMatrix     # (2, maxparticles)
+    down_score::Matrix{R}        # (2, maxparticles)
+    degree::Vector{UInt8}        # low nibble = up, high nibble = down
+    filament_id::Vector{Int}     # optional explicit identity, 0 = none
+end
+
+FilamentEdgeGraph{R}(maxparticles::Int) where {R} = FilamentEdgeGraph{R}(
+    zeros(Int, 2, maxparticles),
+    zeros(Int, 2, maxparticles),
+    falses(2, maxparticles),
+    zeros(R, 2, maxparticles),
+    zeros(UInt8, maxparticles),
+    zeros(Int, maxparticles),
+)
+
+# Nibble-packed degree accessors. Counts are 0..2 so 4 bits each is ample.
+@inline up_count(g::FilamentEdgeGraph, i::Int)   = Int(g.degree[i] & 0x0f)
+@inline down_count(g::FilamentEdgeGraph, i::Int) = Int(g.degree[i] >> 4)
+@inline function set_up_count!(g::FilamentEdgeGraph, i::Int, n::Integer)
+    g.degree[i] = (g.degree[i] & 0xf0) | (UInt8(n) & 0x0f)
+end
+@inline function set_down_count!(g::FilamentEdgeGraph, i::Int, n::Integer)
+    g.degree[i] = (g.degree[i] & 0x0f) | (UInt8(n) << 4)
+end
+
+# Slot lookups — bounded local scan over 2 entries.
+@inline function find_down_slot(g::FilamentEdgeGraph, src::Int, dst::Int)
+    g.down_neighbor[1, src] == dst && return 1
+    g.down_neighbor[2, src] == dst && return 2
+    return 0
+end
+@inline function find_up_slot(g::FilamentEdgeGraph, dst::Int, src::Int)
+    g.up_neighbor[1, dst] == src && return 1
+    g.up_neighbor[2, dst] == src && return 2
+    return 0
+end
+
+# Scratch buffers for Phase 3 inference/validation. Cell-list buffers mirror
+# `MergingWorkspace` so `_build_cell_list!` (FLOWVPM_merging.jl) can be reused.
+# Resized on demand.
+mutable struct FilamentEdgeWorkspace{R}
+    candidates::Vector{Int}
+    sorted_indices::Vector{Int}
+    offsets::Vector{Int}
+    counts::Vector{Int}
+    keys::Vector{Int}
+    axis_x::Vector{R}
+    axis_y::Vector{R}
+    axis_z::Vector{R}
+    axis_ok::BitVector
+    up_best::Matrix{Int}
+    down_best::Matrix{Int}
+    up_best_score::Matrix{R}
+    down_best_score::Matrix{R}
+    visits::Vector{Int}
+    capped::BitVector
+end
+
+FilamentEdgeWorkspace{R}() where {R} = FilamentEdgeWorkspace{R}(
+    Int[], Int[], Int[], Int[], Int[],
+    R[], R[], R[],
+    BitVector(),
+    zeros(Int, 2, 0), zeros(Int, 2, 0),
+    zeros(R, 2, 0), zeros(R, 2, 0),
+    Int[], BitVector(),
+)
+
+FilamentEdgeWorkspace{R}(maxparticles::Int) where {R} = FilamentEdgeWorkspace{R}(
+    Int[], Int[], Int[], Int[], Int[],
+    R[], R[], R[],
+    BitVector(),
+    zeros(Int, 2, maxparticles), zeros(Int, 2, maxparticles),
+    zeros(R, 2, maxparticles), zeros(R, 2, maxparticles),
+    Int[], BitVector(),
+)
+
+################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
 mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
@@ -116,6 +238,13 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
     merging_workspace::MergingWorkspace         # Scratch buffers for merge_particles!
+    splitting_state::SplittingState{R}          # Per-particle state for split_particles!
+    splitting_workspace::SplittingWorkspace{R}  # Scratch buffers for split_particles!
+    filament_edge_graph::FilamentEdgeGraph{R}            # Bounded 2-in/2-out edge graph
+    filament_edge_workspace::FilamentEdgeWorkspace{R}    # Scratch for inference/validation
+    track_H_chi::Bool                           # If true, accumulate H_chi each accepted step
+    H_chi_axis::Symbol                          # :strength, :streamline, :strain1, or :max
+    H_chi_clip_positive::Bool                   # If true, clip to max(0, λ_χ) before integrating
 end
 
 """
@@ -166,7 +295,12 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                             formulation, viscous, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
-                                            MergingWorkspace())
+                                            MergingWorkspace(),
+                                            SplittingState{R}(maxparticles),
+                                            SplittingWorkspace{R}(),
+                                            FilamentEdgeGraph{R}(maxparticles),
+                                            FilamentEdgeWorkspace{R}(maxparticles),
+                                            false, :strength, true)
 end
 
 """
@@ -218,6 +352,24 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     set_circulation(pfield, i_next, circulation)
     set_C(pfield, i_next, C)
     set_static(pfield, i_next, Float64(static))
+
+    # Initialize per-particle splitting state for this slot
+    R = eltype(pfield.particles)
+    st = pfield.splitting_state
+    st.sigma_0[i_next] = R(sigma)
+    st.H_chi[i_next] = zero(R)
+    st.hold_counter[i_next] = 0
+    st.cooldown_counter[i_next] = 0
+
+    # Initialize filament edge graph adjacency for this slot. Empty
+    # (degree 0, all slots zero); edges are wired later by add_edge!.
+    g = pfield.filament_edge_graph
+    g.up_neighbor[1, i_next] = 0; g.up_neighbor[2, i_next] = 0
+    g.down_neighbor[1, i_next] = 0; g.down_neighbor[2, i_next] = 0
+    g.down_coherent[1, i_next] = false; g.down_coherent[2, i_next] = false
+    g.down_score[1, i_next] = zero(R); g.down_score[2, i_next] = zero(R)
+    g.degree[i_next] = UInt8(0)
+    g.filament_id[i_next] = 0
 
     return nothing
 end
@@ -435,13 +587,76 @@ function remove_particle(pfield::ParticleField, i::Int)
               " $(get_np(pfield)) particles in the field.")
     end
 
-    if i != get_np(pfield)
+    np = get_np(pfield)
+    st = pfield.splitting_state
+    g = pfield.filament_edge_graph
+    R = eltype(pfield.particles)
+
+    # Phase A: drop slot i's incident edges. Each remove_edge! clears the
+    # matching slot on the other endpoint via a size-2 mirror scan, so this
+    # is bounded local work (≤4 edges total).
+    @inbounds for k in 1:2
+        d = g.down_neighbor[k, i]
+        d != 0 && remove_edge!(g, i, d)
+    end
+    @inbounds for k in 1:2
+        u = g.up_neighbor[k, i]
+        u != 0 && remove_edge!(g, u, i)
+    end
+
+    if i != np
         # Overwrite target particle with last particle in the field
-        get_particle(pfield, i) .= get_particle(pfield, get_np(pfield))
+        get_particle(pfield, i) .= get_particle(pfield, np)
+        # Mirror swap-with-last in the splitting side-buffers
+        st.sigma_0[i] = st.sigma_0[np]
+        st.H_chi[i] = st.H_chi[np]
+        st.hold_counter[i] = st.hold_counter[np]
+        st.cooldown_counter[i] = st.cooldown_counter[np]
+        # Phase B: mirror swap-with-last in the edge-graph adjacency. The
+        # neighbors of the moved particle still point at slot np; Phase C
+        # below rewrites them to i.
+        @inbounds for k in 1:2
+            g.up_neighbor[k, i]   = g.up_neighbor[k, np]
+            g.down_neighbor[k, i] = g.down_neighbor[k, np]
+            g.down_coherent[k, i] = g.down_coherent[k, np]
+            g.down_score[k, i]    = g.down_score[k, np]
+        end
+        g.degree[i]      = g.degree[np]
+        g.filament_id[i] = g.filament_id[np]
+
+        # Phase C: rewrite back-references. For each downstream neighbor of
+        # the moved slot, find its up_neighbor entry pointing at np and
+        # rewrite to i. Mirror for upstream neighbors.
+        @inbounds for k in 1:2
+            d = g.down_neighbor[k, i]
+            if d != 0
+                slot = find_up_slot(g, d, np)
+                slot != 0 && (g.up_neighbor[slot, d] = i)
+            end
+        end
+        @inbounds for k in 1:2
+            u = g.up_neighbor[k, i]
+            if u != 0
+                slot = find_down_slot(g, u, np)
+                slot != 0 && (g.down_neighbor[slot, u] = i)
+            end
+        end
     end
 
     # Remove last particle in the field
-    _reset_particle(pfield, get_np(pfield))
+    _reset_particle(pfield, np)
+    st.sigma_0[np] = zero(R)
+    st.H_chi[np] = zero(R)
+    st.hold_counter[np] = 0
+    st.cooldown_counter[np] = 0
+    @inbounds for k in 1:2
+        g.up_neighbor[k, np]   = 0
+        g.down_neighbor[k, np] = 0
+        g.down_coherent[k, np] = false
+        g.down_score[k, np]    = zero(R)
+    end
+    g.degree[np]      = UInt8(0)
+    g.filament_id[np] = 0
     pfield.np -= 1
 
     return nothing
@@ -482,6 +697,10 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
             end
         end
     end
+
+    # Accumulate H_chi exposure for split triggers (no-op unless
+    # pfield.track_H_chi is set by a SeparationTrigger)
+    accumulate_H_chi!(pfield, dt)
 
     # Updates time
     pfield.t += dt

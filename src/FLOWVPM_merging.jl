@@ -152,6 +152,78 @@ function _accumulate_and_finalize_root!(
 )
     R = eltype(pfield.particles)
     zeroR = zero(R)
+
+    if R <: Union{Float32, Float64}
+        gamma_x = zeroR; gamma_y = zeroR; gamma_z = zeroR
+        x_weighted_x = zeroR; x_weighted_y = zeroR; x_weighted_z = zeroR
+        c_weighted_x = zeroR; c_weighted_y = zeroR; c_weighted_z = zeroR
+        x_unweighted_x = zeroR; x_unweighted_y = zeroR; x_unweighted_z = zeroR
+        c_unweighted_x = zeroR; c_unweighted_y = zeroR; c_unweighted_z = zeroR
+        weight_sum = zeroR
+        vol_sum = zeroR
+        sigma3_sum = zeroR
+        circulation_weighted_sum = zeroR
+        sigma_sum = zeroR
+
+        for k in range_start:range_end
+            i = candidates_by_root[k]
+
+            gamma_i_x = pfield.particles[GAMMA_INDEX.start, i]
+            gamma_i_y = pfield.particles[GAMMA_INDEX.start + 1, i]
+            gamma_i_z = pfield.particles[GAMMA_INDEX.start + 2, i]
+            pos_x = pfield.particles[X_INDEX.start, i]
+            pos_y = pfield.particles[X_INDEX.start + 1, i]
+            pos_z = pfield.particles[X_INDEX.start + 2, i]
+            c_i_x = pfield.particles[C_INDEX.start, i]
+            c_i_y = pfield.particles[C_INDEX.start + 1, i]
+            c_i_z = pfield.particles[C_INDEX.start + 2, i]
+            gamma_mag = sqrt(gamma_i_x * gamma_i_x + gamma_i_y * gamma_i_y + gamma_i_z * gamma_i_z)
+            sigma = pfield.particles[SIGMA_INDEX, i]
+
+            gamma_x += gamma_i_x
+            gamma_y += gamma_i_y
+            gamma_z += gamma_i_z
+            vol_sum += pfield.particles[VOL_INDEX, i]
+            sigma3_sum += sigma * sigma * sigma
+            circulation_weighted_sum += sigma * pfield.particles[CIRCULATION_INDEX, i]
+            sigma_sum += sigma
+            x_unweighted_x += pos_x
+            x_unweighted_y += pos_y
+            x_unweighted_z += pos_z
+            c_unweighted_x += c_i_x
+            c_unweighted_y += c_i_y
+            c_unweighted_z += c_i_z
+
+            if gamma_mag > zeroR
+                weight_sum += gamma_mag
+                x_weighted_x += gamma_mag * pos_x
+                x_weighted_y += gamma_mag * pos_y
+                x_weighted_z += gamma_mag * pos_z
+                c_weighted_x += gamma_mag * c_i_x
+                c_weighted_y += gamma_mag * c_i_y
+                c_weighted_z += gamma_mag * c_i_z
+            end
+        end
+
+        n_members = range_end - range_start + 1
+        _finalize_merged_particle!(
+            pfield,
+            representative,
+            n_members,
+            gamma_x, gamma_y, gamma_z,
+            x_weighted_x, x_weighted_y, x_weighted_z,
+            c_weighted_x, c_weighted_y, c_weighted_z,
+            x_unweighted_x, x_unweighted_y, x_unweighted_z,
+            c_unweighted_x, c_unweighted_y, c_unweighted_z,
+            weight_sum,
+            vol_sum,
+            sigma3_sum,
+            circulation_weighted_sum,
+            sigma_sum,
+        )
+        return nothing
+    end
+
     acc = zeros(R, 20)
 
     for k in range_start:range_end
@@ -216,7 +288,8 @@ end
 
 function _merge_clusters_aggressive!(
     pfield::ParticleField,
-    ws::MergingWorkspace,
+    ws::MergingWorkspace;
+    on_representative::Union{Nothing,Function}=nothing,
 )
     np = get_np(pfield)
     candidate_indices = ws.candidate_indices
@@ -291,6 +364,8 @@ function _merge_clusters_aggressive!(
             pfield, candidates_by_root, range_start, range_end, rep,
         )
 
+        on_representative === nothing || on_representative(rep)
+
         # Queue all members except the representative for removal.
         for k in range_start:range_end
             idx = candidates_by_root[k]
@@ -316,6 +391,8 @@ function merge_particles!(
     max_sigma_ratio::Real=2.0,
     skip_static::Bool=true,
     verbose::Bool=false,
+    gamma_align_cos::Real=-1.0,
+    on_representative::Union{Nothing,Function}=nothing,
 )
     np = get_np(pfield)
     np <= 1 && return 0
@@ -414,6 +491,21 @@ function merge_particles!(
                 sigma_min <= 0 && continue
                 sigma_max / sigma_min > max_sigma_ratio && continue
 
+                if gamma_align_cos > -1.0
+                    gax = pfield.particles[GAMMA_INDEX.start,     ia]
+                    gay = pfield.particles[GAMMA_INDEX.start + 1, ia]
+                    gaz = pfield.particles[GAMMA_INDEX.start + 2, ia]
+                    gbx = pfield.particles[GAMMA_INDEX.start,     ib]
+                    gby = pfield.particles[GAMMA_INDEX.start + 1, ib]
+                    gbz = pfield.particles[GAMMA_INDEX.start + 2, ib]
+                    ma2 = gax*gax + gay*gay + gaz*gaz
+                    mb2 = gbx*gbx + gby*gby + gbz*gbz
+                    if ma2 > 0 && mb2 > 0
+                        cosθ = (gax*gbx + gay*gby + gaz*gbz) / sqrt(ma2 * mb2)
+                        cosθ < gamma_align_cos && continue
+                    end
+                end
+
                 dx = pfield.particles[1, ib] - xi
                 dy = pfield.particles[2, ib] - yi
                 dz = pfield.particles[3, ib] - zi
@@ -424,7 +516,7 @@ function merge_particles!(
         end
     end
 
-    n_removed = _merge_clusters_aggressive!(pfield, ws)
+    n_removed = _merge_clusters_aggressive!(pfield, ws; on_representative=on_representative)
 
     if verbose && n_removed > 0
         println("Merged $(length(candidate_indices)) candidate particles into $(length(candidate_indices) - n_removed) particles")

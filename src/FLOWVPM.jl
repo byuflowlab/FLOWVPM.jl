@@ -27,6 +27,7 @@ import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
 # using ReverseDiff
 using StaticArrays
+using LinearAlgebra: eigen, Symmetric
 # using CUDA
 # using CUDA: i32
 using Primes
@@ -43,7 +44,20 @@ export ParticleField,
        NoSFS, ConstantSFS, DynamicSFS,
        U_INDEX, J_INDEX,
        SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX,
-       add_particle, remove_particle, merge_particles!, run_vpm!
+       add_particle, remove_particle, merge_particles!, run_vpm!,
+       split_particles!, SplitOptions, SplitDirection,
+       STRENGTH, STREAMLINE, STRAIN1,
+       SplitTrigger, AllTrigger, AnyTrigger, HoldTrigger,
+       GammaMagTrigger, ZTrigger, StretchTrigger,
+       SeparationTrigger, SigmaShrinkTrigger,
+       infer_filament_edges!,
+       validate_filament_edges, repair_filament_edges!, FilamentEdgeReport,
+       refine_filament_edges!, coarsen_filament_edges!,
+       bundle_coarsen_filament_edges!,
+       merge_filament_bundles!,
+       refine_filaments!, refine_filaments_observables!,
+       FilamentCalibrationReport,
+       calibrate_filament_edges, filament_calibration_sweep
 
 const fmm = FastMultipole
 
@@ -68,7 +82,7 @@ const sqr2 = sqrt(2)
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
-                    "particlefield", "fmm", "merging",
+                    "particlefield", "fmm", "merging", "splitting",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
@@ -223,6 +237,30 @@ This is the recommended SFS model for high fidelity modeling.
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
 
 """
+    `SFS_Cd_twolevel_nobackscatter_projection = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, controls=(control_no_backscatter_projection,))`
+
+Variant of `SFS_Cd_twolevel_nobackscatter` that replaces the binary
+`clipping_backscatter` strategy with `control_no_backscatter_projection`.
+On backscatter particles the SFS vector is projected onto the
+forward-scatter half-space instead of nullifying the model coefficient,
+preserving SFS regularization magnitude where the clip would have abdicated.
+"""
+const SFS_Cd_twolevel_nobackscatter_projection = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, controls=(control_no_backscatter_projection,))
+
+"""
+    `SFS_Cd_twolevel_backscatter_signed = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_afterUJ; alpha=0.999)`
+
+Variant of `SFS_Cd_twolevel_nobackscatter` that drops both the
+`clipping_backscatter` strategy and the `force_positive=true` wrapper on
+the dynamic procedure. The model coefficient `C[1]` is allowed to be
+signed — when the Germano-derived `nume/deno` is negative (the procedure's
+natural response to a backscatter-direction SFS), the resulting `-C·SFS`
+contribution flips sign and acts dissipatively. Magnitude is still bounded
+by `|C| ≤ maxC`.
+"""
+const SFS_Cd_twolevel_backscatter_signed = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_afterUJ; alpha=0.999)
+
+"""
     `SFS_Cd_threelevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.667, clippings=(clipping_backscatter,))`
 
 Alias for the Dynamic SFS model with three levels and no backscatter.
@@ -309,8 +347,10 @@ const _pfield_settings = (sym for sym in fieldnames(ParticleField)
 export rVPM, cVPM,
        formulation_tube_continuity, formulation_tube_momentum
        singular, gaussian, gaussianerf, winckelmans,
-       pedrizzetti, correctedpedrizzetti, norelaxation, 
+       pedrizzetti, correctedpedrizzetti, norelaxation, relax_filter_all,
        Inviscid, CoreSpreading, ParticleStrengthExchange,
        noSFS, SFS_Cs_nobackscatter, SFS_Cd_twolevel_nobackscatter,
+       SFS_Cd_twolevel_nobackscatter_projection,
+       SFS_Cd_twolevel_backscatter_signed,
        SFS_Cd_threelevel_nobackscatter, FMM
 end # END OF MODULE

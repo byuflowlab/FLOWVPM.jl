@@ -13,23 +13,49 @@
 # RELAXATION SCHEME
 ################################################################################
 """
-    `Relaxation(relax, nsteps_relax, rlxf)`
+    `Relaxation(relax, nsteps_relax, rlxf[, filter])`
 
 Defines a relaxation method implemented in the function
 `relax(rlxf::Real, p)` where `p` is particle,
 `rlxf` is the relaxation factor between 0
 and 1, with 0 == no relaxation, and 1 == full relaxation. The simulation is
 relaxed every `nsteps_relax` steps.
+
+`filter` is an optional per-particle predicate `(p)->Bool`; relaxation is applied
+to a particle only when `filter(p)` is `true`. It defaults to [`relax_filter_all`]
+(all particles relaxed), which preserves the historical behavior. The predicate
+receives a particle column view `p` (use `get_X(p)`, `get_Gamma(p)`, etc.).
 """
-struct Relaxation{R,Trelax}
+struct Relaxation{R,Trelax,Tfilter}
     relax::Trelax                 # Relaxation method
     nsteps_relax::Int               # Relax simulation every this many steps
     rlxf::R                         # Relaxation factor between 0 and 1
+    filter::Tfilter                 # per-particle predicate (p)->Bool gating relaxation
 end
 
-# Make Relaxation object callable
-(rlx::Relaxation)(p) = rlx.relax(rlx.rlxf, p)
-(rlx::Relaxation)(pfield, i) = rlx.relax(rlx.rlxf, pfield, i)
+"""
+    `relax_filter_all(p)`
+
+Default relaxation filter: a predicate that always returns `true`, so relaxation is
+applied to every particle. Defined as a named function (rather than an anonymous
+closure) so that all default `Relaxation`s share a single concrete type and remain
+comparable by `==`.
+"""
+relax_filter_all(p) = true
+relax_filter_all(pfield, i::Integer) = true
+
+# Backwards-compatible constructor: default to the all-pass filter so every existing
+# 3-argument `Relaxation(...)` call site keeps working unchanged.
+Relaxation(relax, nsteps_relax, rlxf) =
+    Relaxation(relax, nsteps_relax, rlxf, relax_filter_all)
+
+_passes_relaxation_filter(filter, pfield, i::Integer) = filter(get_particle(pfield, Int(i)))
+_passes_relaxation_filter(::typeof(relax_filter_all), pfield, i::Integer) = true
+
+# Make Relaxation object callable, gated by the per-particle filter
+(rlx::Relaxation)(p) = rlx.filter(p) ? rlx.relax(rlx.rlxf, p) : nothing
+(rlx::Relaxation)(pfield, i) =
+    _passes_relaxation_filter(rlx.filter, pfield, i) ? rlx.relax(rlx.rlxf, pfield, i) : nothing
 
 
 ##### RELAXATION METHODS #######################################################
