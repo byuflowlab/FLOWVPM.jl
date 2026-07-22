@@ -667,12 +667,13 @@ the FMM neglecting the far field, saving the results under P.W.
 function zeta_fmm(pfield)
     fmm_options = pfield.fmm
     leaf_size=fmm_options.ncrit
-    shrink_recenter=fmm_options.shrink_recenter
+    shrink=fmm_options.shrink_recenter
+    recenter=fmm_options.shrink_recenter
     multipole_acceptance = fmm_options.theta
     zeta = pfield.kernel.zeta
 
     # create tree
-    tree = FastMultipole.Tree((pfield,); leaf_size, shrink_recenter)
+    tree = FastMultipole.Tree((pfield,); leaf_size, shrink, recenter)
     _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_acceptance, false, true, true)
     sort_index = tree.sort_index_list[1]
 
