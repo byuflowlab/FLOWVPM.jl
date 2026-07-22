@@ -69,7 +69,6 @@ const sqr2 = sqrt(2)
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
                     "particlefield", "fmm",
-                    # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]# , "rrules"]
@@ -165,7 +164,9 @@ const standard_kernels = (:singular, :gaussian, :gaussianerf, :winckelmans)
 
 
 # ------------ Available relaxation schemes
-const relaxation_none = Relaxation((args...; optargs...)->nothing, -1, FLOAT_TYPE(0.0))
+relaxation_none_fn(args...; optargs...) = nothing
+_relax_broadcast!(::typeof(relaxation_none_fn), rlxf, pfield) = nothing
+const relaxation_none = Relaxation(relaxation_none_fn, -1, FLOAT_TYPE(0.0))
 const relaxation_pedrizzetti = Relaxation(relax_pedrizzetti, 1, FLOAT_TYPE(0.3))
 const relaxation_correctedpedrizzetti = Relaxation(relax_correctedpedrizzetti, 1, FLOAT_TYPE(0.3))
 
@@ -300,7 +301,7 @@ const _lengthyoptions = Tuple(keys(_lengthy2key))
 
 # Relevant solver settings in a given particle field
 const _pfield_settings = (sym for sym in fieldnames(ParticleField)
-                          if !( sym in (:particles, :bodies, :np, :nt, :t, :M) )
+                          if !( sym in (:particles, :scratch, :bodies, :np, :nt, :t, :M) )
                         )
 
 # ------------------------------------------------------------------------------

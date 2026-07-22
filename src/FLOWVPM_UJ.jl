@@ -10,6 +10,21 @@
 
 
 """
+    gpu_direct!(pfield::ParticleField)
+
+GPU implementation of the direct (no-FMM) O(N²) N-body sum, used by
+`UJ_direct` when `pfield.particles` is not a plain `Array` (e.g. `CuArray`).
+The real implementation is defined in `ext/FLOWVPMCUDAExt.jl` as a method of
+this function -- loaded automatically whenever `using CUDA` is added
+alongside FLOWVPM (Julia's package-extension mechanism). This stub is only
+reached if a non-`Array` particle field is used without CUDA.jl loaded.
+"""
+gpu_direct!(pfield::ParticleField) = error(
+    "No GPU direct-sum implementation available for particle arrays of type " *
+    "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
+    "the CUDA-accelerated direct (no-FMM) N-body sum for `CuArray`-backed particle fields.")
+
+"""
   `UJ_direct(pfield)`
 
 Calculates the velocity and Jacobian that the field exerts on itself by direct
@@ -32,7 +47,11 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    if pfield.particles isa Array
+        fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    else
+        gpu_direct!(pfield)
+    end
     sfs && Estr_direct!(pfield)
 end
 
@@ -60,7 +79,7 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_fmm(
-        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
+        pfield::ParticleField;
         verbose::Bool=false,
         rbf::Bool=false,
         sfs::Bool=false,
@@ -69,7 +88,7 @@ function UJ_fmm(
         reset::Bool=true,
         reset_sfs::Bool=false,
         autotune::Bool=true,
-    ) where {useGPU}
+    )
 
     # reset # TODO should this really have an elseif in between?
     if reset
@@ -93,8 +112,8 @@ function UJ_fmm(
                         multipole_acceptance=fmm_options.theta, 
                         error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
                         tune=true,
-                        shrink_recenter=fmm_options.shrink_recenter,
-                        nearfield_device=(useGPU>0),
+                        # shrink_recenter=fmm_options.shrink_recenter,
+                        nearfield_device=(pfield.useGPU>0),
                         scalar_potential=false,
                         hessian=true,
                         silence_warnings=!verbose)

@@ -66,12 +66,13 @@ end
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, AT<:AbstractMatrix{R}}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-    particles::Matrix{R}                        # Array of particles
+    particles::AT                               # Array of particles
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
+    scratch::AT                                 # Reusable scratch space for vectorized intermediate computations (see SCRATCH_INDEX)
 
     # Internal properties
     np::Int                                     # Number of particles in the field
@@ -118,6 +119,8 @@ is created with the default values for the other parameters.
 - `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
 - `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
 - `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
+- `arraytype::Type{<:AbstractMatrix}=Matrix`: Array type backing `pfield.particles`. Default is `Matrix`
+    (CPU). Pass `CuArray` (CUDA.jl) to allocate the particle field on GPU.
 """
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
@@ -129,15 +132,17 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_pedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
-        useGPU=useGPU_default
+        useGPU=useGPU_default,
+        arraytype=Matrix
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
-    particles = zeros(R, nfields, maxparticles)
+    particles = fill!(arraytype{R}(undef, nfields, maxparticles), zero(R))
+    scratch = fill!(arraytype{R}(undef, N_SCRATCH, maxparticles), zero(R))
 
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
-                                            formulation, viscous, np, nt, t,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, typeof(particles)}(maxparticles, particles,
+                                            formulation, viscous, scratch, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU)
 end
@@ -252,6 +257,25 @@ const C_INDEX = 37:39
 const SFS_INDEX = 40:42
 const STATIC_INDEX = 43
 const U_PREV_INDEX = 44
+
+# Generic scratch rows: reusable per-particle storage for named intermediate
+# quantities in vectorized (broadcast) hot-path computations (e.g. RK3's
+# update_particle_states), so those intermediates write into a persistent
+# buffer with `.=` instead of heap-allocating a fresh array every call. Row
+# meaning is reused/contextual per call site (documented locally), the same
+# way M_INDEX's rows already carry different meanings across integration
+# schemes -- this is not new-field-per-quantity storage. Same fixed row count
+# for every formulation (no per-formulation sizing); a formulation that needs
+# fewer rows (e.g. ClassicVPM) simply leaves the rest unused.
+#
+# 11 is the true minimum for ReformulatedVPM's update_particle_states, achieved
+# by aliasing rows whose value is provably dead before another quantity needs
+# a row (see comments at each reuse site in FLOWVPM_timeintegration.jl) --
+# every formula here is purely elementwise per-particle, so overwriting a row
+# with `x .= f(x, ...)` (reading and writing the same row) is well-defined,
+# same as the standard `x .= x .+ 1` pattern.
+const N_SCRATCH = 11
+const SCRATCH_INDEX = 1:N_SCRATCH
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly

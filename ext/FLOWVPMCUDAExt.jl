@@ -1,4 +1,19 @@
-# Contains utilities for handling gpu kernel
+#=##############################################################################
+# DESCRIPTION
+    CUDA.jl package extension: GPU kernels for the direct (no-FMM) N-body sum.
+    Loaded automatically whenever both FLOWVPM and CUDA are loaded in the same
+    environment (Julia >=1.9 package extension mechanism).
+=###############################################################################
+module FLOWVPMCUDAExt
+
+using FLOWVPM
+using CUDA
+using CUDA: i32
+using StaticArrays: @MVector
+using Primes: divisors
+import FastMultipole
+const fmm = FastMultipole
+
 const default_max_threads_per_block::Int32 = 512
 
 function check_launch(n, p, q,
@@ -436,7 +451,6 @@ function gpu_reduction_direct!(out, s, t, num_cols, kernel)
 
     # Variable initialization
     UJ = @MVector zeros(eltype(t), 12)
-    out = @MVector zeros(eltype(t), 12)
     idim::Int32 = 0
     idx::Int32 = 0
     i::Int32 = 0
@@ -467,16 +481,9 @@ function gpu_reduction_direct!(out, s, t, num_cols, kernel)
         while i <= bodies_per_col
             isource = i + bodies_per_col*(col-1)
             if isource <= s_size
-                out .= gpu_interaction(tx, ty, tz, sh_mem, isource, kernel)
-
-                # Sum up influences for each source in a column in the tile
-                # This UJ resides in the local memory of the thread corresponding
-                # to each column, so we haven't summed up over the tile yet.
-                idim = 1
-                while idim <= 12
-                    @inbounds UJ[idim] += out[idim]
-                    idim += 1
-                end
+                # Accumulates this source's contribution directly into UJ
+                # (this thread's running sum over the tile).
+                gpu_interaction!(UJ, tx, ty, tz, sh_mem, isource, kernel)
             end
             i += 1
         end
@@ -548,7 +555,7 @@ end
     combine_source_indices(sorted_direct_list, source_branches::Vector{<:fmm.Branch})
 
 Combines all the sources corresponding to a target branch.
-The input sorted_direct_list has to be sorted by target 
+The input sorted_direct_list has to be sorted by target
 using the function fmm.sort_list_by_target().
 """
 function combine_source_indices(sorted_direct_list, source_branches::Vector{<:fmm.Branch})
@@ -614,6 +621,242 @@ function is_fully_direct(target_sources)::Bool
     return true
 end
 
+"""
+    FLOWVPM.gpu_direct!(pfield::ParticleField)
+
+CUDA implementation of the direct (no-FMM) O(N²) N-body sum: overloads the
+stub declared in `FLOWVPM_UJ.jl`, dispatched to from `UJ_direct` whenever
+`pfield.particles isa CuArray`. Bypasses FastMultipole's own `direct!`
+entirely (that path is CPU-only -- see `FastMultipole/src/direct.jl`; its
+only GPU hook, `nearfield_device!`, is tree/FMM-based and belongs to the
+separate, still-in-progress FMM-GPU effort). Uses the `gpu_atomic_square!`
+tile kernel above with a square launch config sized for a self-interacting
+target/source array of `n = pfield.np` particles.
+
+NOTE: unlike Phase 1's broadcast rewrites, this has not been run against
+real GPU hardware (none available in this environment) -- verified by code
+review against `gpu_interaction!`'s per-particle math and the CPU reference
+in `FLOWVPM_fmm.jl`'s `fmm.direct!` overload only. Treat as unverified until
+run on the supercomputer.
+"""
+function FLOWVPM.gpu_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
+                             ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+    n = pfield.np
+    n == 0 && return nothing
+
+    P = pfield.particles
+    T = eltype(P)
+
+    # Source/target array: rows 1:7 are exactly [X (1:3); Gamma (4:6); sigma
+    # (7)], matching gpu_interaction!'s hardcoded row indices 1i32:7i32 --
+    # see FLOWVPM.X_INDEX/GAMMA_INDEX/SIGMA_INDEX in FLOWVPM_particlefield.jl.
+    s = view(P, 1:7, 1:n)
+
+    out = CUDA.zeros(T, 12, n)
+
+    p, q, _ = get_launch_config(n)
+    nthreads = p*q
+    nblocks = cld(n, p)
+    shmem = 7*p*sizeof(T)
+
+    check_shared_memory(CUDA.device(), shmem)
+
+    @cuda threads=nthreads blocks=nblocks shmem=shmem gpu_atomic_square!(out, s, s, p, q, pfield.kernel.g_dgdr)
+
+    # out[1:3,:] = U, out[4:12,:] = J (9-entry flattened Jacobian) -- same
+    # row order gpu_interaction! writes as the CPU direct!/set_gradient! path
+    # uses for FLOWVPM.U_INDEX/J_INDEX (see FLOWVPM_fmm.jl).
+    view(P, FLOWVPM.U_INDEX, 1:n) .+= view(out, 1:3, :)
+    view(P, FLOWVPM.J_INDEX, 1:n) .+= view(out, 4:12, :)
+
+    return nothing
+end
+
+# Each thread handles a single target and brute-force loops over every
+# source directly from global memory (no shared-memory tiling). Chosen over
+# a tiled kernel (like gpu_atomic_square! above) for auditability given no
+# local GPU hardware to iterate against -- see gpu_zeta_direct!/gpu_estr_direct!.
+@inline function gpu_zeta_direct_kernel!(out, s, n::Int32, zeta)
+    j_target::Int32 = (blockIdx().x-1i32)*blockDim().x + threadIdx().x
+    if j_target <= n
+        @inbounds tx = s[1i32, j_target]
+        @inbounds ty = s[2i32, j_target]
+        @inbounds tz = s[3i32, j_target]
+
+        T = eltype(s)
+        acc1, acc2, acc3 = zero(T), zero(T), zero(T)
+
+        i::Int32 = 1
+        while i <= n
+            @inbounds dX1 = tx - s[1i32, i]
+            @inbounds dX2 = ty - s[2i32, i]
+            @inbounds dX3 = tz - s[3i32, i]
+            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+            @inbounds sigma = s[7i32, i]
+            zeta_sgm = zeta(r/sigma) / (sigma*sigma*sigma)
+
+            @inbounds acc1 += s[4i32, i]*zeta_sgm
+            @inbounds acc2 += s[5i32, i]*zeta_sgm
+            @inbounds acc3 += s[6i32, i]*zeta_sgm
+
+            i += 1i32
+        end
+
+        @inbounds out[1i32, j_target] += acc1
+        @inbounds out[2i32, j_target] += acc2
+        @inbounds out[3i32, j_target] += acc3
+    end
+    return
+end
+
+"""
+    FLOWVPM.gpu_zeta_direct!(pfield::ParticleField)
+
+CUDA implementation of `zeta_direct`'s O(N²) direct-sum basis-function
+evaluation, overloading the stub declared in `FLOWVPM_viscous.jl`. Unlike
+most direct-sum call sites, `zeta_direct` includes ALL particles (even
+static ones) as both source and target -- matching the CPU version's
+`iterator(pfield; include_static=true)` on both sides -- so no active-particle
+masking is applied here.
+
+NOTE: unverified against real GPU hardware, same caveat as `gpu_direct!` above.
+"""
+function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
+                                  ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+    n = pfield.np
+    n == 0 && return nothing
+
+    P = pfield.particles
+    T = eltype(P)
+
+    # rows 1:7 = [X (1:3); Gamma (4:6); sigma (7)], same layout as gpu_direct!
+    s = view(P, 1:7, 1:n)
+
+    out = CUDA.zeros(T, 3, n)
+
+    nthreads = min(n, Int(default_max_threads_per_block))
+    nblocks = cld(n, nthreads)
+
+    @cuda threads=nthreads blocks=nblocks gpu_zeta_direct_kernel!(out, s, Int32(n), pfield.kernel.zeta)
+
+    # CPU `zeta_direct` zeroes J[1:3] before accumulating (over ALL
+    # particles, per the include_static=true above), so this is an
+    # assignment, not an accumulation, to match.
+    view(P, FLOWVPM.J_INDEX[1:3], 1:n) .= view(out, 1:3, :)
+
+    return nothing
+end
+
+# Each thread handles a single target and brute-force loops over every
+# source directly from global memory. Same auditability-over-perf tradeoff
+# as gpu_zeta_direct_kernel! above.
+@inline function gpu_estr_direct_kernel!(sfs_out, P, n::Int32, zeta, transposed::Bool,
+                                          static_row::Int32, j1::Int32, j2::Int32, j3::Int32,
+                                          j4::Int32, j5::Int32, j6::Int32, j7::Int32, j8::Int32, j9::Int32)
+    j_target::Int32 = (blockIdx().x-1i32)*blockDim().x + threadIdx().x
+    T = eltype(P)
+    if j_target <= n
+        @inbounds target_is_static = P[static_row, j_target]
+        if target_is_static == 0
+            @inbounds tx = P[1i32, j_target]
+            @inbounds ty = P[2i32, j_target]
+            @inbounds tz = P[3i32, j_target]
+            @inbounds JT1 = P[j1, j_target]; @inbounds JT2 = P[j2, j_target]; @inbounds JT3 = P[j3, j_target]
+            @inbounds JT4 = P[j4, j_target]; @inbounds JT5 = P[j5, j_target]; @inbounds JT6 = P[j6, j_target]
+            @inbounds JT7 = P[j7, j_target]; @inbounds JT8 = P[j8, j_target]; @inbounds JT9 = P[j9, j_target]
+
+            acc1, acc2, acc3 = zero(T), zero(T), zero(T)
+
+            i::Int32 = 1
+            while i <= n
+                @inbounds source_is_static = P[static_row, i]
+                if source_is_static == 0
+                    @inbounds sx = P[1i32, i]
+                    @inbounds sy = P[2i32, i]
+                    @inbounds sz = P[3i32, i]
+                    dX1 = tx - sx
+                    dX2 = ty - sy
+                    dX3 = tz - sz
+                    r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+                    @inbounds sigma = P[7i32, i]
+                    zeta_sgm = zeta(r/sigma) / (sigma*sigma*sigma)
+
+                    @inbounds GS1 = P[4i32, i]; @inbounds GS2 = P[5i32, i]; @inbounds GS3 = P[6i32, i]
+                    @inbounds JS1 = P[j1, i]; @inbounds JS2 = P[j2, i]; @inbounds JS3 = P[j3, i]
+                    @inbounds JS4 = P[j4, i]; @inbounds JS5 = P[j5, i]; @inbounds JS6 = P[j6, i]
+                    @inbounds JS7 = P[j7, i]; @inbounds JS8 = P[j8, i]; @inbounds JS9 = P[j9, i]
+
+                    if transposed
+                        S1 = (JT1-JS1)*GS1 + (JT2-JS2)*GS2 + (JT3-JS3)*GS3
+                        S2 = (JT4-JS4)*GS1 + (JT5-JS5)*GS2 + (JT6-JS6)*GS3
+                        S3 = (JT7-JS7)*GS1 + (JT8-JS8)*GS2 + (JT9-JS9)*GS3
+                    else
+                        S1 = (JT1-JS1)*GS1 + (JT4-JS4)*GS2 + (JT7-JS7)*GS3
+                        S2 = (JT2-JS2)*GS1 + (JT5-JS5)*GS2 + (JT8-JS8)*GS3
+                        S3 = (JT3-JS3)*GS1 + (JT6-JS6)*GS2 + (JT9-JS9)*GS3
+                    end
+
+                    acc1 += zeta_sgm*S1
+                    acc2 += zeta_sgm*S2
+                    acc3 += zeta_sgm*S3
+                end
+                i += 1i32
+            end
+
+            @inbounds sfs_out[1i32, j_target] += acc1
+            @inbounds sfs_out[2i32, j_target] += acc2
+            @inbounds sfs_out[3i32, j_target] += acc3
+        end
+    end
+    return
+end
+
+"""
+    FLOWVPM.gpu_estr_direct!(pfield::ParticleField)
+
+CUDA implementation of `Estr_direct!`'s O(N²) direct-sum SFS
+vortex-stretching contribution, overloading the stub declared in
+`FLOWVPM_subfilterscale_models.jl`. Both source and target loops skip static
+particles (matching `Estr_direct_singlethreaded`/`_multithreaded`'s use of
+the default `iterator(pfield)`, which excludes them), and results are
+accumulated (`+=`) into `SFS_INDEX`, matching the CPU version, which never
+resets SFS itself (that's done separately via `_reset_particles_sfs`, gated
+by the `reset_sfs` kwarg upstream in `UJ_direct`/`UJ_fmm`).
+
+NOTE: unverified against real GPU hardware, same caveat as `gpu_direct!`
+above. Row indices for `STATIC_INDEX`/`J_INDEX` are passed in as scalar
+kernel arguments (rather than hardcoded like `gpu_direct!`'s 1i32:12i32)
+since `J_INDEX` isn't contiguous-from-1 the way the U/J/X/Gamma/sigma block
+is -- keeps the kernel body itself free of magic numbers beyond X/Gamma/sigma
+(rows 1:7, same layout as gpu_direct!/gpu_zeta_direct!).
+"""
+function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
+                                  ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+    n = pfield.np
+    n == 0 && return nothing
+
+    P = pfield.particles
+    T = eltype(P)
+
+    out = CUDA.zeros(T, 3, n)
+
+    nthreads = min(n, Int(default_max_threads_per_block))
+    nblocks = cld(n, nthreads)
+
+    jrows = Int32.(FLOWVPM.J_INDEX)
+
+    @cuda threads=nthreads blocks=nblocks gpu_estr_direct_kernel!(
+        out, P, Int32(n), pfield.kernel.zeta, pfield.transposed,
+        Int32(FLOWVPM.STATIC_INDEX),
+        jrows[1], jrows[2], jrows[3], jrows[4], jrows[5], jrows[6], jrows[7], jrows[8], jrows[9])
+
+    view(P, FLOWVPM.SFS_INDEX, 1:n) .+= view(out, 1:3, :)
+
+    return nothing
+end
+
 # Convenience function to compile the GPU kernel
 # so compilation doesn't take time later
 # NOTE: THIS DOES NOT WORK WITH THE NEW nearfield_device!() FUNCTION
@@ -647,3 +890,5 @@ function warmup_gpu(verbose=false; n=100)
 
     return
 end
+
+end # module FLOWVPMCUDAExt

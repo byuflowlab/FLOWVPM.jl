@@ -117,44 +117,76 @@ function (SFS::ConstantSFS)(pfield, ::AfterUJ; a=1, b=1)
     # Recognize Euler step or Runge-Kutta's first substep
     if a==1 || a==0
 
-        # "Calculate" model coefficient
-        for i in 1:pfield.np
-            pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[C_INDEX[1],i] = SFS.Cs
-        end
+        if pfield.particles isa Array
 
-        # Apply clipping strategies
-        for clipping in SFS.clippings
+            # "Calculate" model coefficient
             for i in 1:pfield.np
                 pfield.particles[STATIC_INDEX,i] != 0 && continue
-
-                if clipping(pfield, i)
-                    # Clip SFS model by nullifying the model coefficient
-                    pfield.particles[C_INDEX[1],i] = 0
-                end
-
+                pfield.particles[C_INDEX[1],i] = SFS.Cs
             end
-        end
 
-        # Apply control strategies
-        # NOTE: Shouldn't these strategies applied to every RK substep?
-        #       Possibly, but only if they are all continuous (magnitude control
-        #       is not).
-        for control in SFS.controls
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
-                    control(pfield, i)
-                end
-            else
+            # Apply clipping strategies
+            for clipping in SFS.clippings
                 for i in 1:pfield.np
                     pfield.particles[STATIC_INDEX,i] != 0 && continue
-                    control(pfield, i)
+
+                    if clipping(pfield, i)
+                        # Clip SFS model by nullifying the model coefficient
+                        pfield.particles[C_INDEX[1],i] = 0
+                    end
+
                 end
             end
+
+            # Apply control strategies
+            # NOTE: Shouldn't these strategies applied to every RK substep?
+            #       Possibly, but only if they are all continuous (magnitude control
+            #       is not).
+            for control in SFS.controls
+                if pfield.np > MIN_MT_NP
+                    Threads.@threads for i in 1:pfield.np
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
+                        control(pfield, i)
+                    end
+                else
+                    for i in 1:pfield.np
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
+                        control(pfield, i)
+                    end
+                end
+            end
+
+        else
+
+            # "Calculate" model coefficient
+            _constantsfs_coefficient_broadcast!(pfield, SFS.Cs)
+
+            # Apply clipping strategies
+            for clipping in SFS.clippings
+                _clip_broadcast!(clipping, pfield)
+            end
+
+            # Apply control strategies
+            for control in SFS.controls
+                _control_broadcast!(control, pfield)
+            end
+
         end
 
     end
+end
+
+"GPU-compatible broadcast path for `ConstantSFS`'s model-coefficient assignment."
+function _constantsfs_coefficient_broadcast!(pfield, Cs)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    C1 = view(P, C_INDEX[1], :)
+
+    C1 .= ifelse.(active .> 0, Cs, C1)
+
+    return nothing
 end
 ##### END OF CONSTANT SFS SCHEME ###############################################
 
@@ -219,49 +251,71 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
     if a==1 || a==0
 
         # finish dynamic procedure
+        # NOTE: procedure_afterUJ (dynamicprocedure_pseudo3level_afterUJ /
+        # dynamicprocedure_sensorfunction) interleaves scalar-reduction
+        # bookkeeping with `pfield.UJ(...)` N-body re-evaluation at a
+        # different filter width -- CPU-only follow-up, same class as the
+        # zeta/RBF procedures left CPU-only in FLOWVPM_viscous.jl. Not
+        # force-masked into the broadcast fork below.
         SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
 
-        # Apply clipping strategies
-        for clipping in SFS.clippings
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    # Skip static particles
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+        if pfield.particles isa Array
 
-                    if clipping(pfield, i)
-                        # Clip SFS model by nullifying the model coefficient
-                        pfield.particles[C_INDEX[1],i] *= 0
+            # Apply clipping strategies
+            for clipping in SFS.clippings
+                if pfield.np > MIN_MT_NP
+                    Threads.@threads for i in 1:pfield.np
+                        # Skip static particles
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
+
+                        if clipping(pfield, i)
+                            # Clip SFS model by nullifying the model coefficient
+                            pfield.particles[C_INDEX[1],i] *= 0
+                        end
                     end
-                end
-            else
-                for i in 1:pfield.np
-                    # Skip static particles
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                else
+                    for i in 1:pfield.np
+                        # Skip static particles
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
 
-                    if clipping(pfield, i)
-                        # Clip SFS model by nullifying the model coefficient
-                        pfield.particles[C_INDEX[1],i] *= 0
+                        if clipping(pfield, i)
+                            # Clip SFS model by nullifying the model coefficient
+                            pfield.particles[C_INDEX[1],i] *= 0
+                        end
                     end
                 end
             end
-        end
 
-        # Apply control strategies
-        # NOTE: Shouldn't these strategies applied to every RK substep?
-        #       Possibly, but only if they are all continuous (magnitude control
-        #       is not).
-        for control in SFS.controls
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
-                    control(pfield, i)
-                end
-            else
-                for i in 1:pfield.np
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
-                    control(pfield, i)
+            # Apply control strategies
+            # NOTE: Shouldn't these strategies applied to every RK substep?
+            #       Possibly, but only if they are all continuous (magnitude control
+            #       is not).
+            for control in SFS.controls
+                if pfield.np > MIN_MT_NP
+                    Threads.@threads for i in 1:pfield.np
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
+                        control(pfield, i)
+                    end
+                else
+                    for i in 1:pfield.np
+                        pfield.particles[STATIC_INDEX,i] != 0 && continue
+                        control(pfield, i)
+                    end
                 end
             end
+
+        else
+
+            # Apply clipping strategies
+            for clipping in SFS.clippings
+                _clip_broadcast!(clipping, pfield)
+            end
+
+            # Apply control strategies
+            for control in SFS.controls
+                _control_broadcast!(control, pfield)
+            end
+
         end
 
     end
@@ -293,6 +347,40 @@ function clipping_backscatter(pfield, i::Int)
     S2 = pfield.particles[SFS_INDEX[2], i]
     S3 = pfield.particles[SFS_INDEX[3], i]
     return C*(G1*S1 + G2*S2 + G3*S3) < 0
+end
+
+"""
+    _clip_broadcast!(clipping, pfield)
+
+Dispatches to a whole-field broadcast implementation of a clipping strategy.
+A custom clipping strategy used with GPU/`CuArray` particle fields must define
+a matching method of `FLOWVPM._clip_broadcast!(::typeof(custom_clipping),
+pfield)` (see `_clip_broadcast!(::typeof(clipping_backscatter), pfield)` for
+an example) -- same extensibility pattern as `_relax_broadcast!` in
+FLOWVPM_relaxation.jl.
+"""
+_clip_broadcast!(clipping, pfield) = error(
+    "No whole-field broadcast implementation registered for clipping strategy `$clipping`. " *
+    "Since GPU particle fields run clipping strategies through `_clip_broadcast!` (no " *
+    "per-particle CPU loop fallback), a custom clipping strategy must define a matching " *
+    "method of `FLOWVPM._clip_broadcast!(::typeof($clipping), pfield)`.")
+
+"GPU-compatible broadcast path for `clipping_backscatter`."
+function _clip_broadcast!(::typeof(clipping_backscatter), pfield)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    C1 = view(P, C_INDEX[1], :)
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+    S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
+
+    clip = view(Sc, 2, :)
+    clip .= active .* (C1 .* (G1.*S1 .+ G2.*S2 .+ G3.*S3) .< 0)
+
+    C1 .= ifelse.(clip .> 0, zero(eltype(C1)), C1)
+
+    return nothing
 end
 ##### END OF CLIPPING STRATEGIES ###############################################
 
@@ -331,6 +419,40 @@ function control_directional(pfield, i::Int)
     pfield.particles[SFS_INDEX[1], i] = aux*G1
     pfield.particles[SFS_INDEX[2], i] = aux*G2
     pfield.particles[SFS_INDEX[3], i] = aux*G3
+end
+
+"""
+    _control_broadcast!(control, pfield)
+
+Dispatches to a whole-field broadcast implementation of a control strategy.
+A custom control strategy used with GPU/`CuArray` particle fields must define
+a matching method of `FLOWVPM._control_broadcast!(::typeof(custom_control),
+pfield)` -- same extensibility pattern as `_clip_broadcast!` above and
+`_relax_broadcast!` in FLOWVPM_relaxation.jl.
+"""
+_control_broadcast!(control, pfield) = error(
+    "No whole-field broadcast implementation registered for control strategy `$control`. " *
+    "Since GPU particle fields run control strategies through `_control_broadcast!` (no " *
+    "per-particle CPU loop fallback), a custom control strategy must define a matching " *
+    "method of `FLOWVPM._control_broadcast!(::typeof($control), pfield)`.")
+
+"GPU-compatible broadcast path for `control_directional`."
+function _control_broadcast!(::typeof(control_directional), pfield)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+    S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
+
+    aux = view(Sc, 2, :)
+    aux .= (S1.*G1 .+ S2.*G2 .+ S3.*G3) ./ (G1.^2 .+ G2.^2 .+ G3.^2)
+
+    S1 .= ifelse.(active .> 0, aux .* G1, S1)
+    S2 .= ifelse.(active .> 0, aux .* G2, S2)
+    S3 .= ifelse.(active .> 0, aux .* G3, S3)
+
+    return nothing
 end
 
 """
@@ -385,7 +507,7 @@ function control_magnitude(pfield, i::Int)
 
         aux = S1*G1 + S2*G2 + S3*G3
         aux /= (G1*G1 + G2*G2 + G3*G3)
-        aux -= (1+3*f)*(zeta0/get_sigma(P)[]^3) / deltat / C
+        aux -= (1+3*f)*(zeta0/pfield.particles[SIGMA_INDEX, i]^3) / deltat / C
 
         # f_p filter criterion
         if aux > 0
@@ -394,6 +516,39 @@ function control_magnitude(pfield, i::Int)
             pfield.particles[SFS_INDEX[3], i] = -aux*G3
         end
     end
+end
+
+"GPU-compatible broadcast path for `control_magnitude`."
+function _control_broadcast!(::typeof(control_magnitude), pfield)
+    pfield.nt == 0 && return nothing
+
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    deltat = pfield.t / pfield.nt
+    f = pfield.formulation.f
+    zeta0 = pfield.kernel.zeta(0)
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    C1 = view(P, C_INDEX[1], :)
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+    S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
+    sigma = view(P, SIGMA_INDEX, :)
+
+    nonzeroC = view(Sc, 2, :); nonzeroC .= active .* (C1 .!= 0)
+    safeC = view(Sc, 3, :); safeC .= ifelse.(C1 .!= 0, C1, one(eltype(C1)))
+
+    aux = view(Sc, 4, :)
+    aux .= (S1.*G1 .+ S2.*G2 .+ S3.*G3) ./ (G1.^2 .+ G2.^2 .+ G3.^2)
+    aux .-= (1+3*f) .* (zeta0 ./ sigma.^3) ./ deltat ./ safeC
+
+    apply = view(Sc, 5, :); apply .= nonzeroC .* (aux .> 0)
+
+    S1 .= ifelse.(apply .> 0, -aux .* G1, S1)
+    S2 .= ifelse.(apply .> 0, -aux .* G2, S2)
+    S3 .= ifelse.(apply .> 0, -aux .* G3, S3)
+
+    return nothing
 end
 ##### END OF CONTROL STRATEGIES ################################################
 
