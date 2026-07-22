@@ -114,7 +114,7 @@ function UJ_fmm(
                         tune=true,
                         shrink=fmm_options.shrink_recenter,
                         recenter=fmm_options.shrink_recenter,
-                        nearfield_device=(pfield.useGPU>0),
+                        nearfield_device=!(pfield.particles isa Array),
                         scalar_potential=false,
                         hessian=true,
                         silence_warnings=!verbose)
