@@ -540,6 +540,15 @@ function _reset_particles(pfield::ParticleField)
     end
 end
 
+"""
+    `_reset_particles_broadcast!(pfield)`
+
+GPU-safe equivalent of `_reset_particles`'s per-particle loop, used when
+`pfield.particles` is not a plain `Array`. The scalar `pfield.particles[STATIC_INDEX, i]
+== 0` check in the loop version is disallowed indexing on a `CuArray`;
+multiplying by the (0/1) static mask gets the same "leave static particles
+untouched, zero everything else" behavior as a whole-array broadcast.
+"""
 function _reset_particles_broadcast!(pfield::ParticleField)
     np = pfield.np
     is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
@@ -578,10 +587,22 @@ function _reset_particles_sfs(pfield::ParticleField)
             end
         end
     else
-        np = pfield.np
-        is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
-        view(pfield.particles, SFS_INDEX, 1:np) .*= is_static
+        _reset_particles_sfs_broadcast!(pfield)
     end
+end
+
+"""
+    `_reset_particles_sfs_broadcast!(pfield)`
+
+GPU-safe equivalent of `_reset_particles_sfs`'s per-particle loop, used when
+`pfield.particles` is not a plain `Array`. Same static-particle-mask
+broadcast technique as `_reset_particles_broadcast!`, applied to `SFS_INDEX`.
+"""
+function _reset_particles_sfs_broadcast!(pfield::ParticleField)
+    np = pfield.np
+    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+    view(pfield.particles, SFS_INDEX, 1:np) .*= is_static
+    return nothing
 end
 
 function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))

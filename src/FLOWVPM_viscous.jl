@@ -646,6 +646,16 @@ function zeta_direct_singlethreaded(pfield)
                         pfield.kernel.zeta)
 end
 
+"""
+    `zeta_direct_multithreaded(pfield)`
+
+`Threads.@threads`-parallel version of `zeta_direct`'s CPU path, chunking
+target particles across threads (mirrors `Estr_direct_multithreaded` in
+`FLOWVPM_subfilterscale_models.jl`). Untyped `pfield` argument: this file is
+`include`d before `FLOWVPM_particlefield.jl` defines `ParticleField`, so it
+can't be annotated `::ParticleField` here (same constraint noted on the
+`gpu_zeta_direct!` stub above).
+"""
 function zeta_direct_multithreaded(pfield)
     np = pfield.np
     for i in 1:np
