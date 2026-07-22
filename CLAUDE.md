@@ -38,10 +38,11 @@ julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.in
 julia --project=docs docs/make.jl   # if present; otherwise use julia-actions/julia-docdeploy locally
 ```
 
-CI runs on Julia 1.6 and 1.10 across Linux/macOS/Windows (`.github/workflows/CI.yml`).
-GPU code paths (`FLOWVPM_gpu.jl`, `FLOWVPM_gpu_erf.jl`) depend on CUDA and are
-currently commented out of module loading and of `test/runtests.jl` — GPU tests
-do not run in CI.
+CI runs on Julia 1.9 and 1.10 across Linux/macOS/Windows (`.github/workflows/CI.yml`;
+bumped from the 1.6 floor on the `gpu-full` branch since Julia package
+extensions require >=1.9). GPU code lives in `ext/FLOWVPMCUDAExt.jl`, a CUDA
+package extension (loaded only when `CUDA` is also `using`d) — CPU-only CI
+never loads it and is unaffected. See "GPU path" below.
 
 ## Architecture
 
@@ -65,8 +66,10 @@ prefer extending the accessor functions over introducing new struct fields.
 
 ### Solver composition via parametric types
 `ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale,
-Tkernel, TUJ, Tintegration, TRelaxation, TGPU}` is fully parameterized on its
-solver components so each piece specializes at compile time:
+Tkernel, TUJ, Tintegration, TRelaxation, AT<:AbstractMatrix{R}}` is fully
+parameterized on its solver components so each piece specializes at compile
+time (the last parameter, `AT`, is the array type backing `pfield.particles`
+— `Matrix` for CPU, `CUDA.CuArray` for GPU; see "GPU path" below):
 - **Formulation** (`FLOWVPM_formulation.jl`): `ClassicVPM` vs `ReformulatedVPM`
   (parameterized by conservation coefficients `f`, `g`). Aliased in
   `FLOWVPM.jl` as `cVPM`, `rVPM`, `formulation_tube_continuity`, etc.
@@ -102,15 +105,59 @@ be cautious about lowering it without re-checking SFS accuracy.
 `FLOWVPM_fmm.jl` implements the glue (`direct!`, source/target definitions)
 that lets `ParticleField` act as a body type FastMultipole understands.
 
-### GPU path (experimental, currently disabled)
-`FLOWVPM_gpu.jl`/`FLOWVPM_gpu_erf.jl` implement a CUDA kernel path for direct
-P2P evaluation (custom launch-config tuning via `get_launch_config`/
-`check_launch`, shared-memory checks). These are not included in the module's
-build (commented out in the `include` loop in `FLOWVPM.jl`) or exercised by
-CI. `ParticleField` still carries a `useGPU` type parameter and `basic.jl`
-demonstrates constructing GPU-backed fields directly against
-`FLOWVPM.fmm.direct!` — treat this path as WIP/manual-testing only, not a
-CI-verified feature. SFS calculations are explicitly not GPU-accelerated.
+### GPU path (validated on real hardware for the no-FMM direct sum; FMM+GPU not ready)
+`ParticleField.particles`/`.scratch` are parameterized over array type
+(`AT<:AbstractMatrix{R}`, see the `arraytype` constructor keyword — pass
+`arraytype=CUDA.CuArray` to get a GPU-backed field). Hot-path physics
+(time integration, relaxation, viscous, SFS in `FLOWVPM_timeintegration.jl`/
+`FLOWVPM_relaxation.jl`/`FLOWVPM_viscous.jl`/`FLOWVPM_subfilterscale*.jl`)
+is forked per function: `pfield.particles isa Array` → the original CPU
+loop, unchanged; `else` → a broadcast implementation, added specifically
+because pure broadcasting was a real 4-10x CPU regression in isolation —
+don't try to unify these into one implementation without benchmarking
+first. The O(N²) direct-sum kernels (`gpu_direct!`/`gpu_zeta_direct!`/
+`gpu_estr_direct!`, used by `UJ_direct`/`zeta_direct`/`Estr_direct!`) live in
+`ext/FLOWVPMCUDAExt.jl`, a CUDA package extension (loaded only when `CUDA`
+is also `using`d — `CUDA` is a `[weakdeps]` entry, not a hard dependency, so
+CPU-only downstream users/installs never pull in the ~40-package CUDA
+stack). `pfield.useGPU` is a separate, largely vestigial `Int` field — the
+real CPU/GPU switch everywhere in this codebase is `pfield.particles isa
+Array`, not `useGPU`.
+
+**Validated on an H200 (2026-07-22):** `add_particle`, `UJ_direct`,
+`zeta_direct`, `Estr_direct!`, and the Phase 1 broadcast physics are all
+correct (checked against the CPU reference, Float32/Float64, with static
+particles) and fast (up to ~800x for `UJ_direct` at 1M particles vs. an
+8-thread CPU baseline). A permanent regression test lives in
+`test/runtests_gpu.jl`, gated on `CUDA.functional()` (no-op on CPU-only CI).
+Tiling `zeta_direct`/`Estr_direct!`'s kernels (like `UJ_direct`'s existing
+`gpu_atomic_square!`) was tried and **reverted** — it helps at small/mid N
+but regresses 1.8-2.2x at ~1M particles (the common real-world size here),
+almost certainly an occupancy tradeoff (bigger shared-memory footprint per
+block vs. fewer concurrent blocks) that only pays off for compute-heavy
+kernels like `UJ_direct`. Fusing the ~10-15 broadcast kernel launches in the
+Phase 1 physics was also measured and found to be within noise (<1%) at
+100k-1M particles — the O(N²) direct sum totally dominates at that scale, so
+this isn't worth pursuing further without an O(N) algorithm.
+
+**FMM + GPU (Phase 4) is NOT ready — picking this up when FastMultipole
+gets GPU support:**
+- `UJ_fmm` forwards `nearfield_device=!(pfield.particles isa Array)` to
+  `FastMultipole.fmm!` (fixed 2026-07-22 — previously read the vestigial
+  `useGPU` flag instead, which would silently stay `false` for a properly
+  `arraytype=CuArray`-built field).
+- `FastMultipole.nearfield_device!`'s generic (unoverloaded) fallback only
+  `@warn`s and computes nothing — it does **not** fall back to CPU nearfield.
+  Until FastMultipole has a real override for FLOWVPM's particle system,
+  setting `nearfield_device=true` would silently *drop* the nearfield
+  contribution (wrong physics, no error) rather than fail loudly. Confirm
+  with whoever owns that work before flipping this on for real use.
+- FastMultipole's octree construction (`src/tree.jl`) is written against
+  plain host arrays throughout (per-particle scalar indexing) — this needs
+  separate GPU-aware work in FastMultipole before a `CuArray`-backed system
+  can even reach tree-building, let alone nearfield dispatch.
+- `UJ_fmm` on a GPU-backed field has never been run end-to-end — only the
+  no-FMM direct-sum path above has real hardware validation.
 
 ### Differentiability
 `FLOWVPM_rrules.jl` defines custom reverse-mode rules (ChainRules-style) but
@@ -120,6 +167,11 @@ code, not part of the active build.
 ### Tests
 `test/runtests.jl` is the entry point and includes `runtests_singlevortexring.jl`
 and `runtests_leapfrog.jl`, each validating solver output against known
-analytic/reference behavior (isolated vortex ring, leapfrogging vortex rings).
-GPU tests are scaffolded (`test_using_GPU` flag, gated on `CUDA.functional()`)
-but currently commented out.
+analytic/reference behavior (isolated vortex ring, leapfrogging vortex rings) —
+CPU only, always run. It also conditionally includes `test/runtests_gpu.jl`
+(the direct-sum GPU regression test described above) if `import CUDA` and
+`CUDA.functional()` both succeed; this requires `CUDA` to be present in
+whatever environment `] test`/`include("test/runtests.jl")` runs in (it
+isn't a hard test dependency in `test/Project.toml`, to keep CPU-only
+`] test` from ever needing to fetch it) and real GPU hardware, so it's a
+no-op in ordinary CI.
