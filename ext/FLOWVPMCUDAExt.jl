@@ -639,8 +639,8 @@ review against `gpu_interaction!`'s per-particle math and the CPU reference
 in `FLOWVPM_fmm.jl`'s `fmm.direct!` overload only. Treat as unverified until
 run on the supercomputer.
 """
-function FLOWVPM.gpu_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
-                             ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+function FLOWVPM.gpu_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT}
+                             ) where {R,F<:FLOWVPM.Formulation,V<:FLOWVPM.ViscousScheme,TUinf,S<:FLOWVPM.SubFilterScale,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
     n = pfield.np
     n == 0 && return nothing
 
@@ -722,8 +722,8 @@ masking is applied here.
 
 NOTE: unverified against real GPU hardware, same caveat as `gpu_direct!` above.
 """
-function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
-                                  ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT}
+                                  ) where {R,F<:FLOWVPM.Formulation,V<:FLOWVPM.ViscousScheme,TUinf,S<:FLOWVPM.SubFilterScale,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
     n = pfield.np
     n == 0 && return nothing
 
@@ -832,8 +832,8 @@ since `J_INDEX` isn't contiguous-from-1 the way the U/J/X/Gamma/sigma block
 is -- keeps the kernel body itself free of magic numbers beyond X/Gamma/sigma
 (rows 1:7, same layout as gpu_direct!/gpu_zeta_direct!).
 """
-function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,<:CuArray}
-                                  ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation}
+function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT}
+                                  ) where {R,F<:FLOWVPM.Formulation,V<:FLOWVPM.ViscousScheme,TUinf,S<:FLOWVPM.SubFilterScale,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
     n = pfield.np
     n == 0 && return nothing
 

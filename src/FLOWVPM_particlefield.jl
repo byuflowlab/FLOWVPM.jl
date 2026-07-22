@@ -488,16 +488,30 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    zeroVal = zero(eltype(pfield.particles))
-    if pfield.np > MIN_MT_NP
-        Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+    if pfield.particles isa Array
+        zeroVal = zero(eltype(pfield.particles))
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+            end
+        else
+            for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+            end
         end
     else
-        for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
-        end
+        _reset_particles_broadcast!(pfield)
     end
+end
+
+function _reset_particles_broadcast!(pfield::ParticleField)
+    np = pfield.np
+    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+    view(pfield.particles, U_INDEX, 1:np) .*= is_static
+    view(pfield.particles, VORTICITY_INDEX, 1:np) .*= is_static
+    view(pfield.particles, J_INDEX, 1:np) .*= is_static
+    view(pfield.particles, PSE_INDEX, 1:np) .*= is_static
+    return nothing
 end
 
 function _reset_particle(particle)
@@ -516,15 +530,21 @@ function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfie
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    zeroVal = zero(eltype(pfield.particles))
-    if pfield.np > MIN_MT_NP
-        Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+    if pfield.particles isa Array
+        zeroVal = zero(eltype(pfield.particles))
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+            end
+        else
+            for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+            end
         end
     else
-        for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
-        end
+        np = pfield.np
+        is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+        view(pfield.particles, SFS_INDEX, 1:np) .*= is_static
     end
 end
 
