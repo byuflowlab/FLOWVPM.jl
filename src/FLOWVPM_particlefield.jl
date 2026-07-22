@@ -188,15 +188,51 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     # Add particle to the field
     pfield.np += 1
 
-    # Populate the empty particle
-    set_X(pfield, i_next, X)
-    set_Gamma(pfield, i_next, Gamma)
-    set_sigma(pfield, i_next, sigma)
-    set_vol(pfield, i_next, vol)
-    set_circulation(pfield, i_next, circulation)
-    set_C(pfield, i_next, C)
-    set_static(pfield, i_next, Float64(static))
+    if pfield.particles isa Array
+        # Populate the empty particle
+        set_X(pfield, i_next, X)
+        set_Gamma(pfield, i_next, Gamma)
+        set_sigma(pfield, i_next, sigma)
+        set_vol(pfield, i_next, vol)
+        set_circulation(pfield, i_next, circulation)
+        set_C(pfield, i_next, C)
+        set_static(pfield, i_next, Float64(static))
+    else
+        _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C, static)
+    end
 
+    return nothing
+end
+
+"""
+    `_add_particle_broadcast!(pfield, i, X, Gamma, sigma, vol, circulation, C, static)`
+
+GPU-safe particle population used by `add_particle` when `pfield.particles`
+is not a plain `Array` (e.g. `CuArray`). Two separate CUDA.jl restrictions
+apply here, not just one:
+  1. The scalar per-field setters (`set_sigma`, `set_vol`, `set_circulation`,
+     `set_static`) assign into a single (row, column) index, which is
+     disallowed scalar indexing on a `CuArray`. Indexing with a length-1
+     range instead of a bare `Int` keeps every write a proper
+     (kernel-dispatched) array broadcast.
+  2. Broadcasting a host `Vector` (e.g. `X`/`Gamma`, as built by every caller
+     in this codebase) directly onto a `CuArray` destination fails to
+     compile ("passing non-bitstype argument") because a heap-allocated
+     `Vector` isn't a valid GPU kernel argument. Converting it to a `Tuple`
+     first (an immutable, stack-allocated bitstype) fixes this.
+"""
+_add_particle_gpu_bcast_val(v::AbstractArray) = Tuple(v)
+_add_particle_gpu_bcast_val(v) = v
+
+function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma,
+                                                    vol, circulation, C, static)
+    view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X)
+    view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma)
+    view(pfield.particles, SIGMA_INDEX:SIGMA_INDEX, i) .= sigma
+    view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= vol
+    view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= circulation
+    view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C)
+    view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= Float64(static)
     return nothing
 end
 
