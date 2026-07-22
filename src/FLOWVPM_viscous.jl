@@ -627,15 +627,60 @@ particle-to-particle interactions, saving the results under P.J[1:3].
 """
 function zeta_direct(pfield)
     if pfield.particles isa Array
-        for P in iterator(pfield; include_static=true)
-            get_J(P)[1:3] .= 0
+        if Threads.nthreads() > 1
+            return zeta_direct_multithreaded(pfield)
+        else
+            return zeta_direct_singlethreaded(pfield)
         end
-        return zeta_direct( iterator(pfield; include_static=true),
-                            iterator(pfield; include_static=true),
-                            pfield.kernel.zeta)
     else
         return gpu_zeta_direct!(pfield)
     end
+end
+
+function zeta_direct_singlethreaded(pfield)
+    for P in iterator(pfield; include_static=true)
+        get_J(P)[1:3] .= 0
+    end
+    return zeta_direct( iterator(pfield; include_static=true),
+                        iterator(pfield; include_static=true),
+                        pfield.kernel.zeta)
+end
+
+function zeta_direct_multithreaded(pfield)
+    np = pfield.np
+    for i in 1:np
+        get_J(pfield, i)[1:3] .= 0
+    end
+
+    n_per_thread, rem = divrem(np, Threads.nthreads())
+    n = n_per_thread + (rem > 0)
+    assignments = 1:n:np
+    zeta = pfield.kernel.zeta
+
+    Threads.@threads for i_assignment in eachindex(assignments)
+        start_idx = assignments[i_assignment]
+        end_idx = min(start_idx + n - 1, np)
+
+        for i_target in start_idx:end_idx
+            Pi = get_particle(pfield, i_target)
+
+            for i_source in 1:np
+                Pj = get_particle(pfield, i_source)
+
+                dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+                dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+                dX3 = get_X(Pi)[3] - get_X(Pj)[3]
+                r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+                zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
+
+                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+            end
+        end
+    end
+    return nothing
 end
 
 function zeta_direct(sources, targets, zeta::Function)
