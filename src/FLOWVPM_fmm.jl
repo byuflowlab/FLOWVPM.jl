@@ -87,10 +87,16 @@ function fmm.has_vector_potential(system::ParticleField)
     return true
 end
 
-function fmm.get_previous_influence(system::ParticleField, i)
-    prev_potential = zero(eltype(system))
-    gx, gy, gz = get_U(system, i)
-    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+fmm.metadata_per_body(system::ParticleField) = 2
+fmm.previous_potential_metadata_index(system::ParticleField) = 1
+fmm.previous_gradient_metadata_index(system::ParticleField) = 2
+
+function fmm.metadata_to_buffer!(buffer, switch, i_buffer, system::ParticleField, i_body)
+    previous_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i_body)
+    previous_gradient = sqrt(gx*gx + gy*gy + gz*gz)
+    buffer[fmm.metadata_index(switch, 1), i_buffer] = previous_potential
+    buffer[fmm.metadata_index(switch, 2), i_buffer] = previous_gradient
 end
 
 fmm.get_n_bodies(system::ParticleField) = system.np
@@ -134,7 +140,12 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     Uz = g_sgm * crss3
 
                     val = SVector{3}(Ux, Uy, Uz)
-                    fmm.set_gradient!(target_buffer, j_target, val)
+                    # switch-aware setter: the bare 3-arg form hardcodes buffer rows
+                    # 5:7, which is only correct when the target has PS=true and no
+                    # metadata rows. Since ParticleField now declares
+                    # metadata_per_body = 2, the real gradient range is
+                    # gradient_range(switch), not 5:7.
+                    fmm.set_gradient!(target_buffer, derivatives_switch, j_target, val)
                 end
 
                 if GS
@@ -158,7 +169,8 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du3x3 = aux * crss3 * dz
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
-                    fmm.set_hessian!(target_buffer, j_target, val)
+                    # switch-aware setter -- see the comment on set_gradient! above
+                    fmm.set_hessian!(target_buffer, derivatives_switch, j_target, val)
                 end
             end
         end
@@ -167,11 +179,18 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
     return nothing
 end
 
-function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
-    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
-    j = fmm.get_hessian(target_buffer, i_buffer)
-    for i = 1:9
-        target_system.particles[J_INDEX[i], i_target] += j[i]
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, target_buffer, i_buffer) where {PS,VS,GS}
+    # switch-aware getters -- see the comment on set_gradient! in direct! above. The
+    # bare 2-arg forms read hardcoded rows 5:7 / 8:16, which no longer match the
+    # buffer layout now that ParticleField declares metadata_per_body = 2.
+    if VS
+        @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, derivatives_switch, i_buffer)
+    end
+    if GS
+        j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
+        for i = 1:9
+            target_system.particles[J_INDEX[i], i_target] += j[i]
+        end
     end
 end
 
