@@ -273,16 +273,20 @@ function _merge_clusters_aggressive!(
         candidates_by_root[counts[root]] = i
     end
 
-    # Pass 3: for each root with count > 1, accumulate per-cluster sums on the
-    # stack and finalize the representative.
-    to_remove = ws.to_remove
-    empty!(to_remove)
-    sizehint!(to_remove, n_candidates)
-
+    # Pass 3: for each root with count > 1, accumulate per-cluster sums and
+    # finalize the representative. Each root's read set (its own members) and
+    # write target (its own representative) are disjoint from every other
+    # root's, since union-find partitions candidates into disjoint sets and a
+    # root's representative is always one of its own members -- so this is
+    # safe to run in parallel across roots.
+    merge_roots = ws.merge_roots
+    empty!(merge_roots)
     for r in roots
-        count = root_count[r]
-        count <= 1 && continue
+        root_count[r] > 1 && push!(merge_roots, r)
+    end
 
+    Threads.@threads for k in eachindex(merge_roots)
+        r = merge_roots[k]
         range_start = root_offset[r] + 1
         range_end = root_offset[r + 1]
         rep = representative[r]
@@ -290,8 +294,19 @@ function _merge_clusters_aggressive!(
         _accumulate_and_finalize_root!(
             pfield, candidates_by_root, range_start, range_end, rep,
         )
+    end
 
-        # Queue all members except the representative for removal.
+    # Queue all members except each root's representative for removal
+    # (cheap bookkeeping; kept serial to avoid racing on to_remove).
+    to_remove = ws.to_remove
+    empty!(to_remove)
+    sizehint!(to_remove, n_candidates)
+
+    for r in merge_roots
+        range_start = root_offset[r] + 1
+        range_end = root_offset[r + 1]
+        rep = representative[r]
+
         for k in range_start:range_end
             idx = candidates_by_root[k]
             idx == rep && continue

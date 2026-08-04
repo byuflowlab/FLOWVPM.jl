@@ -83,11 +83,12 @@ mutable struct MergingWorkspace
     root_offset::Vector{Int}
     candidates_by_root::Vector{Int}
     to_remove::Vector{Int}
+    merge_roots::Vector{Int}
 end
 
 MergingWorkspace() = MergingWorkspace(
     Int[], Int[], Int[], Int[], Int[], Int[], Int[],
-    Int[], Int[], Int[], Int[], Int[], Int[],
+    Int[], Int[], Int[], Int[], Int[], Int[], Int[],
 )
 
 ################################################################################
