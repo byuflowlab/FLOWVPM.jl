@@ -8,55 +8,6 @@
   * Created   : Aug 2020
 =###############################################################################
 
-# Cumulative per-phase wall-clock timers, allocation counts, and allocation
-# byte totals for profiling (UJ/FMM eval, SFS model, convection/stretching
-# update, viscous scheme, relaxation). Not reset automatically: callers
-# accumulate across however many steps they want, read
-# PERF_TIMES/PERF_ALLOC_COUNTS/PERF_ALLOC_BYTES, then call
-# reset_perf_times!() to start the next window. Set PERF_ENABLED[] = false to
-# skip all measurement overhead (an `if` check instead of a `@timed` call).
-const PERF_ENABLED = Ref(true)
-const PERF_TIMES = Dict{Symbol, Float64}(:UJ => 0.0, :SFS => 0.0,
-                                          :convection => 0.0, :viscous => 0.0,
-                                          :relaxation => 0.0)
-const PERF_ALLOC_COUNTS = Dict{Symbol, Int64}(:UJ => 0, :SFS => 0,
-                                               :convection => 0, :viscous => 0,
-                                               :relaxation => 0)
-const PERF_ALLOC_BYTES = Dict{Symbol, Int64}(:UJ => 0, :SFS => 0,
-                                              :convection => 0, :viscous => 0,
-                                              :relaxation => 0)
-
-function reset_perf_times!()
-    for k in keys(PERF_TIMES); PERF_TIMES[k] = 0.0; end
-    for k in keys(PERF_ALLOC_COUNTS); PERF_ALLOC_COUNTS[k] = 0; end
-    for k in keys(PERF_ALLOC_BYTES); PERF_ALLOC_BYTES[k] = 0; end
-end
-
-enable_perf_logging!() = (PERF_ENABLED[] = true)
-disable_perf_logging!() = (PERF_ENABLED[] = false)
-
-"""
-    @perftime!(key, expr)
-
-Evaluate `expr`, and if `PERF_ENABLED[]` accumulate its wall-clock time into
-`PERF_TIMES[key]`, its allocation count into `PERF_ALLOC_COUNTS[key]`, and its
-allocated bytes into `PERF_ALLOC_BYTES[key]`. Uses `@timed` so all three
-measurements share a single run of `expr` instead of running it three times.
-"""
-macro perftime!(key, expr)
-    return quote
-        if PERF_ENABLED[]
-            local stats = @timed $(esc(expr))
-            PERF_TIMES[$(esc(key))] += stats.time
-            PERF_ALLOC_COUNTS[$(esc(key))] += Base.gc_alloc_count(stats.gcstats)
-            PERF_ALLOC_BYTES[$(esc(key))] += stats.bytes
-            stats.value
-        else
-            $(esc(expr))
-        end
-    end
-end
-
 """
     euler(pfield::ParticleField, dt::Real; relax::Bool=false, custom_UJ=nothing)
 
@@ -262,49 +213,46 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
 
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
-        @perftime!(:SFS, pfield.SFS(pfield, BeforeUJ(); a=a, b=b))
-        @perftime!(:UJ, isnothing(custom_UJ) ?
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        isnothing(custom_UJ) ?
                         pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS)) :
-                        custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS)))
-        @perftime!(:SFS, pfield.SFS(pfield, AfterUJ(); a=a, b=b))
+                        custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
-        @perftime!(:convection, update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0))
+        update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)
 
         # Update the particle field: viscous diffusion
-        @perftime!(:viscous, viscousdiffusion(pfield, dt; aux1=a, aux2=b))
+        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
 
     end
 
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
-        @perftime!(:relaxation, begin
+        # Resets U and J from previous step
+        _reset_particles(pfield)
 
-            # Resets U and J from previous step
-            _reset_particles(pfield)
+        # Calculates interactions between particles: U and J
+        # NOTE: Technically we have to calculate J at the final location,
+        #       but in MyVPM I just used the J calculated in the last RK step
+        #       and it worked just fine. So maybe I perhaps I can save computation
+        #       by not calculating UJ again.
+        pfield.UJ(pfield)
 
-            # Calculates interactions between particles: U and J
-            # NOTE: Technically we have to calculate J at the final location,
-            #       but in MyVPM I just used the J calculated in the last RK step
-            #       and it worked just fine. So maybe I perhaps I can save computation
-            #       by not calculating UJ again.
-            pfield.UJ(pfield)
-
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
-                    end
-                end
-            else
-                for i in 1:pfield.np
-                    if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
-                    end
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
                 end
             end
-        end)
+        else
+            for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
+            end
+        end
     end
 
     return nothing
@@ -466,44 +414,41 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
 
         # Evaluate UJ, SFS, and C
-        @perftime!(:SFS, pfield.SFS(pfield, BeforeUJ(); a=a, b=b))
-        @perftime!(:UJ, isnothing(custom_UJ) ?
+        pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
+        isnothing(custom_UJ) ?
                         pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS)) :
-                        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS)))
-        @perftime!(:SFS, pfield.SFS(pfield, AfterUJ(); a=a, b=b))
+                        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+        pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
-        @perftime!(:convection, update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0))
+        update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)
 
         # Update the particle field: viscous diffusion
-        @perftime!(:viscous, viscousdiffusion(pfield, dt; aux1=a, aux2=b))
+        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
     end
 
     # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
-        @perftime!(:relaxation, begin
+        # Resets U and J from previous step
+        _reset_particles(pfield)
 
-            # Resets U and J from previous step
-            _reset_particles(pfield)
+        # Calculates interactions between particles: U and J
+        pfield.UJ(pfield)
 
-            # Calculates interactions between particles: U and J
-            pfield.UJ(pfield)
-
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
-                    end
-                end
-            else
-                for i in 1:pfield.np
-                    if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
-                    end
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
                 end
             end
-        end)
+        else
+            for i in 1:pfield.np
+                if pfield.particles[STATIC_INDEX,i] == 0
+                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                end
+            end
+        end
     end
 
     return nothing
