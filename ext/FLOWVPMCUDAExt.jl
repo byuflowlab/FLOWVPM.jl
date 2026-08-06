@@ -960,4 +960,21 @@ end
 
 end # FLOWVPM._FMM_HAS_RADIX
 
+# Load FastMultipole's CUDA radix lifecycle at extension-init time (top level,
+# before any user statement runs). Loading it lazily inside the evaluation
+# call chain does NOT work: `load_cuda_radix_lifecycle!()` runtime-includes the
+# CUDA methods into a NEWER world than the already-running frame, so the
+# `RadixFMMCache(device=true)` availability check in that same call chain still
+# dispatches to the old-world `cuda_radix_available() = false` fallback
+# (observed on H200, job 13060973). `load_cuda_radix_lifecycle!` catches its
+# own errors and returns false, so this cannot break `using CUDA` + FLOWVPM on
+# machines without a usable GPU; the lazy in-chain call in
+# `_build_radix_fmm_cache` remains as the loud-error path.
+function __init__()
+    if FLOWVPM._FMM_HAS_RADIX && CUDA.functional()
+        fmm.load_cuda_radix_lifecycle!()
+    end
+    return nothing
+end
+
 end # module FLOWVPMCUDAExt

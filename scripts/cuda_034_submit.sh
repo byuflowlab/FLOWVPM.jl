@@ -32,12 +32,26 @@ rsync -az --delete \
     "$FMLOCAL/MATRIX_OPERATOR_REFACTOR/scripts" \
     "$REMOTE:$FMDIR/MATRIX_OPERATOR_REFACTOR/"
 
+# local=true preferences for the three CUDA JLLs (the fm023env recipe;
+# Preferences.set_preferences! by name refuses unloaded indirect deps, so the
+# file is written directly)
+ssh "$REMOTE" 'mkdir -p fm034env && cat > fm034env/LocalPreferences.toml <<EOF
+[CUDA_Compiler_jll]
+local = "true"
+
+[CUDA_Driver_jll]
+local = "true"
+
+[CUDA_Runtime_jll]
+local = "true"
+EOF'
+
 # login-node env setup (compute nodes have no internet). Auto-precompile is
 # disabled: CUDA precompiles on the GPU node against the system toolkit
 # (login-node pkgimages are CPU-target specific and artifact fetches fail).
 ssh "$REMOTE" "bash -lc 'module load julia/1.11.7-6bmogfl \
   && export JULIA_PKG_PRECOMPILE_AUTO=0 \
-  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.add([\\\"CUDA\\\", \\\"Preferences\\\", \\\"Test\\\", \\\"Random\\\"]); import Preferences; for p in (\\\"CUDA_Runtime_jll\\\", \\\"CUDA_Compiler_jll\\\", \\\"CUDA_Driver_jll\\\"); Preferences.set_preferences!(p, \\\"local\\\" => \\\"true\\\"; force=true); end; Pkg.instantiate()\" \
+  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.add([\\\"CUDA\\\", \\\"Test\\\", \\\"Random\\\"]); Pkg.instantiate()\" \
   && cd $VPMDIR \
   && sbatch scripts/cuda_034_run.sh'"
 
