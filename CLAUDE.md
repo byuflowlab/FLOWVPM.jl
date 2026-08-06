@@ -140,8 +140,13 @@ Phase 1 physics was also measured and found to be within noise (<1%) at
 100k-1M particles — the O(N²) direct sum totally dominates at that scale, so
 this isn't worth pursuing further without an O(N) algorithm.
 
-**FMM + GPU (Phase 4): implemented 2026-08-06 (task 034) via FastMultipole's
-device-resident radix lifecycle; H200 validation pending.**
+**FMM + GPU (Phase 4): implemented and H200-validated 2026-08-06 (task 034,
+Done + approved) via FastMultipole's device-resident radix lifecycle.**
+H200 evidence: job 13061046 (all device test groups pass; cube 8.83e-4 /
+wake 2.13e-4 device velocity RMS; RK3 dynamic parity; 023 counter contract
+flat) and job 13061128 (sha256-checksummed 033 sampled-direct references:
+Float64 u_rel_rms cube 1.25e-4 at n=1e4 / 5.65e-4 at n=1e5, wake 2.27e-4 /
+4.79e-4 — all inside the 1e-3 gate).
 - `src/FLOWVPM_fmm_radix.jl` couples `ParticleField` to FastMultipole's
   `RadixFMMCache` (branch `matrix-ops`, task 032 interface): a
   `CuArray`-backed field is a `DeviceResident` system (bulk device
@@ -172,8 +177,8 @@ device-resident radix lifecycle; H200 validation pending.**
 - Tests: `test/runtests_gpu_fmm.jl` (CPU Part A always; device Part B in
   `runtests_gpu_fmm_device.jl`, gated on functional CUDA, hard-required
   under `FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1`). H200 job drafts:
-  `scripts/cuda_034_run.sh` / `scripts/cuda_034_submit.sh`. `UJ_fmm` on a
-  GPU-backed field has NOT yet run on real hardware.
+  `scripts/cuda_034_run.sh` / `scripts/cuda_034_submit.sh` (stage 4:
+  `scripts/cuda_034_refcheck.jl`, the checksummed 033-reference gate).
 
 ### Differentiability
 `FLOWVPM_rrules.jl` defines custom reverse-mode rules (ChainRules-style) but
