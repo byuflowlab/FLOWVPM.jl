@@ -103,18 +103,32 @@ function UJ_fmm(
 
     if rbf
         # calculate vorticity
+        (pfield.particles isa Array) || error(
+            "rbf/zeta evaluation via FMM is not supported for CuArray-backed " *
+            "particle fields; use zeta_direct instead")
         zeta_fmm(pfield)
+    elseif !(pfield.particles isa Array)
+        # GPU-backed particle field: device-resident radix FMM lifecycle
+        # (see src/FLOWVPM_fmm_radix.jl). This replaces the former
+        # `nearfield_device=true` legacy-path forwarding, whose generic
+        # FastMultipole fallback silently DROPPED the nearfield contribution
+        # (no override existed) — the legacy octree path below is now
+        # CPU-only by construction and any unsupported GPU configuration
+        # fails loudly inside UJ_fmm_gpu!.
+        # reset already performed above; sfs guarded inside UJ_fmm_gpu!
+        UJ_fmm_gpu!(pfield; reset=false, reset_sfs=false, sfs=sfs, rbf=false,
+                    verbose=verbose)
     else
         # Calculate FMM of vector potential
-        args = fmm.fmm!(pfield; 
-                        expansion_order=fmm_options.p-1, 
-                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit), 
-                        multipole_acceptance=fmm_options.theta, 
-                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(), 
+        args = fmm.fmm!(pfield;
+                        expansion_order=fmm_options.p-1,
+                        leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
+                        multipole_acceptance=fmm_options.theta,
+                        error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
                         tune=true,
                         shrink=fmm_options.shrink_recenter,
                         recenter=fmm_options.shrink_recenter,
-                        nearfield_device=!(pfield.particles isa Array),
+                        nearfield_device=false, # this branch is CPU-only (see above)
                         scalar_potential=false,
                         hessian=true,
                         silence_warnings=!verbose)

@@ -69,6 +69,7 @@ const sqr2 = sqrt(2)
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
                     "particlefield", "fmm",
+                    "fmm_radix",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
                     "monitors", "utils"]# , "rrules"]

@@ -891,4 +891,73 @@ function warmup_gpu(verbose=false; n=100)
     return
 end
 
+################################################################################
+# DEVICE-RESIDENT RADIX FMM HOOKS (task 034)
+#
+# Bulk device pack/unpack hooks for FastMultipole's device-resident radix
+# lifecycle (`src/FLOWVPM_fmm_radix.jl` holds the rest of the coupling: traits,
+# cache registry, recenter policy, `UJ_fmm_gpu!`). These two methods are the
+# only CUDA-typed pieces: they read/write the live prefix of the 46xN CuArray
+# particle matrix directly against FastMultipole's persistent device buffers,
+# so a full evaluation performs zero host/device body transfer (task 023
+# counter contract: body_uploads == 0, expansion_host_copies == 0).
+#
+# Guarded on the radix interface being present so the extension still loads
+# (direct-sum kernels only) against a registry FastMultipole.
+################################################################################
+
+if FLOWVPM._FMM_HAS_RADIX
+
+# Framework-owned persistent device source buffer, passed as an 8 x np view
+# (live prefix; identity sort index). Packed layout (integration-api-spec §3):
+#   rows 1:3  position            (X_INDEX)
+#   row  4    MAC/error radius    rho_sigma * sigma (autotuning off, so
+#                                 rho_sigma = pfield.fmm.default_rho_over_sigma
+#                                 — the host `source_system_to_buffer!` value)
+#   rows 5:7  vector strength     (GAMMA_INDEX)
+#   row  8    raw smoothing sigma (SIGMA_INDEX; read by RegularizedVortex)
+# Steady-state allocation-free: broadcasts into the existing buffer only.
+function fmm.source_to_buffer!(buf::CUDA.AnyCuArray,
+        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
+        sort_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
+    np = pfield.np
+    (first(sort_index) == 1 && last(sort_index) == np) || error(
+        "FLOWVPM device source_to_buffer! expects the identity sort index over " *
+        "the live particle prefix (got $(first(sort_index)):$(last(sort_index)) for np=$np)")
+    size(buf, 1) >= 8 && size(buf, 2) == np || error(
+        "unexpected device source buffer shape $(size(buf)) for np=$np")
+    P = pfield.particles
+    rho_sigma = R(pfield.fmm.default_rho_over_sigma)
+    view(buf, 1:3, :) .= view(P, FLOWVPM.X_INDEX, 1:np)
+    view(buf, 4, :) .= rho_sigma .* view(P, FLOWVPM.SIGMA_INDEX, 1:np)
+    view(buf, 5:7, :) .= view(P, FLOWVPM.GAMMA_INDEX, 1:np)
+    view(buf, 8, :) .= view(P, FLOWVPM.SIGMA_INDEX, 1:np)
+    return buf
+end
+
+# Framework-owned per-system device output buffer, switch-relative rows, in
+# global (unsorted) particle order. ACCUMULATE (.+=): FLOWVPM zeroes U/J via
+# `_reset_particles` at the top of each UJ evaluation and the framework
+# delivers the total influence of the evaluation (delivery semantics,
+# docs/src/device_interface.md). Accumulating into all live particles
+# (including static ones) matches the legacy `buffer_to_target_system!`.
+function fmm.buffer_to_target!(
+        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
+        buf::CUDA.AnyCuArray, derivatives_switch,
+        sort_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected device output buffer shape $(size(buf)) for np=$np")
+    P = pfield.particles
+    grange = fmm.gradient_range(derivatives_switch)
+    isempty(grange) ||
+        (view(P, FLOWVPM.U_INDEX, 1:np) .+= view(buf, grange, :))
+    hrange = fmm.hessian_range(derivatives_switch)
+    isempty(hrange) ||
+        (view(P, FLOWVPM.J_INDEX, 1:np) .+= view(buf, hrange, :))
+    return pfield
+end
+
+end # FLOWVPM._FMM_HAS_RADIX
+
 end # module FLOWVPMCUDAExt
