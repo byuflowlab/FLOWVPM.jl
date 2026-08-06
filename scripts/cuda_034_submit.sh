@@ -32,6 +32,13 @@ rsync -az --delete \
     "$FMLOCAL/MATRIX_OPERATOR_REFACTOR/scripts" \
     "$REMOTE:$FMDIR/MATRIX_OPERATOR_REFACTOR/"
 
+# 033 checksummed sampled-direct references + sha256 manifest (verified
+# remotely by cuda_034_run.sh stage 4 before the accuracy comparison)
+ssh "$REMOTE" "mkdir -p $FMDIR/MATRIX_OPERATOR_REFACTOR/data/flowvpm_baseline"
+rsync -az --delete \
+    "$FMLOCAL/MATRIX_OPERATOR_REFACTOR/data/flowvpm_baseline/references" \
+    "$REMOTE:$FMDIR/MATRIX_OPERATOR_REFACTOR/data/flowvpm_baseline/"
+
 # local=true preferences for the three CUDA JLLs (the fm023env recipe;
 # Preferences.set_preferences! by name refuses unloaded indirect deps, so the
 # file is written directly)
@@ -51,8 +58,8 @@ EOF'
 # (login-node pkgimages are CPU-target specific and artifact fetches fail).
 ssh "$REMOTE" "bash -lc 'module load julia/1.11.7-6bmogfl \
   && export JULIA_PKG_PRECOMPILE_AUTO=0 \
-  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.add([\\\"CUDA\\\", \\\"Test\\\", \\\"Random\\\"]); Pkg.instantiate()\" \
+  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.add([\\\"CUDA\\\", \\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\"]); Pkg.instantiate()\" \
   && cd $VPMDIR \
-  && sbatch scripts/cuda_034_run.sh'"
+  && sbatch --export=ALL,VPM034_REFCHECK_ONLY=${VPM034_REFCHECK_ONLY:-0} scripts/cuda_034_run.sh'"
 
 echo "Submitted. Poll with:  ssh orc 'squeue -u \$USER'"
