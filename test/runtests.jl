@@ -27,3 +27,10 @@ end
 if cuda_functional
     include("runtests_gpu.jl")
 end
+
+# Radix FMM coupling tests (task 034): Part A (host-resident transfer path)
+# runs on CPU whenever the installed FastMultipole provides the radix device
+# interface (self-skips with an @info otherwise); Part B (device-resident
+# lifecycle) self-gates on functional CUDA (or requires it under
+# FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1).
+include("runtests_gpu_fmm.jl")

@@ -140,24 +140,40 @@ Phase 1 physics was also measured and found to be within noise (<1%) at
 100k-1M particles — the O(N²) direct sum totally dominates at that scale, so
 this isn't worth pursuing further without an O(N) algorithm.
 
-**FMM + GPU (Phase 4) is NOT ready — picking this up when FastMultipole
-gets GPU support:**
-- `UJ_fmm` forwards `nearfield_device=!(pfield.particles isa Array)` to
-  `FastMultipole.fmm!` (fixed 2026-07-22 — previously read the vestigial
-  `useGPU` flag instead, which would silently stay `false` for a properly
-  `arraytype=CuArray`-built field).
-- `FastMultipole.nearfield_device!`'s generic (unoverloaded) fallback only
-  `@warn`s and computes nothing — it does **not** fall back to CPU nearfield.
-  Until FastMultipole has a real override for FLOWVPM's particle system,
-  setting `nearfield_device=true` would silently *drop* the nearfield
-  contribution (wrong physics, no error) rather than fail loudly. Confirm
-  with whoever owns that work before flipping this on for real use.
-- FastMultipole's octree construction (`src/tree.jl`) is written against
-  plain host arrays throughout (per-particle scalar indexing) — this needs
-  separate GPU-aware work in FastMultipole before a `CuArray`-backed system
-  can even reach tree-building, let alone nearfield dispatch.
-- `UJ_fmm` on a GPU-backed field has never been run end-to-end — only the
-  no-FMM direct-sum path above has real hardware validation.
+**FMM + GPU (Phase 4): implemented 2026-08-06 (task 034) via FastMultipole's
+device-resident radix lifecycle; H200 validation pending.**
+- `src/FLOWVPM_fmm_radix.jl` couples `ParticleField` to FastMultipole's
+  `RadixFMMCache` (branch `matrix-ops`, task 032 interface): a
+  `CuArray`-backed field is a `DeviceResident` system (bulk device
+  pack/unpack hooks live in `ext/FLOWVPMCUDAExt.jl`; zero per-step
+  host/device body transfer), a `Matrix`-backed field can use the same
+  machinery through the transfer-based host path (exercised by the CPU
+  tests). One cache is built lazily at first use, sized to
+  `pfield.maxparticles`, reused across all RK3 substeps/steps; when the
+  field outgrows its derived domain box the coupling calls
+  `FastMultipole.recenter!` once and retries (user-fixed bounds error
+  instead). Only `gaussianerf` is supported; FMM autotuning flags must be
+  off; `rbf`/`sfs` on this path fail loudly. Overrides:
+  `FLOWVPM.radix_fmm_settings!` (internal, not exported).
+- The old `nearfield_device` hazard (the generic
+  `FastMultipole.nearfield_device!` fallback silently DROPPED the nearfield)
+  is unreachable: `UJ_fmm` routes GPU-backed fields to `UJ_fmm_gpu!` and the
+  legacy octree call is CPU-only with `nearfield_device=false` hardwired.
+- The coupling is a no-op (loud error stub) when the installed FastMultipole
+  lacks the radix interface (`FLOWVPM._FMM_HAS_RADIX == false`) — registry
+  releases still load. NOTE the branch's `UJ_fmm` legacy call itself already
+  requires an unreleased FastMultipole (`shrink`/`recenter` kwargs; registry
+  max is 2.0.4), so `gpu-full` is effectively pinned to dev FastMultipole.
+- FastMultipole `matrix-ops` target buffers are SWITCH-RELATIVE; FLOWVPM's
+  `fmm.direct!`/`buffer_to_target_system!` hooks pick fixed vs switch-aware
+  accessors at load time (`_fmm_get_gradient` shims in `FLOWVPM_fmm.jl`) —
+  using fixed rows against matrix-ops was silently corrupting U/J (row
+  shift + out-of-buffer `@inbounds` write).
+- Tests: `test/runtests_gpu_fmm.jl` (CPU Part A always; device Part B in
+  `runtests_gpu_fmm_device.jl`, gated on functional CUDA, hard-required
+  under `FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1`). H200 job drafts:
+  `scripts/cuda_034_run.sh` / `scripts/cuda_034_submit.sh`. `UJ_fmm` on a
+  GPU-backed field has NOT yet run on real hardware.
 
 ### Differentiability
 `FLOWVPM_rrules.jl` defines custom reverse-mode rules (ChainRules-style) but
