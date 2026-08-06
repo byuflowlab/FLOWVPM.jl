@@ -59,6 +59,28 @@ end
 #     return one(σ)
 # end
 
+# ------------------------------------------------------------------------------
+# Target-buffer layout shims. Registry FastMultipole 2.0.x uses a FIXED target
+# buffer layout (potential row 4, gradient 5:7, hessian 8:16, always present);
+# FastMultipole matrix-ops (>= 2.3) uses SWITCH-RELATIVE buffers (rows depend
+# on the DerivativesSwitch, e.g. scalar_potential=false shifts gradient to 4:6
+# and hessian to 7:15) with switch-aware accessors. Using the fixed accessors
+# against switch-relative buffers reads/writes off-by-one rows (and
+# set_hessian!'s fixed row 16 lands OUT OF a 15-row buffer, silently corrupting
+# the next column under @inbounds), so pick the accessor family at load time.
+# ------------------------------------------------------------------------------
+if isdefined(fmm, :gradient_range)   # matrix-ops: switch-relative buffers
+    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, switch, i)
+    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, switch, i)
+    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, switch, i, val)
+    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, switch, i, val)
+else                                  # registry 2.0.x: fixed 16-row layout
+    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, i)
+    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, i)
+    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, i, val)
+    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, i, val)
+end
+
 function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
@@ -87,10 +109,18 @@ function fmm.has_vector_potential(system::ParticleField)
     return true
 end
 
-function fmm.get_previous_influence(system::ParticleField, i)
-    prev_potential = zero(eltype(system))
-    gx, gy, gz = get_U(system, i)
-    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+# `get_previous_influence` exists on registry FastMultipole 2.0-2.2 (legacy
+# dynamic-P error estimation); FastMultipole matrix-ops (>= 2.3) replaced it
+# with buffer metadata rows (`previous_*_metadata_index`), so guard the
+# overload to stay loadable against both. On matrix-ops the legacy octree path
+# falls back to its conservative no-previous-influence estimate (the radix/GPU
+# path never used this hook).
+if isdefined(fmm, :get_previous_influence)
+    function fmm.get_previous_influence(system::ParticleField, i)
+        prev_potential = zero(eltype(system))
+        gx, gy, gz = get_U(system, i)
+        return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+    end
 end
 
 fmm.get_n_bodies(system::ParticleField) = system.np
@@ -134,7 +164,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     Uz = g_sgm * crss3
 
                     val = SVector{3}(Ux, Uy, Uz)
-                    fmm.set_gradient!(target_buffer, j_target, val)
+                    _fmm_set_gradient!(target_buffer, derivatives_switch, j_target, val)
                 end
 
                 if GS
@@ -158,7 +188,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                     du3x3 = aux * crss3 * dz
 
                     val = SMatrix{3,3}(du1x1, du2x1, du3x1, du1x2, du2x2, du3x2, du1x3, du2x3, du3x3)
-                    fmm.set_hessian!(target_buffer, j_target, val)
+                    _fmm_set_hessian!(target_buffer, derivatives_switch, j_target, val)
                 end
             end
         end
@@ -168,8 +198,8 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
 end
 
 function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer, i_buffer)
-    @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, i_buffer)
-    j = fmm.get_hessian(target_buffer, i_buffer)
+    @views target_system.particles[U_INDEX, i_target] .+= _fmm_get_gradient(target_buffer, derivatives_switch, i_buffer)
+    j = _fmm_get_hessian(target_buffer, derivatives_switch, i_buffer)
     for i = 1:9
         target_system.particles[J_INDEX[i], i_target] += j[i]
     end
