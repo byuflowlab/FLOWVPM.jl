@@ -9,6 +9,31 @@
 =###############################################################################
 
 """
+    _reset_M_storage!(pfield)
+
+Zero the per-particle `M` storage rows (the RK3 low-storage state) of every
+non-static particle. CPU (`Array`-backed particles): the original scalar loop,
+unchanged. GPU (any other backing store): scalar indexing is disallowed on a
+`CuArray`, so the (0/1) static-mask broadcast is used instead — same pattern
+as `_reset_particles_broadcast!`.
+"""
+function _reset_M_storage!(pfield::ParticleField)
+    zeroR = zero(eltype(pfield.particles))
+    if pfield.particles isa Array
+        for i in 1:pfield.np
+            if pfield.particles[STATIC_INDEX, i] == 0
+                pfield.particles[M_INDEX, i] .= zeroR
+            end
+        end
+    else
+        np = pfield.np
+        is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+        view(pfield.particles, M_INDEX, 1:np) .*= is_static
+    end
+    return nothing
+end
+
+"""
     euler(pfield::ParticleField, dt::Real; relax::Bool=false, custom_UJ=nothing)
 
 Convects the `pfield` by timestep `dt` using a forward Euler step.
@@ -317,12 +342,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
     zeta0::R = pfield.kernel.zeta(0)
 
     # Reset storage memory to zero
-    zeroR::R = zero(R)
-    for i in 1:pfield.np
-        if pfield.particles[STATIC_INDEX,i] == 0
-            pfield.particles[M_INDEX,i] .= zeroR
-        end
-    end
+    _reset_M_storage!(pfield)
 
     # Runge-Kutta inner steps
     for (a,b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
@@ -535,12 +555,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
 
     # Reset storage memory to zero
-    zeroR::R = zero(R)
-    for i in 1:pfield.np
-        if pfield.particles[STATIC_INDEX,i] == 0
-            pfield.particles[M_INDEX,i] .= zeroR
-        end
-    end
+    _reset_M_storage!(pfield)
 
     # Runge-Kutta inner steps
     for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
