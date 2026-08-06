@@ -50,6 +50,15 @@ end
                counters.influence_downloads) == base
         @info "device radix FMM [$case n=$n $R] steady-state device alloc (bytes)" alloc
 
+        # coarse warm solve wall time — order-of-magnitude sanity for the 035
+        # campaign only, NOT a benchmark (unoptimized settings, single sample)
+        CUDA.synchronize()
+        t_solve = @elapsed begin
+            vpm_fmm.UJ_fmm(gpu)
+            CUDA.synchronize()
+        end
+        @info "device radix FMM [$case n=$n $R] warm U/J solve wall time (s), sanity only" t_solve
+
         # varying live count below capacity, same cache
         gpu.np -= 100
         gpu_ref.np -= 100

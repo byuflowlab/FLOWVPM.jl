@@ -5,21 +5,24 @@
 #SBATCH --mem=128G
 #SBATCH --time=02:00:00
 #SBATCH --output=%x-%j.out
-# Task 034 H200 validation job (DRAFT — cluster submission owned by the GPU
-# queue; do not submit without authorization). Pattern: cuda_032_run.sh.
+# Task 034 H200 validation job. Pattern: cuda_032_run.sh.
 #
-#   1. preflight: FLOWVPM direct-sum GPU regression (test/runtests_gpu.jl) —
+#   1. preflight: FastMultipole CUDA device-interface tests
+#      (test/cuda_radix_interface_test.jl, hard-required via
+#      FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1) — the 032 surface the coupling sits on;
+#   2. preflight: FLOWVPM direct-sum GPU regression (test/runtests_gpu.jl) —
 #      the validated kernels used as the on-device reference below;
-#   2. task 034 radix FMM coupling tests (test/runtests_gpu_fmm.jl):
+#   3. task 034 radix FMM coupling tests (test/runtests_gpu_fmm.jl):
 #      Part A (host-resident transfer coupling, CPU) and Part B (device-
 #      resident lifecycle: static U/J vs direct on cube+wake, Float64+Float32,
-#      023 counter contract, capacity/varying-np, multi-step RK3 dynamic run)
-#      under FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1 (hard-fails if CUDA is absent).
+#      023 counter contract, allocation probe, capacity/varying-np, multi-step
+#      RK3 dynamic run, coarse solve-time sanity print).
 #
-# Environment: $VPM034_ENV must have FLOWVPM (branch gpu-full) and
-# FastMultipole (branch matrix-ops) Pkg.develop'ed plus CUDA added — the
-# fm023env local-toolkit pattern (compute nodes have no internet; instantiate
-# on the login node, see cuda_034_submit.sh).
+# Environment: $VPM034_ENV (default ~/fm034env, task-034-owned — NOT the
+# shared fm023env) has FLOWVPM (~/FLOWVPM-034, branch gpu-full) and
+# FastMultipole (~/FastMultipole-034, branch matrix-ops) Pkg.develop'ed plus
+# CUDA with local-toolkit JLL preferences (compute nodes have no internet;
+# instantiate on the login node, see cuda_034_submit.sh).
 # no -u: /etc/profile.d scripts reference unset vars on the cluster
 set -eo pipefail
 source /etc/profile
@@ -31,13 +34,18 @@ nvidia-smi -L
 echo "CUDA_HOME=${CUDA_HOME:-unset}"
 
 WORKDIR="${VPM034_DIR:-$HOME/FLOWVPM-034}"
-ENVDIR="${VPM034_ENV:-$HOME/fm023env}"
-cd "$WORKDIR"
+FMDIR="${VPM034_FMDIR:-$HOME/FastMultipole-034}"
+ENVDIR="${VPM034_ENV:-$HOME/fm034env}"
 
 export FASTMULTIPOLE_FORCE_CUDA_LOAD=1
 export FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1
 export JULIA_NUM_THREADS=8
 
+echo "=== preflight: FastMultipole CUDA interface tests (032 surface) ==="
+cd "$FMDIR"
+julia --project="$ENVDIR" test/cuda_radix_interface_test.jl
+
+cd "$WORKDIR"
 echo "=== preflight: FLOWVPM direct-sum GPU regression (runtests_gpu.jl) ==="
 julia --project="$ENVDIR" -e 'using Test; import FLOWVPM, CUDA
 CUDA.functional() || error("CUDA not functional on this node")
