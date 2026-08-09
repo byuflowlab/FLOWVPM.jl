@@ -21,7 +21,7 @@ WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [compat]
 BSON = "0.3"
-DataStructures = "0.18"
+DataStructures = "0.18, 0.19"
 EllipticFunctions = "2"
 FastMultipole = "2"
 HCubature = "1"
