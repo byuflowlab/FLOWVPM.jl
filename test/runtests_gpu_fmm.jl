@@ -171,6 +171,47 @@ else
     end
 end
 
+@testset "radix FMM coupling: task-035 tuning settings (host path)" begin
+    # The RadixFMMSettings tuning surface (task 035): nearfield-kernel and M2L
+    # strategy selection must produce the same gate-passing answer as the
+    # defaults. p = 4 throughout (P = 4 standing test rule).
+    n = 1500
+    ref = fmm034_build("wake", n; UJ=vpm_fmm.UJ_direct)
+    vpm_fmm.UJ_direct(ref)
+    for (kernel, strategy) in ((:partitioned, :concat),
+                               (:partitioned, :precomputed_y),
+                               (:regularized, :dense))
+        pfield = fmm034_build("wake", n)
+        FLOWVPM.radix_fmm_settings!(pfield;
+            direct_kernel=kernel, m2l_strategy=strategy)
+        vpm_fmm.UJ_fmm_gpu!(pfield)
+        err = fmm034_uj_errors(pfield.particles, ref.particles, n)
+        @info "035 settings [$kernel + $strategy]" err.u_rel_rms err.j_rel_rms
+        @test err.u_rel_rms <= FMM034_U_GATE
+        @test err.j_rel_rms < 1e-1
+    end
+    # rho_t override reaches the constructed kernel; shipped defaults differ
+    # per kernel (4.789 regularized-everywhere, 4.252 split)
+    s = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned)
+    @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 4.252
+    s2 = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_t=4.789)
+    @test FLOWVPM._radix_direct_kernel(s2).rho_t ≈ 4.789
+    @test FLOWVPM._radix_direct_kernel(FLOWVPM.RadixFMMSettings()) isa
+        FLOWVPM.fmm.RegularizedVortex
+    # invalid selections fail loudly
+    @test_throws ErrorException FLOWVPM._radix_direct_kernel(
+        FLOWVPM.RadixFMMSettings(; direct_kernel=:nope))
+    @test_throws ErrorException FLOWVPM._radix_m2l_strategy(
+        FLOWVPM.RadixFMMSettings(; m2l_strategy=:nope))
+    # an explicit uniform level schedule matching near_radius2 is accepted
+    pfield = fmm034_build("wake", n)
+    FLOWVPM.radix_fmm_settings!(pfield; ell=3, near_radius2=16,
+        level_radii2=(16, 16))
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    err = fmm034_uj_errors(pfield.particles, ref.particles, n)
+    @test err.u_rel_rms <= FMM034_U_GATE
+end
+
 @testset "radix FMM coupling: automatic recenter" begin
     n = 1500
     pfield = fmm034_build("wake", n)

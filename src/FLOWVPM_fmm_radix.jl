@@ -51,16 +51,51 @@ fmm.body_type(::ParticleField) = fmm.Point{fmm.Vortex}
 fmm.residency(pfield::ParticleField) =
     pfield.particles isa Array ? fmm.HostResident() : fmm.DeviceResident()
 
-# Nearfield kernel: regularized-everywhere gaussianerf Biot-Savart with the
-# raw smoothing radius sigma in packed extra-state row 8 (the same row the
-# legacy `source_system_to_buffer!` writes). Row 4 stays the inflated
+# Nearfield kernel: gaussianerf Biot-Savart with the raw smoothing radius
+# sigma in packed extra-state row 8 (the same row the legacy
+# `source_system_to_buffer!` writes). Row 4 stays the inflated
 # rho_sigma*sigma MAC radius, distinct from sigma by convention.
+# The kernel strategy is selectable through `RadixFMMSettings.direct_kernel`
+# (task 035 tuning surface); the default remains the regularized-everywhere
+# `RegularizedVortex` shipped by task 034.
 function fmm.direct_kernel(pfield::ParticleField)
     is_gaussianerf(pfield.kernel) || error(
         "the radix/GPU FMM path supports only the `gaussianerf` kernel " *
         "(FLOWVPM default; sole CoreSpreading-compatible kernel). " *
         "Got a different `pfield.kernel`.")
-    return fmm.RegularizedVortex(; sigma_row=8)
+    settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
+    return _radix_direct_kernel(settings)
+end
+
+"Resolve the FastMultipole nearfield direct-kernel functor from settings."
+function _radix_direct_kernel(settings)
+    sym = settings.direct_kernel
+    rho_t = settings.rho_t
+    if sym === :regularized
+        return rho_t === nothing ? fmm.RegularizedVortex(; sigma_row=8) :
+            fmm.RegularizedVortex(; sigma_row=8, rho_t)
+    elseif sym === :partitioned
+        return rho_t === nothing ? fmm.PartitionedVortex(; sigma_row=8) :
+            fmm.PartitionedVortex(; sigma_row=8, rho_t)
+    elseif sym === :twopass
+        return rho_t === nothing ? fmm.TwoPassVortex(; sigma_row=8) :
+            fmm.TwoPassVortex(; sigma_row=8, rho_t)
+    end
+    error("RadixFMMSettings.direct_kernel must be :regularized, :partitioned, " *
+        "or :twopass; got $(repr(sym))")
+end
+
+"Resolve the (m2l_strategy, operator) pair from settings (task 035)."
+function _radix_m2l_strategy(settings)
+    sym = settings.m2l_strategy
+    sym === :concat &&
+        return (fmm.ConcatenatedFixedZM2L(), fmm.MaterializedYRotationM2L())
+    sym === :dense &&
+        return (fmm.DenseTranslationM2L(), fmm.MaterializedYRotationM2L())
+    sym === :precomputed_y &&
+        return (fmm.PrecomputedFactoredYM2L(), fmm.FactoredRotationM2L())
+    error("RadixFMMSettings.m2l_strategy must be :concat, :dense, or " *
+        ":precomputed_y; got $(repr(sym))")
 end
 
 ################################################################################
@@ -87,6 +122,17 @@ to automatic derivation:
   box is treated as user-owned: out-of-box particles error instead of
   triggering an automatic recenter.
 - `precision`: lifecycle float type; defaults to `eltype(pfield)`.
+- `direct_kernel`: nearfield strategy `:regularized` (default; the
+  regularized-everywhere `RegularizedVortex`), `:partitioned`
+  (`PartitionedVortex`, FastMultipole's measured 032a winner), or `:twopass`
+  (`TwoPassVortex`).
+- `rho_t`: override the nearfield kernel's smoothing-cutoff radius (defaults
+  to each kernel's shipped constructor default).
+- `m2l_strategy`: `:concat` (default, `ConcatenatedFixedZM2L`), `:dense`
+  (`DenseTranslationM2L`), or `:precomputed_y` (`PrecomputedFactoredYM2L`).
+- `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
+  non-increasing, ending at `near_radius2`); `nothing` = uniform
+  `near_radius2` at every level.
 """
 Base.@kwdef struct RadixFMMSettings
     expansion_order::Union{Nothing,Int} = nothing
@@ -96,6 +142,10 @@ Base.@kwdef struct RadixFMMSettings
     padding::Float64 = 0.1
     bounds::Union{Nothing,Tuple} = nothing
     precision::Union{Nothing,DataType} = nothing
+    direct_kernel::Symbol = :regularized
+    rho_t::Union{Nothing,Float64} = nothing
+    m2l_strategy::Symbol = :concat
+    level_radii2::Union{Nothing,Tuple} = nothing
 end
 
 # WeakKeyDicts so a discarded ParticleField releases its cache (and its GPU
@@ -183,17 +233,18 @@ function _radix_derive_bounds(pfield::ParticleField, padding::Real)
 end
 
 """
-    _radix_auto_ell(L, sigma_max, np, near_radius2) -> ell
+    _radix_auto_ell(L, sigma_max, np, near_radius2, rho_t) -> ell
 
 Deepest radix depth satisfying the near-set adequacy inequality
 `2^ell < g_min * L / (rho_t * sigma_max)` (strict), capped by an occupancy
-heuristic of about `n^(1/3)` cells per side. Errors (loudly, naming the
+heuristic of about `n^(1/3)` cells per side. `rho_t` is the selected
+nearfield kernel's smoothing-cutoff radius. Errors (loudly, naming the
 measured ratio) when no depth `>= 2` is admissible — the same geometric gate
 FastMultipole enforces at every regularized-kernel evaluation.
 """
-function _radix_auto_ell(L::Real, sigma_max::Real, np::Int, near_radius2::Int)
+function _radix_auto_ell(L::Real, sigma_max::Real, np::Int, near_radius2::Int,
+                         rho_t::Real)
     g_min = fmm._ball_stencil_min_gap(near_radius2)
-    rho_t = fmm.RegularizedVortex(; sigma_row=8).rho_t
     x = g_min * L / (rho_t * sigma_max)
     ell_adequacy = floor(Int, log2(x))
     2.0^ell_adequacy < x || (ell_adequacy -= 1)   # strict inequality
@@ -226,13 +277,15 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     P = settings.expansion_order === nothing ? pfield.fmm.p - 1 :
         settings.expansion_order
     q = settings.near_radius2
+    kernel_rho_t = Float64(_radix_direct_kernel(settings).rho_t)
     ell = settings.ell === nothing ?
-        _radix_auto_ell(bounds[2], sigma_max, pfield.np, q) : settings.ell
+        _radix_auto_ell(bounds[2], sigma_max, pfield.np, q, kernel_rho_t) :
+        settings.ell
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
-    opts = fmm.CUDARadixLifecycleOptions(; precision=TF,
-        m2l_strategy=fmm.ConcatenatedFixedZM2L())
+    m2l_strategy, operator = _radix_m2l_strategy(settings)
+    opts = fmm.CUDARadixLifecycleOptions(; precision=TF, operator, m2l_strategy)
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
     # (particles added/removed between steps) with no reallocation.
@@ -240,7 +293,8 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         expansion_order=P, ell,
         max_n_bodies=pfield.maxparticles,
         bounds=(SVector{3,TF}(bounds[1]), TF(bounds[2])),
-        hessian=true, near_radius2=q, window_classes=K,
+        hessian=true, near_radius2=q,
+        level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)
 end
 
