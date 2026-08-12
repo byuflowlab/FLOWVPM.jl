@@ -109,11 +109,14 @@ Per-`ParticleField` overrides for the radix FMM coupling. All fields default
 to automatic derivation:
 
 - `expansion_order`: defaults to `pfield.fmm.p - 1` (literature `P = p`).
-- `ell`: radix tree depth; defaults to the deepest depth passing both the
-  near-set adequacy inequality `g_min*h_leaf > rho_t*sigma_max` and an
-  occupancy cap `~n^(1/3)` cells per side.
-- `near_radius2`: direct-stencil ball radius squared (16 raises the minimum
-  M2L gap to sqrt(6), the task-032 accuracy-validated default).
+- `ell`: radix tree depth; defaults to the deepest depth passing the
+  margin-guarded near-set inequality
+  `g_min(q)*h_leaf >= accuracy_margin*rho_t*sigma_max` for some supported
+  leaf `q >= near_radius2`, capped by an occupancy heuristic of `~n^(1/3)`
+  cells per side (task 035 cycle 1 joint (ell, q) rule). Passing `ell`
+  explicitly uses `near_radius2` as the leaf radius verbatim.
+- `near_radius2`: leaf direct-stencil ball radius squared (floor for the
+  auto rule; 16 is the task-032 accuracy-validated default at P = 4).
 - `window_classes`: M2L window classes; `nothing` = 256 on device, framework
   default on host.
 - `padding`: per-face padding fraction applied to derived domain bounds
@@ -122,17 +125,26 @@ to automatic derivation:
   box is treated as user-owned: out-of-box particles error instead of
   triggering an automatic recenter.
 - `precision`: lifecycle float type; defaults to `eltype(pfield)`.
-- `direct_kernel`: nearfield strategy `:regularized` (default; the
-  regularized-everywhere `RegularizedVortex`), `:partitioned`
-  (`PartitionedVortex`, FastMultipole's measured 032a winner), or `:twopass`
+- `direct_kernel`: nearfield strategy `:partitioned` (default since task 035
+  cycle 1; `PartitionedVortex`, FastMultipole's user-approved 032a default
+  for sigma-carrying vortex systems), `:regularized` (the
+  regularized-everywhere `RegularizedVortex`), or `:twopass`
   (`TwoPassVortex`).
 - `rho_t`: override the nearfield kernel's smoothing-cutoff radius (defaults
   to each kernel's shipped constructor default).
-- `m2l_strategy`: `:concat` (default, `ConcatenatedFixedZM2L`), `:dense`
-  (`DenseTranslationM2L`), or `:precomputed_y` (`PrecomputedFactoredYM2L`).
+- `m2l_strategy`: `:dense` (default since task 035 cycle 1,
+  `DenseTranslationM2L` — FastMultipole's own measured auto rule at P <= 4;
+  the 035 sweep measured concat 1.6-2.8x slower at matched geometry),
+  `:concat` (`ConcatenatedFixedZM2L`), or `:precomputed_y`
+  (`PrecomputedFactoredYM2L`).
 - `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
-  non-increasing, ending at `near_radius2`); `nothing` = uniform
-  `near_radius2` at every level.
+  non-increasing, ending at the leaf radius); `nothing` = uniform.
+- `accuracy_margin`: multiplier on the kernel's `rho_t` in the auto-geometry
+  rule (task 035 cycle 1). The bare adequacy gate
+  (`g_min*h_leaf > rho_t*sigma_max`) is insufficient for the 1e-3 velocity
+  tolerance at the margin — the 035 sweep measured `x = g_min*h/sigma_max`
+  of `4.26` failing (1.17e-3) and `4.92` passing (9.3e-4) at n=1e5 — so
+  auto-depth selection requires `x >= accuracy_margin*rho_t`.
 """
 Base.@kwdef struct RadixFMMSettings
     expansion_order::Union{Nothing,Int} = nothing
@@ -142,10 +154,11 @@ Base.@kwdef struct RadixFMMSettings
     padding::Float64 = 0.1
     bounds::Union{Nothing,Tuple} = nothing
     precision::Union{Nothing,DataType} = nothing
-    direct_kernel::Symbol = :regularized
+    direct_kernel::Symbol = :partitioned
     rho_t::Union{Nothing,Float64} = nothing
-    m2l_strategy::Symbol = :concat
+    m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
+    accuracy_margin::Float64 = 1.15
 end
 
 # WeakKeyDicts so a discarded ParticleField releases its cache (and its GPU
@@ -233,28 +246,38 @@ function _radix_derive_bounds(pfield::ParticleField, padding::Real)
 end
 
 """
-    _radix_auto_ell(L, sigma_max, np, near_radius2, rho_t) -> ell
+    _radix_auto_geometry(L, sigma_max, np, q_floor, rho_t, margin) -> (ell, q)
 
-Deepest radix depth satisfying the near-set adequacy inequality
-`2^ell < g_min * L / (rho_t * sigma_max)` (strict), capped by an occupancy
-heuristic of about `n^(1/3)` cells per side. `rho_t` is the selected
-nearfield kernel's smoothing-cutoff radius. Errors (loudly, naming the
-measured ratio) when no depth `>= 2` is admissible — the same geometric gate
-FastMultipole enforces at every regularized-kernel evaluation.
+Task 035 cycle-1 joint depth/leaf-radius rule. Chooses the deepest radix
+depth `ell` for which some supported leaf near radius `q >= q_floor`
+satisfies the margin-guarded inequality
+`g_min(q) * h_leaf >= margin * rho_t * sigma_max` (`h_leaf = L / 2^ell`),
+capped by an occupancy heuristic of about `n^(1/3)` cells per side; at the
+chosen depth the smallest passing `q` (cheapest direct near set) is used.
+The margin buys regularization-deficit accuracy headroom over the bare
+adequacy gate FastMultipole enforces (`margin = 1` reproduces adequacy-only
+selection). Errors loudly when no depth `>= 2` is admissible.
 """
-function _radix_auto_ell(L::Real, sigma_max::Real, np::Int, near_radius2::Int,
-                         rho_t::Real)
-    g_min = fmm._ball_stencil_min_gap(near_radius2)
-    x = g_min * L / (rho_t * sigma_max)
-    ell_adequacy = floor(Int, log2(x))
-    2.0^ell_adequacy < x || (ell_adequacy -= 1)   # strict inequality
+function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
+                              rho_t::Real, margin::Real)
+    reach = margin * rho_t * sigma_max
+    qs = sort!([Int(q) for q in fmm._SUPPORTED_RIGID_NEAR_RADII2 if q >= q_floor])
+    isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
+        "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
+    gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
     ell_occupancy = max(2, floor(Int, log2(max(np, 8)) / 3))
-    ell = min(ell_adequacy, ell_occupancy)
-    ell >= 2 || error("no admissible radix depth (need ell >= 2): the " *
-        "near-set adequacy inequality requires 2^ell < g_min*L/(rho_t*sigma_max) " *
-        "= $x. Reduce the smoothing overlap, enlarge the domain box, or use " *
-        "more particles.")
-    return ell
+    for ell in ell_occupancy:-1:2
+        h = L / 2^ell
+        for q in qs
+            gaps[q] * h >= reach && return (ell, q)
+        end
+    end
+    error("no admissible radix depth (need ell >= 2): the margin-guarded " *
+        "near-set inequality requires g_min(q)*L/2^ell >= " *
+        "margin*rho_t*sigma_max = $reach, but even ell = 2 with the largest " *
+        "supported q >= $q_floor gives $(maximum(gaps[q] for q in qs) * L / 4). " *
+        "Reduce the smoothing overlap, enlarge the domain box, or use more " *
+        "particles.")
 end
 
 ################################################################################
@@ -276,11 +299,11 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     sigma_max = Float64(_radix_sigma_max(pfield))
     P = settings.expansion_order === nothing ? pfield.fmm.p - 1 :
         settings.expansion_order
-    q = settings.near_radius2
     kernel_rho_t = Float64(_radix_direct_kernel(settings).rho_t)
-    ell = settings.ell === nothing ?
-        _radix_auto_ell(bounds[2], sigma_max, pfield.np, q, kernel_rho_t) :
-        settings.ell
+    ell, q = settings.ell === nothing ?
+        _radix_auto_geometry(bounds[2], sigma_max, pfield.np,
+            settings.near_radius2, kernel_rho_t, settings.accuracy_margin) :
+        (settings.ell, settings.near_radius2)
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes

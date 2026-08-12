@@ -196,8 +196,20 @@ end
     @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 4.252
     s2 = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_t=4.789)
     @test FLOWVPM._radix_direct_kernel(s2).rho_t ≈ 4.789
-    @test FLOWVPM._radix_direct_kernel(FLOWVPM.RadixFMMSettings()) isa
-        FLOWVPM.fmm.RegularizedVortex
+    # cycle-1 shipped defaults (task 035, user-approved 2026-08-12):
+    # PartitionedVortex nearfield + DenseTranslationM2L + margin 1.15
+    sdef = FLOWVPM.RadixFMMSettings()
+    @test FLOWVPM._radix_direct_kernel(sdef) isa FLOWVPM.fmm.PartitionedVortex
+    @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.DenseTranslationM2L
+    @test sdef.accuracy_margin ≈ 1.15
+    # joint auto-geometry rule reproduces the measured 035 n=1e5 winners
+    # (cube (ell=4, q=17), wake (ell=5, q=16)) from the case sigma/L
+    sig_c = 2 * (1 / 1e5)^(1 / 3)
+    @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 16, 4.252, 1.15) ==
+        (4, 17)
+    sig_w = 2 * (3.927 / 1e5)^(1 / 3)
+    @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 16, 4.252, 1.15) ==
+        (5, 16)
     # invalid selections fail loudly
     @test_throws ErrorException FLOWVPM._radix_direct_kernel(
         FLOWVPM.RadixFMMSettings(; direct_kernel=:nope))
