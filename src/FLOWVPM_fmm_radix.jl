@@ -56,8 +56,8 @@ fmm.residency(pfield::ParticleField) =
 # `source_system_to_buffer!` writes). Row 4 stays the inflated
 # rho_sigma*sigma MAC radius, distinct from sigma by convention.
 # The kernel strategy is selectable through `RadixFMMSettings.direct_kernel`
-# (task 035 tuning surface); the default remains the regularized-everywhere
-# `RegularizedVortex` shipped by task 034.
+# (task 035 tuning surface); the shipped default is `PartitionedVortex` at
+# `rho_t = 3.668` (035 cycles 1 and 3).
 function fmm.direct_kernel(pfield::ParticleField)
     is_gaussianerf(pfield.kernel) || error(
         "the radix/GPU FMM path supports only the `gaussianerf` kernel " *
@@ -67,6 +67,16 @@ function fmm.direct_kernel(pfield::ParticleField)
     return _radix_direct_kernel(settings)
 end
 
+# Coupling default smoothing cutoff for the partitioned kernel (task 035
+# cycle 3, user-approved 2026-08-12): the 031a velocity-RMS-target cutoff.
+# This task's winner gate is sampled velocity RMS <= 1e-3 (Jacobian is
+# diagnostic), so the coupling defaults to rho_t = 3.668 rather than the
+# kernel constructor's Jacobian-RMS-derived 4.252. The cycle-3C error
+# decomposition validated it under the conservative sum gate
+# (||P-R|| + ||F-P||)/||R|| < 1e-3 at cube/wake, n = 1e5/1e6. Applies only
+# to :partitioned; :regularized/:twopass keep their constructor defaults.
+const _PARTITIONED_RHO_T_DEFAULT = 3.668
+
 "Resolve the FastMultipole nearfield direct-kernel functor from settings."
 function _radix_direct_kernel(settings)
     sym = settings.direct_kernel
@@ -75,8 +85,8 @@ function _radix_direct_kernel(settings)
         return rho_t === nothing ? fmm.RegularizedVortex(; sigma_row=8) :
             fmm.RegularizedVortex(; sigma_row=8, rho_t)
     elseif sym === :partitioned
-        return rho_t === nothing ? fmm.PartitionedVortex(; sigma_row=8) :
-            fmm.PartitionedVortex(; sigma_row=8, rho_t)
+        return fmm.PartitionedVortex(; sigma_row=8,
+            rho_t=something(rho_t, _PARTITIONED_RHO_T_DEFAULT))
     elseif sym === :twopass
         return rho_t === nothing ? fmm.TwoPassVortex(; sigma_row=8) :
             fmm.TwoPassVortex(; sigma_row=8, rho_t)
@@ -108,7 +118,12 @@ end
 Per-`ParticleField` overrides for the radix FMM coupling. All fields default
 to automatic derivation:
 
-- `expansion_order`: defaults to `pfield.fmm.p - 1` (literature `P = p`).
+- `expansion_order`: defaults to `4` (literature `P = 5`), the task-035
+  cycle-3 measured winner: paired with the smaller `rho_t = 3.668` direct
+  shell it is both faster (1.06-1.69x across cube/wake at n = 1e5/1e6) and
+  more accurate than the previous literature-P4 defaults. Pass
+  `expansion_order = nothing` to derive `pfield.fmm.p - 1` (literature
+  `P = p`) as before.
 - `ell`: radix tree depth; defaults to the deepest depth passing the
   margin-guarded near-set inequality
   `g_min(q)*h_leaf >= accuracy_margin*rho_t*sigma_max` for some supported
@@ -116,7 +131,10 @@ to automatic derivation:
   cells per side (task 035 cycle 1 joint (ell, q) rule). Passing `ell`
   explicitly uses `near_radius2` as the leaf radius verbatim.
 - `near_radius2`: leaf direct-stencil ball radius squared (floor for the
-  auto rule; 16 is the task-032 accuracy-validated default at P = 4).
+  auto rule; 6 is the smallest shell measured gate-passing at the
+  literature-P5 / `rho_t = 3.668` defaults — task 035 cycle 3. At the old
+  literature-P4 / `rho_t = 4.252` settings the validated floor was 16;
+  restore it when overriding those fields).
 - `window_classes`: M2L window classes; `nothing` = 256 on device, framework
   default on host.
 - `padding`: per-face padding fraction applied to derived domain bounds
@@ -130,8 +148,10 @@ to automatic derivation:
   for sigma-carrying vortex systems), `:regularized` (the
   regularized-everywhere `RegularizedVortex`), or `:twopass`
   (`TwoPassVortex`).
-- `rho_t`: override the nearfield kernel's smoothing-cutoff radius (defaults
-  to each kernel's shipped constructor default).
+- `rho_t`: override the nearfield kernel's smoothing-cutoff radius. For
+  `:partitioned` the coupling default is `3.668` (031a velocity-RMS cutoff;
+  task 035 cycle 3 — see `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and
+  `:twopass` default to their shipped constructor values.
 - `m2l_strategy`: `:dense` (default since task 035 cycle 1,
   `DenseTranslationM2L` — FastMultipole's own measured auto rule at P <= 4;
   the 035 sweep measured concat 1.6-2.8x slower at matched geometry),
@@ -144,12 +164,16 @@ to automatic derivation:
   (`g_min*h_leaf > rho_t*sigma_max`) is insufficient for the 1e-3 velocity
   tolerance at the margin — the 035 sweep measured `x = g_min*h/sigma_max`
   of `4.26` failing (1.17e-3) and `4.92` passing (9.3e-4) at n=1e5 — so
-  auto-depth selection requires `x >= accuracy_margin*rho_t`.
+  auto-depth selection requires `x >= accuracy_margin*rho_t`. The default
+  `1.03` is the center of the interval `[1.0, 1.061]` for which the rule
+  reproduces every measured cycle-3A P5 winner (cube `(4,12)`/`(5,12)`,
+  wake `(5,6)`/`(6,6)` at n = 1e5/1e6) at `rho_t = 3.668`; at the cycle-1
+  defaults (`rho_t = 4.252`, floor 16) the validated margin was `1.15`.
 """
 Base.@kwdef struct RadixFMMSettings
-    expansion_order::Union{Nothing,Int} = nothing
+    expansion_order::Union{Nothing,Int} = 4
     ell::Union{Nothing,Int} = nothing
-    near_radius2::Int = 16
+    near_radius2::Int = 6
     window_classes::Union{Nothing,Int} = nothing
     padding::Float64 = 0.1
     bounds::Union{Nothing,Tuple} = nothing
@@ -158,7 +182,7 @@ Base.@kwdef struct RadixFMMSettings
     rho_t::Union{Nothing,Float64} = nothing
     m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
-    accuracy_margin::Float64 = 1.15
+    accuracy_margin::Float64 = 1.03
 end
 
 # WeakKeyDicts so a discarded ParticleField releases its cache (and its GPU

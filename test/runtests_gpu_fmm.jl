@@ -190,24 +190,42 @@ end
         @test err.u_rel_rms <= FMM034_U_GATE
         @test err.j_rel_rms < 1e-1
     end
-    # rho_t override reaches the constructed kernel; shipped defaults differ
-    # per kernel (4.789 regularized-everywhere, 4.252 split)
+    # rho_t override reaches the constructed kernel. The partitioned coupling
+    # default is the 031a velocity-RMS cutoff 3.668 (task 035 cycle 3);
+    # :regularized keeps its constructor default 4.789.
     s = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned)
-    @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 4.252
-    s2 = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_t=4.789)
-    @test FLOWVPM._radix_direct_kernel(s2).rho_t ≈ 4.789
-    # cycle-1 shipped defaults (task 035, user-approved 2026-08-12):
-    # PartitionedVortex nearfield + DenseTranslationM2L + margin 1.15
+    @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 3.668
+    s2 = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_t=4.252)
+    @test FLOWVPM._radix_direct_kernel(s2).rho_t ≈ 4.252
+    @test FLOWVPM._radix_direct_kernel(
+        FLOWVPM.RadixFMMSettings(; direct_kernel=:regularized)).rho_t ≈ 4.789
+    # cycle-3 shipped defaults (task 035, user-approved 2026-08-12):
+    # literature P5 + PartitionedVortex(rho_t=3.668) + DenseTranslationM2L,
+    # q floor 6, margin 1.03
     sdef = FLOWVPM.RadixFMMSettings()
     @test FLOWVPM._radix_direct_kernel(sdef) isa FLOWVPM.fmm.PartitionedVortex
     @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.DenseTranslationM2L
-    @test sdef.accuracy_margin ≈ 1.15
-    # joint auto-geometry rule reproduces the measured 035 n=1e5 winners
-    # (cube (ell=4, q=17), wake (ell=5, q=16)) from the case sigma/L
+    @test sdef.expansion_order == 4       # literature P = 5
+    @test sdef.near_radius2 == 6
+    @test sdef.accuracy_margin ≈ 1.03
+    # joint auto-geometry rule at the shipped defaults reproduces every
+    # measured cycle-3A P5 winner from the case sigma/L
     sig_c = 2 * (1 / 1e5)^(1 / 3)
+    sig_w = 2 * (3.927 / 1e5)^(1 / 3)
+    sig_c6 = 2 * (1 / 1e6)^(1 / 3)
+    sig_w6 = 2 * (3.927 / 1e6)^(1 / 3)
+    @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 6, 3.668, 1.03) ==
+        (4, 12)
+    @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 6, 3.668, 1.03) ==
+        (5, 6)
+    @test FLOWVPM._radix_auto_geometry(1.2, sig_c6, 1_000_000, 6, 3.668, 1.03) ==
+        (5, 12)
+    @test FLOWVPM._radix_auto_geometry(6.0, sig_w6, 1_000_000, 6, 3.668, 1.03) ==
+        (6, 6)
+    # the cycle-1 rule at the old explicit settings still reproduces the
+    # cycle-1/2 winners (cube (4,17), wake (5,16)) — regression on the rule
     @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 16, 4.252, 1.15) ==
         (4, 17)
-    sig_w = 2 * (3.927 / 1e5)^(1 / 3)
     @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 16, 4.252, 1.15) ==
         (5, 16)
     # invalid selections fail loudly
