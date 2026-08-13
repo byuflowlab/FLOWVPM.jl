@@ -267,6 +267,103 @@ end
     @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield2)
 end
 
+@testset "radix FMM coupling: rectangular bounds (task 037, host path)" begin
+    n = 1500
+    ref = fmm034_build("wake", n; UJ=vpm_fmm.UJ_direct)
+    vpm_fmm.UJ_direct(ref)
+
+    # settings round-trip (off by default; sticks when set)
+    @test FLOWVPM.RadixFMMSettings().rectangular === false
+    s = FLOWVPM.radix_fmm_settings!(fmm034_build("wake", 200); rectangular=true)
+    @test s.rectangular === true
+
+    # cubic derivation is unchanged (scalar box size); rectangular derivation
+    # keeps per-axis padded tight extents (vector box size), same padding and
+    # 4*sigma_max floor conventions per axis
+    pfield = fmm034_build("wake", n)
+    bc = FLOWVPM._radix_derive_bounds(pfield, 0.1)
+    br = FLOWVPM._radix_derive_bounds(pfield, 0.1; rectangular=true)
+    @test bc[2] isa Float64
+    @test length(br[2]) == 3
+    @test maximum(br[2]) ≈ bc[2]          # long axis reproduces the cubic side
+    @test minimum(br[2]) < 0.5 * bc[2]    # wake: transverse axes much tighter
+    lo = [minimum(pfield.particles[r, 1:n]) for r in vpm_fmm.X_INDEX]
+    hi = [maximum(pfield.particles[r, 1:n]) for r in vpm_fmm.X_INDEX]
+    floor4s = 4 * FLOWVPM._radix_sigma_max(pfield)
+    ext_pad = (1 + 2 * 0.1) .* max.(hi .- lo, floor4s)
+    @test all(isapprox.(collect(br[2]), ext_pad; rtol=1e-12))
+    @test all(collect(br[1]) .≈ (lo .+ hi) ./ 2 .- ext_pad ./ 2)
+
+    # rectangular wake evaluation: accuracy gate + cache introspection
+    FLOWVPM.radix_fmm_settings!(pfield; rectangular=true)
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    err = fmm034_uj_errors(pfield.particles, ref.particles, n)
+    @info "rectangular host radix coupling [wake n=$n]" err.u_rel_rms err.j_rel_rms
+    @test err.u_rel_rms <= FMM034_U_GATE
+    @test err.j_rel_rms < 1e-1
+    cache = FLOWVPM._radix_fmm_couplings[pfield].cache
+    @test maximum(cache.ell_axes) > minimum(cache.ell_axes)  # genuinely rectangular
+    @test cache.ell == maximum(cache.ell_axes)
+    # box_extent covers the padded per-axis extents, snapped up to whole leaf
+    # cells of the shared cubic width delta = L_max/2^ell (minimal per axis)
+    delta = maximum(br[2]) / 2^cache.ell
+    @test all(collect(cache.box_extent) .≈ delta .* 2.0 .^ collect(cache.ell_axes))
+    @test all(collect(cache.box_extent) .>= collect(br[2]) .* (1 - 1e-12))
+    @test all((la == 0 || delta * 2.0^(la - 1) < La * (1 + 1e-12))
+              for (la, La) in zip(cache.ell_axes, br[2]))
+
+    # regression: the cubic default still derives a cube
+    pfield_c = fmm034_build("wake", n)
+    vpm_fmm.UJ_fmm_gpu!(pfield_c)
+    cache_c = FLOWVPM._radix_fmm_couplings[pfield_c].cache
+    @test maximum(cache_c.ell_axes) == minimum(cache_c.ell_axes)
+    @test maximum(cache_c.box_extent) ≈ minimum(cache_c.box_extent)
+    # rectangular derived the same depth/leaf width (auto-geometry rule is
+    # shape-independent: L = max extent)
+    @test cache.ell == cache_c.ell
+
+    # explicit user bounds with a 3-vector box size pass through as-is:
+    # rectangular cache, and out-of-box errors (user-owned box, no recenter)
+    pfield_b = fmm034_build("wake", n)
+    FLOWVPM.radix_fmm_settings!(pfield_b;
+        bounds=([-1.0, -1.0, -3.0], [2.0, 2.0, 6.0]))
+    vpm_fmm.UJ_fmm_gpu!(pfield_b)
+    err_b = fmm034_uj_errors(pfield_b.particles, ref.particles, n)
+    @test err_b.u_rel_rms <= FMM034_U_GATE
+    cache_b = FLOWVPM._radix_fmm_couplings[pfield_b].cache
+    @test maximum(cache_b.ell_axes) > minimum(cache_b.ell_axes)
+    @test collect(cache_b.box_extent)[3] ≈ 6.0
+    pfield_b.particles[vpm_fmm.X_INDEX, 1:n] .+= [10.0, -3.0, 7.0]
+    @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield_b)
+end
+
+@testset "radix FMM coupling: automatic recenter (rectangular)" begin
+    # the automatic-recenter Part A case with rectangular=true: the derived
+    # rebuild must preserve rectangularity and stay inside the accuracy gate
+    n = 1500
+    pfield = fmm034_build("wake", n)
+    ref = fmm034_build("wake", n; UJ=vpm_fmm.UJ_direct)
+    FLOWVPM.radix_fmm_settings!(pfield; rectangular=true)
+    vpm_fmm.UJ_fmm_gpu!(pfield)  # builds the rectangular cache at the initial box
+    cache = FLOWVPM._radix_fmm_couplings[pfield].cache
+    @test maximum(cache.ell_axes) > minimum(cache.ell_axes)
+    axes0 = cache.ell_axes
+
+    shift = [10.0, -3.0, 7.0]
+    pfield.particles[vpm_fmm.X_INDEX, 1:n] .+= shift
+    ref.particles[vpm_fmm.X_INDEX, 1:n] .+= shift
+    vpm_fmm.UJ_direct(ref)
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    err = fmm034_uj_errors(pfield.particles, ref.particles, n)
+    @test err.u_rel_rms <= FMM034_U_GATE
+    # same particle cloud, same derivation rule: rectangularity (and here the
+    # exact per-axis depths) survive the recenter
+    cache2 = FLOWVPM._radix_fmm_couplings[pfield].cache
+    @test cache2 === cache  # recenter! swaps in place; cache identity persists
+    @test maximum(cache2.ell_axes) > minimum(cache2.ell_axes)
+    @test cache2.ell_axes == axes0
+end
+
 @testset "radix FMM coupling: loud unsupported configurations" begin
     n = 200
     # FMM autotuning on (the FLOWVPM FMM() defaults) must fail loudly

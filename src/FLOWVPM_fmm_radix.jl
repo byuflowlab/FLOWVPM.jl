@@ -139,9 +139,20 @@ to automatic derivation:
   default on host.
 - `padding`: per-face padding fraction applied to derived domain bounds
   (construction and automatic `recenter!`).
-- `bounds`: explicit `(x_min::SVector{3}, box_size)` domain box. When set, the
-  box is treated as user-owned: out-of-box particles error instead of
-  triggering an automatic recenter.
+- `bounds`: explicit `(x_min::SVector{3}, box_size)` domain box, where
+  `box_size` may be a scalar (cubic) or a 3-vector (rectangular, FastMultipole
+  task 037) and passes through to the cache as-is. When set, the box is
+  treated as user-owned: out-of-box particles error instead of triggering an
+  automatic recenter.
+- `rectangular`: when `true`, derived bounds keep per-axis tight extents
+  (padded per face) instead of cubing the domain (FastMultipole task 037
+  rectangular radix grid). Cells stay physically cubic — the leaf width and
+  the auto-geometry rule are unchanged (`ell` and `q` still derive from the
+  maximum extent via sigma-adequacy) — and the coarse tree levels above the
+  shortest axis's saturation are trimmed, removing launch floor on elongated
+  (wake-like) domains. Off by default: the legacy cubic derivation is
+  preserved exactly. Ignored when explicit `bounds` are set (the user-owned
+  box's shape is final).
 - `precision`: lifecycle float type; defaults to `eltype(pfield)`.
 - `direct_kernel`: nearfield strategy `:partitioned` (default since task 035
   cycle 1; `PartitionedVortex`, FastMultipole's user-approved 032a default
@@ -177,6 +188,7 @@ Base.@kwdef struct RadixFMMSettings
     window_classes::Union{Nothing,Int} = nothing
     padding::Float64 = 0.1
     bounds::Union{Nothing,Tuple} = nothing
+    rectangular::Bool = false
     precision::Union{Nothing,DataType} = nothing
     direct_kernel::Symbol = :partitioned
     rho_t::Union{Nothing,Float64} = nothing
@@ -247,26 +259,45 @@ end
 _radix_sigma_max(pfield::ParticleField) = _radix_row_extrema(pfield, SIGMA_INDEX)[2]
 
 """
-    _radix_derive_bounds(pfield, padding) -> (x_min::SVector{3}, box_size)
+    _radix_derive_bounds(pfield, padding; rectangular=false)
+        -> (x_min::SVector{3}, box_size)
 
-Cubic domain bounds covering the live particles, padded by `padding` of the
-tight cube's side on each face (the `recenter!` convention). Degenerate
-extents are inflated to `4*sigma_max` so a near-singleton field still yields
-a valid box.
+Domain bounds covering the live particles, padded by `padding` of the tight
+extent on each face (the `recenter!` convention). Cubic mode (the default)
+returns a scalar `box_size` from the maximum tight span; rectangular mode
+(task 037) keeps per-axis tight extents and returns a 3-vector `box_size`,
+each axis padded by the same per-face convention
+(`L_a = (1 + 2*padding)*ext_a`, centered). In both modes degenerate extents
+are inflated to `4*sigma_max` (per axis in rectangular mode) so a
+near-singleton field still yields a valid box.
 """
-function _radix_derive_bounds(pfield::ParticleField, padding::Real)
+function _radix_derive_bounds(pfield::ParticleField, padding::Real;
+                              rectangular::Bool=false)
     lo1, hi1 = _radix_row_extrema(pfield, X_INDEX[1])
     lo2, hi2 = _radix_row_extrema(pfield, X_INDEX[2])
     lo3, hi3 = _radix_row_extrema(pfield, X_INDEX[3])
-    span = max(hi1 - lo1, hi2 - lo2, hi3 - lo3)
-    L_tight = max(span, 4 * _radix_sigma_max(pfield))
-    L_tight > 0 || error("cannot derive radix FMM bounds: degenerate particle field")
-    L = (1 + 2 * padding) * L_tight
     cx = (lo1 + hi1) / 2
     cy = (lo2 + hi2) / 2
     cz = (lo3 + hi3) / 2
-    x_min = SVector{3,Float64}(cx - L / 2, cy - L / 2, cz - L / 2)
-    return (x_min, Float64(L))
+    floor4s = 4 * _radix_sigma_max(pfield)
+    if !rectangular
+        span = max(hi1 - lo1, hi2 - lo2, hi3 - lo3)
+        L_tight = max(span, floor4s)
+        L_tight > 0 || error("cannot derive radix FMM bounds: degenerate particle field")
+        L = (1 + 2 * padding) * L_tight
+        x_min = SVector{3,Float64}(cx - L / 2, cy - L / 2, cz - L / 2)
+        return (x_min, Float64(L))
+    end
+    ex = max(hi1 - lo1, floor4s)
+    ey = max(hi2 - lo2, floor4s)
+    ez = max(hi3 - lo3, floor4s)
+    (ex > 0 && ey > 0 && ez > 0) ||
+        error("cannot derive radix FMM bounds: degenerate particle field")
+    Lx = (1 + 2 * padding) * ex
+    Ly = (1 + 2 * padding) * ey
+    Lz = (1 + 2 * padding) * ez
+    x_min = SVector{3,Float64}(cx - Lx / 2, cy - Ly / 2, cz - Lz / 2)
+    return (x_min, SVector{3,Float64}(Lx, Ly, Lz))
 end
 
 """
@@ -319,13 +350,19 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     end
 
     bounds = settings.bounds === nothing ?
-        _radix_derive_bounds(pfield, settings.padding) : settings.bounds
+        _radix_derive_bounds(pfield, settings.padding;
+            rectangular=settings.rectangular) : settings.bounds
     sigma_max = Float64(_radix_sigma_max(pfield))
     P = settings.expansion_order === nothing ? pfield.fmm.p - 1 :
         settings.expansion_order
     kernel_rho_t = Float64(_radix_direct_kernel(settings).rho_t)
+    # The auto-geometry rule is shape-independent (task 037): L = max extent
+    # drives ell and q via sigma-adequacy exactly as in cubic mode, so the leaf
+    # width L/2^ell is identical — rectangularity only trims per-axis counts.
+    L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
+        Float64(maximum(bounds[2]))
     ell, q = settings.ell === nothing ?
-        _radix_auto_geometry(bounds[2], sigma_max, pfield.np,
+        _radix_auto_geometry(L_geo, sigma_max, pfield.np,
             settings.near_radius2, kernel_rho_t, settings.accuracy_margin) :
         (settings.ell, settings.near_radius2)
     TF = settings.precision === nothing ? R : settings.precision
@@ -339,7 +376,8 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     return fmm.RadixFMMCache(pfield;
         expansion_order=P, ell,
         max_n_bodies=pfield.maxparticles,
-        bounds=(SVector{3,TF}(bounds[1]), TF(bounds[2])),
+        bounds=(SVector{3,TF}(bounds[1]),
+            bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
         hessian=true, near_radius2=q,
         level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)
@@ -386,7 +424,8 @@ function _radix_fmm_evaluate!(pfield::ParticleField)
         # out-of-box (or other geometry) rejection: recenter and retry once;
         # a second failure (e.g. adequacy gate on the grown box) propagates
         fmm.recenter!(st.cache, pfield;
-            bounds=_radix_derive_bounds(pfield, st.settings.padding))
+            bounds=_radix_derive_bounds(pfield, st.settings.padding;
+                rectangular=st.settings.rectangular))
         fmm.fmm!(pfield, st.cache;
             scalar_potential=false, gradient=true, hessian=true)
     end
