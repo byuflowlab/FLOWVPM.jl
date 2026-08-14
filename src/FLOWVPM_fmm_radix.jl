@@ -81,15 +81,21 @@ const _PARTITIONED_RHO_T_DEFAULT = 3.668
 function _radix_direct_kernel(settings)
     sym = settings.direct_kernel
     rho_t = settings.rho_t
+    rho_c = settings.rho_c
     if sym === :regularized
+        rho_c === nothing || error(
+            "RadixFMMSettings.rho_c applies only to direct_kernel=:twopass")
         return rho_t === nothing ? fmm.RegularizedVortex(; sigma_row=8) :
             fmm.RegularizedVortex(; sigma_row=8, rho_t)
     elseif sym === :partitioned
+        rho_c === nothing || error(
+            "RadixFMMSettings.rho_c applies only to direct_kernel=:twopass")
         return fmm.PartitionedVortex(; sigma_row=8,
             rho_t=something(rho_t, _PARTITIONED_RHO_T_DEFAULT))
     elseif sym === :twopass
-        return rho_t === nothing ? fmm.TwoPassVortex(; sigma_row=8) :
-            fmm.TwoPassVortex(; sigma_row=8, rho_t)
+        rt = something(rho_t, fmm.TwoPassVortex(; sigma_row=8).rho_t)
+        rc = something(rho_c, 2.0)
+        return fmm.TwoPassVortex(; sigma_row=8, rho_t=rt, rho_c=rc)
     end
     error("RadixFMMSettings.direct_kernel must be :regularized, :partitioned, " *
         "or :twopass; got $(repr(sym))")
@@ -192,10 +198,18 @@ Base.@kwdef struct RadixFMMSettings
     precision::Union{Nothing,DataType} = nothing
     direct_kernel::Symbol = :partitioned
     rho_t::Union{Nothing,Float64} = nothing
+    rho_c::Union{Nothing,Float64} = nothing
     m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
 end
+
+# The primary direct-list geometry must cover the branch evaluated directly by
+# the selected kernel. TwoPassVortex supplies the remaining (rho_c, rho_t]
+# regularization deficit through its independent correction traversal, so using
+# rho_t here would unnecessarily force the primary list to cover both passes.
+_radix_primary_reach(kernel) = Float64(kernel.rho_t)
+_radix_primary_reach(kernel::fmm.TwoPassVortex) = Float64(kernel.rho_c)
 
 # WeakKeyDicts so a discarded ParticleField releases its cache (and its GPU
 # memory) instead of being pinned forever by the registry.
@@ -301,6 +315,32 @@ function _radix_derive_bounds(pfield::ParticleField, padding::Real;
 end
 
 """
+    _radix_center_snapped_bounds(bounds, ell) -> (x_min, box_extent)
+
+Center the power-of-two rectangular embedding selected by FastMultipole around
+the center of automatically derived tight bounds. The longest extent and leaf
+width are unchanged; shorter extents are padded symmetrically to whole
+power-of-two leaf-cell counts. Explicit user bounds do not use this helper and
+therefore retain their caller-owned `x_min` anchor.
+"""
+function _radix_center_snapped_bounds(bounds, ell::Integer)
+    x_min = SVector{3,Float64}(bounds[1])
+    L = SVector{3,Float64}(bounds[2])
+    delta = maximum(L) / (1 << Int(ell))
+    function snapped_axis(a)
+        la = clamp(ceil(Int, log2(L[a] / delta)), 0, Int(ell))
+        while la < ell && delta * (1 << la) < L[a]
+            la += 1
+        end
+        return delta * (1 << la)
+    end
+    snapped = SVector{3,Float64}(
+        snapped_axis(1), snapped_axis(2), snapped_axis(3))
+    center = x_min + L / 2
+    return (center - snapped / 2, snapped)
+end
+
+"""
     _radix_auto_geometry(L, sigma_max, np, q_floor, rho_t, margin) -> (ell, q)
 
 Task 035 cycle-1 joint depth/leaf-radius rule. Chooses the deepest radix
@@ -355,7 +395,8 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     sigma_max = Float64(_radix_sigma_max(pfield))
     P = settings.expansion_order === nothing ? pfield.fmm.p - 1 :
         settings.expansion_order
-    kernel_rho_t = Float64(_radix_direct_kernel(settings).rho_t)
+    direct_kernel = _radix_direct_kernel(settings)
+    kernel_primary_reach = _radix_primary_reach(direct_kernel)
     # The auto-geometry rule is shape-independent (task 037): L = max extent
     # drives ell and q via sigma-adequacy exactly as in cubic mode, so the leaf
     # width L/2^ell is identical — rectangularity only trims per-axis counts.
@@ -363,8 +404,12 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         Float64(maximum(bounds[2]))
     ell, q = settings.ell === nothing ?
         _radix_auto_geometry(L_geo, sigma_max, pfield.np,
-            settings.near_radius2, kernel_rho_t, settings.accuracy_margin) :
+            settings.near_radius2, kernel_primary_reach,
+            settings.accuracy_margin) :
         (settings.ell, settings.near_radius2)
+    if settings.bounds === nothing && settings.rectangular
+        bounds = _radix_center_snapped_bounds(bounds, ell)
+    end
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
@@ -423,9 +468,11 @@ function _radix_fmm_evaluate!(pfield::ParticleField)
         (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
         # out-of-box (or other geometry) rejection: recenter and retry once;
         # a second failure (e.g. adequacy gate on the grown box) propagates
-        fmm.recenter!(st.cache, pfield;
-            bounds=_radix_derive_bounds(pfield, st.settings.padding;
-                rectangular=st.settings.rectangular))
+        bounds = _radix_derive_bounds(pfield, st.settings.padding;
+            rectangular=st.settings.rectangular)
+        st.settings.rectangular &&
+            (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
+        fmm.recenter!(st.cache, pfield; bounds)
         fmm.fmm!(pfield, st.cache;
             scalar_potential=false, gradient=true, hessian=true)
     end

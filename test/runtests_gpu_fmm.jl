@@ -276,6 +276,14 @@ end
     @test FLOWVPM.RadixFMMSettings().rectangular === false
     s = FLOWVPM.radix_fmm_settings!(fmm034_build("wake", 200); rectangular=true)
     @test s.rectangular === true
+    tk = FLOWVPM._radix_direct_kernel(FLOWVPM.RadixFMMSettings(;
+        direct_kernel=:twopass, rho_t=3.668, rho_c=1.75))
+    @test tk isa vpm_fmm.fmm.TwoPassVortex
+    @test tk.rho_t == 3.668
+    @test tk.rho_c == 1.75
+    @test FLOWVPM._radix_primary_reach(tk) == 1.75
+    @test_throws ErrorException FLOWVPM._radix_direct_kernel(
+        FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_c=1.75))
 
     # cubic derivation is unchanged (scalar box size); rectangular derivation
     # keeps per-axis padded tight extents (vector box size), same padding and
@@ -311,6 +319,10 @@ end
     @test all(collect(cache.box_extent) .>= collect(br[2]) .* (1 - 1e-12))
     @test all((la == 0 || delta * 2.0^(la - 1) < La * (1 + 1e-12))
               for (la, La) in zip(cache.ell_axes, br[2]))
+    # Task 037a: snap-up is symmetric, so the rectangular and raw derived boxes
+    # have the same center rather than retaining the raw lower face.
+    @test all(isapprox.(collect(cache.x_min + cache.box_extent / 2),
+        collect(br[1] + br[2] / 2); rtol=1e-12, atol=1e-12))
 
     # regression: the cubic default still derives a cube
     pfield_c = fmm034_build("wake", n)
@@ -321,6 +333,10 @@ end
     # rectangular derived the same depth/leaf width (auto-geometry rule is
     # shape-independent: L = max extent)
     @test cache.ell == cache_c.ell
+    # Same center, longest extent, ell, and leaf width imply the same occupied
+    # leaf lattice and direct list; rectangular trimming may change coarse M2L.
+    @test cache.state.grid.n_cells == cache_c.state.grid.n_cells
+    @test cache.state.counts.n_direct == cache_c.state.counts.n_direct
 
     # explicit user bounds with a 3-vector box size pass through as-is:
     # rectangular cache, and out-of-box errors (user-owned box, no recenter)
