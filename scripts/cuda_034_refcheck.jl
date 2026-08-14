@@ -42,6 +42,12 @@ const FM034_REFDIR = joinpath(FM034_FMDIR, "MATRIX_OPERATOR_REFACTOR",
     "data", "flowvpm_baseline", "references")
 const FM034_NS = length(ARGS) > 1 ? parse.(Int, ARGS[2:end]) : [10_000, 100_000]
 const FM034_U_GATE = 1e-3
+# Gate scope: the historical 034 shipped-defaults contract covers cube+wake.
+# Exploration cases added later to FM033_CASES (e.g. 037b's "rotor") are
+# accuracy-gated per-row inside their own campaign sweeps against their
+# checksummed references, not by this abort-on-fail preflight; include them
+# here explicitly via FM034_REFCHECK_CASES when that gate is wanted.
+const FM034_CASES = Tuple(split(get(ENV, "FM034_REFCHECK_CASES", "cube,wake"), ','))
 
 vpm._FMM_HAS_RADIX || error("installed FastMultipole lacks the radix device interface")
 
@@ -99,11 +105,11 @@ end
 println("=== 034 reference comparison: device-resident radix FMM vs 033 " *
     "checksummed sampled-direct references")
 println("mode: $(FM034_HOST_MODE ? "HOST (transfer path, harness self-check)" : "DEVICE (CuArray-resident)")")
-println("cases: $(join(FM033_CASES, ", "))  n: $(join(FM034_NS, ", "))  gate: " *
+println("cases: $(join(FM034_CASES, ", "))  n: $(join(FM034_NS, ", "))  gate: " *
     "Float64 u_rel_rms <= $(FM034_U_GATE)")
 
 results = NamedTuple[]
-for case in FM033_CASES, n in FM034_NS
+for case in FM034_CASES, n in FM034_NS
     t_build = @elapsed cpu = fm033_build(case, n)
     n_actual = vpm.get_np(cpu)
     refpath = fm033_reference_path(FM034_REFDIR, case, n)
