@@ -99,6 +99,50 @@ end
     @test st.cache.state.counters.expansion_host_copies == 0
 end
 
+# All-pairs ζ brute force of E_str in the SORTED body frame, from the radix
+# slabs themselves: B = packed source bodies (rows 1:3 pos, 5:7 Γ, 8 σ),
+# out = lifecycle output (rows 5:13 = J). Accumulated in Float64 regardless of
+# the slab precision; framework saturation cutoff matched. O(n²) on host —
+# threaded, ~seconds at n = 2e4.
+function fmm048_sorted_sfs_brute(B, out, n; transposed=true)
+    K1 = 1 / (2pi)^1.5
+    rc2 = eltype(B) === Float32 ? 42.25 : 81.0
+    E = zeros(3, n)
+    Threads.@threads for i in 1:n
+        xi = Float64(B[1, i]); yi = Float64(B[2, i]); zi = Float64(B[3, i])
+        J5 = Float64(out[5, i]); J6 = Float64(out[6, i]); J7 = Float64(out[7, i])
+        J8 = Float64(out[8, i]); J9 = Float64(out[9, i]); J10 = Float64(out[10, i])
+        J11 = Float64(out[11, i]); J12 = Float64(out[12, i]); J13 = Float64(out[13, i])
+        e1 = e2 = e3 = 0.0
+        for j in 1:n
+            i == j && continue
+            dx = xi - Float64(B[1, j]); dy = yi - Float64(B[2, j]); dz = zi - Float64(B[3, j])
+            sig = Float64(B[8, j])
+            rho2 = (dx * dx + dy * dy + dz * dz) / (sig * sig)
+            rho2 <= rc2 || continue
+            z = K1 * exp(-rho2 / 2) / (sig * sig * sig)
+            G1 = Float64(B[5, j]); G2 = Float64(B[6, j]); G3 = Float64(B[7, j])
+            K5 = Float64(out[5, j]); K6 = Float64(out[6, j]); K7 = Float64(out[7, j])
+            K8 = Float64(out[8, j]); K9 = Float64(out[9, j]); K10 = Float64(out[10, j])
+            K11 = Float64(out[11, j]); K12 = Float64(out[12, j]); K13 = Float64(out[13, j])
+            if transposed
+                e1 += z * ((J5 - K5) * G1 + (J6 - K6) * G2 + (J7 - K7) * G3)
+                e2 += z * ((J8 - K8) * G1 + (J9 - K9) * G2 + (J10 - K10) * G3)
+                e3 += z * ((J11 - K11) * G1 + (J12 - K12) * G2 + (J13 - K13) * G3)
+            else
+                e1 += z * ((J5 - K5) * G1 + (J8 - K8) * G2 + (J11 - K11) * G3)
+                e2 += z * ((J6 - K6) * G1 + (J9 - K9) * G2 + (J12 - K12) * G3)
+                e3 += z * ((J7 - K7) * G1 + (J10 - K10) * G2 + (J13 - K13) * G3)
+            end
+        end
+        E[1, i] = e1; E[2, i] = e2; E[3, i] = e3
+    end
+    return E
+end
+
+fmm048_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
+                           max(sum(abs2, Float64.(B)), eps()))
+
 @testset "device-resident radix FMM: SFS device pass (task 048)" begin
     for (case, n, R) in (("cube", 20000, Float64), ("wake", 20000, Float64),
                          ("cube", 20000, Float32))
@@ -110,18 +154,65 @@ end
         vpm_fmm.UJ_direct(gpu_ref)
         FLOWVPM.Estr_direct!(gpu_ref)       # ext gpu_estr_direct! kernel
 
-        # resident lifecycle with the in-graph SFS pass + delivery. E is built
-        # from J, and the radix J carries the erf-free g/h nearfield
-        # approximation plus the far-field regularization deficit
-        # (P-independent; see the host SFS testset comment), so the E gate is
-        # J-bound: max(base, 3 * j_rel_rms). The host testset carries the
-        # tight (1e-6) mechanical-parity gate that isolates the SFS machinery.
+        # resident lifecycle with the in-graph SFS pass + delivery
         vpm_fmm.UJ_fmm(gpu; sfs=true)
         err = fmm034_uj_errors(gpu.particles, gpu_ref.particles, n)
         e_sfs = fmm034_sfs_relrms(gpu.particles, gpu_ref.particles, n)
-        @info "device radix SFS [$case n=$n $R]" err.u_rel_rms err.j_rel_rms e_sfs
         @test err.u_rel_rms <= FMM034_U_GATE
-        @test e_sfs <= max(R === Float64 ? 1e-3 : 3e-3, 3 * err.j_rel_rms)
+
+        # --- mechanical/physics decomposition (mirrors the host testset) ---
+        # Download the radix slabs and rebuild the SFS result on host two ways:
+        #   E_ulist: the HOST MIRROR of the pass over the SAME device pair
+        #            list, from the SAME output J -> e_kernel isolates a
+        #            device-kernel defect (gate 1e-6 F64 / 1e-4 F32).
+        #   E_full:  all-pairs ζ brute force from the same J -> e_trunc is the
+        #            U-list ζ-truncation share at this derived geometry
+        #            (recorded, not gated: it is a geometry property, the
+        #            design-anticipated default-list gap).
+        state = FLOWVPM._radix_fmm_couplings[gpu].cache.state
+        nb = state.counts.n_bodies
+        @test nb == n
+        nd = state.counts.n_direct
+        ffmm = FLOWVPM.fmm
+        B = Array(view(state.source_bodies, :, 1:nb))
+        out = Array(view(state.output, :, 1:nb))
+        cr = Array(state.cell_ranges)
+        dt = Array(view(state.direct_targets, 1:nd))
+        ds = Array(view(state.direct_sources, 1:nd))
+        TF = eltype(B)
+        tg = zeros(TF, 3, nb); om = zeros(TF, 3, nb); q = zeros(TF, 3, nb)
+        ffmm._host_sfs_tg_and_zero!(tg, om, q, out, B, true, nb)
+        ffmm._host_sfs_zeta_pairs!(om, q, tg, B, cr, dt, ds, nd)
+        E_ulist = zeros(TF, 3, nb)
+        ffmm._host_sfs_form_e!(E_ulist, om, q, out, true, nb)
+        # sorted -> global permute for comparison with the delivered SFS rows
+        perm = Array(view(state.body_perm, 1:nb))
+        bsys = Array(view(state.body_system_ids, 1:nb))
+        bidx = Array(view(state.body_indices, 1:nb))
+        Eg = zeros(TF, 3, nb)
+        ffmm._scatter_sfs_host!(Eg, E_ulist, perm, bsys, bidx, 1, nb)
+        S = Array(gpu.particles)[vpm_fmm.SFS_INDEX, 1:nb]
+        e_kernel = fmm048_relrms(S, Eg)
+        E_full = fmm048_sorted_sfs_brute(B, out, nb)
+        e_trunc = fmm048_relrms(E_ulist, E_full)
+        @info "device radix SFS [$case n=$n $R]" err.u_rel_rms err.j_rel_rms e_sfs e_kernel e_trunc
+        # kernel-defect isolation: the device pass must reproduce its host
+        # mirror over the identical pair list and J — this gate carries the
+        # SFS correctness weight
+        @test e_kernel <= (R === Float64 ? 1e-6 : 1e-4)
+        # Physics vs the exact-erf direct reference is J-ERROR PROPAGATION,
+        # not an SFS property: E is a cancellation-dominated difference
+        # quantity, so the E/J error ratio is field-dependent — measured on
+        # the HOST at exactly this operating point (2026-08-21): cube 2.05,
+        # wake 14.1 (host wake e_sfs = 0.0293417 reproduced H200 job 13247540
+        # 0.029342 to 5 digits — device == host, no kernel defect). The
+        # ζ-truncation share is negligible here (measured 2.1e-6 cube /
+        # 8.7e-7 wake). Gate with 20x j_rel headroom: still loud on any
+        # mechanism-scale regression (an orientation/index bug puts e_sfs at
+        # O(1)), while J regressions are gated by u_rel and e_kernel above.
+        e_gate = max(R === Float64 ? 1e-3 : 3e-3,
+                     20 * err.j_rel_rms + 2 * e_trunc)
+        @test e_sfs <= e_gate
 
         # counter contract unchanged with SFS armed
         st = FLOWVPM._radix_fmm_couplings[gpu]
@@ -157,7 +248,10 @@ end
         e_replay = fmm034_sfs_relrms(gpu.particles, gpu_ref.particles, n)
         err_replay = fmm034_uj_errors(gpu.particles, gpu_ref.particles, n)
         @info "device radix SFS replay parity [$case n=$n $R]" e_replay err_replay.j_rel_rms
-        @test e_replay <= max(R === Float64 ? 1e-3 : 3e-3, 3 * err_replay.j_rel_rms)
+        # same occupancy epoch (tiny perturbation), so the measured ζ-
+        # truncation share and the field's E/J amplification above still apply
+        @test e_replay <= max(R === Float64 ? 1e-3 : 3e-3,
+                              20 * err_replay.j_rel_rms + 2 * e_trunc)
 
         # sfs=false evaluations skip delivery (rows untouched)
         S = copy(Array(gpu.particles)[vpm_fmm.SFS_INDEX, 1:n])

@@ -528,7 +528,14 @@ end
 # host path; the CuArray method lives in ext/FLOWVPMCUDAExt.jl.
 ################################################################################
 
-function fmm.sfs_to_target!(pfield::ParticleField, buf::Matrix,
+# NOTE on the signature: the buffer is host-pinned to plain-Matrix storage to
+# stay unambiguous against the CuArray method in ext/FLOWVPMCUDAExt.jl, but it
+# must also accept the SubArray prefix view FastMultipole's
+# finalize_radix_sfs_output! passes when the cache capacity (max_n_bodies)
+# exceeds the live np. A SubArray of a host Matrix is never a CUDA.AnyCuArray,
+# so the union keeps the disambiguation intact.
+function fmm.sfs_to_target!(pfield::ParticleField,
+        buf::Union{Matrix,SubArray{<:Any,2,<:Matrix}},
         sort_index=1:pfield.np)
     np = pfield.np
     size(buf, 2) == np || error(

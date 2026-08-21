@@ -479,11 +479,13 @@ end
     #     built from J, and the radix J carries the 031a erf-free g/h
     #     nearfield approximation (j_rel_rms ≈ 1.9e-3 on this overlap-2 cube,
     #     P- and shell-independent; U meets its own 1e-3 gate). The E error is
-    #     J-bound (measured e/j ratio ≈ 1.9), so the gate is
-    #     max(1e-3, 3 · j_rel_rms): it tightens automatically if the g/h
-    #     arithmetic ever improves, and a mechanism regression (not J-bound)
-    #     still fails loudly. A flat 1e-3 vs exact-erf references is
-    #     unattainable at any radix setting while J itself is ≈ 2e-3.
+    #     J-bound (measured e/j ratio ≈ 1.9 HERE — but the ratio is
+    #     field-dependent: 2.05 on cube n=2e4, 14.1 on wake n=2e4, measured
+    #     2026-08-21; the device testset uses 20x headroom for that reason),
+    #     so the gate is max(1e-3, 3 · j_rel_rms): it tightens automatically
+    #     if the g/h arithmetic ever improves, and a mechanism regression
+    #     (not J-bound) still fails loudly. A flat 1e-3 vs exact-erf
+    #     references is unattainable at any radix setting while J is ≈ 2e-3.
     n = 1500
     for P in (4, 8)
         pfield = fmm034_build_cube(n)
@@ -564,6 +566,20 @@ end
     @info "SFS host radix Float32 [cube n=$n P=4]" e_mech_32 e_32 j_rel_32
     @test e_mech_32 <= 1e-4
     @test e_32 <= max(1e-3, 3 * j_rel_32)
+
+    # capacity > np: the cache's SFS scatter buffers are capacity-wide, so
+    # delivery passes the SubArray prefix view to sfs_to_target! — regression
+    # for the buf::Matrix over-pinning (2026-08-21). Identical answer to the
+    # exact-capacity run.
+    pfield_cap = fmm034_build_cube(n; maxparticles=n + 128)
+    FLOWVPM.radix_fmm_settings!(pfield_cap; expansion_order=4, ell=2,
+        near_radius2=20)
+    vpm_fmm.UJ_fmm_gpu!(pfield_cap; reset=true, reset_sfs=true, sfs=true)
+    pfield_eq = fmm034_build_cube(n)
+    FLOWVPM.radix_fmm_settings!(pfield_eq; expansion_order=4, ell=2,
+        near_radius2=20)
+    vpm_fmm.UJ_fmm_gpu!(pfield_eq; reset=true, reset_sfs=true, sfs=true)
+    @test fmm034_sfs_relrms(pfield_cap.particles, pfield_eq.particles, n) < 1e-12
 end
 
 # =========================================================================
