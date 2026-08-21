@@ -221,9 +221,19 @@ const _radix_fmm_couplings = WeakKeyDict{Any,Any}()
 
 Set radix FMM coupling overrides for `pfield` (see [`RadixFMMSettings`](@ref))
 and invalidate any existing cache so the next evaluation rebuilds with the new
-settings. Not exported; internal tuning surface (task 035 owns performance).
+settings. GPU mechanism tunables (FastMultipole's radix settings, e.g.
+`CUDA_NEARFIELD_GH_MODE`) may be passed as `gpu=(; CUDA_NEARFIELD_GH_MODE=:shipped)`;
+they are validated by `FastMultipole.set_radix_setting!` and applied before the
+cache invalidation so construction-locked settings take effect on the rebuild. Not exported; internal tuning surface (task 035 owns performance).
 """
-function radix_fmm_settings!(pfield::ParticleField; kwargs...)
+function radix_fmm_settings!(pfield::ParticleField; gpu::NamedTuple=NamedTuple(), kwargs...)
+    # task 047: GPU mechanism tunables flow through FastMultipole's validated
+    # settings surface, applied BEFORE the cache is cleared so the rebuild
+    # snapshots the new values (construction-locked settings must be set
+    # pre-construction; late flips error loudly at the next device step).
+    for (name, value) in pairs(gpu)
+        fmm.set_radix_setting!(name, value)
+    end
     _radix_fmm_settings[pfield] = RadixFMMSettings(; kwargs...)
     clear_radix_fmm_cache!(pfield)
     return _radix_fmm_settings[pfield]
