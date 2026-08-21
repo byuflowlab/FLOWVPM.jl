@@ -121,6 +121,42 @@ end
 const FMM034_U_GATE = 1e-3   # fixed Integration Phase velocity tolerance
 
 # =========================================================================
+# Task 049: U_prev bookkeeping — CPU loop vs broadcast equivalence
+# =========================================================================
+# `nextstep`'s U_prev update forks on storage type (Matrix keeps the scalar
+# loop verbatim; CuArray takes `_update_U_prev_broadcast!`). Assert the two
+# implementations agree bit-for-bit on a Matrix field, above and below the
+# MIN_MT_NP multithreading threshold. Needs neither radix nor CUDA.
+@testset "nextstep U_prev: loop vs broadcast equivalence" begin
+    for n in (200, 1500)   # single-thread and multi-thread loop branches
+        rng = MersenneTwister(49000 + n)
+        pfield = fmm034_build_cube(n)
+        pfield.particles[vpm_fmm.U_INDEX, 1:n] .= randn(rng, 3, n)
+
+        # reference: the loop implementation exactly as nextstep runs it
+        ref = copy(pfield.particles)
+        for i in 1:n
+            Ux, Uy, Uz = ref[vpm_fmm.U_INDEX, i]
+            ref[vpm_fmm.U_PREV_INDEX, i] = sqrt(Ux*Ux + Uy*Uy + Uz*Uz)
+        end
+
+        # broadcast implementation on the same Matrix field
+        FLOWVPM._update_U_prev_broadcast!(pfield)
+        @test pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] ==
+              ref[vpm_fmm.U_PREV_INDEX, 1:n]
+
+        # nextstep's Array branch still runs the loop: after a dt=0 step the
+        # U_prev row must equal |U| of the post-integration U rows
+        pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] .= 0
+        vpm_fmm.nextstep(pfield, 0.0)
+        @test all(isfinite, pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n])
+        expected = [sqrt(sum(abs2, pfield.particles[vpm_fmm.U_INDEX, i]))
+                    for i in 1:n]
+        @test pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] == expected
+    end
+end
+
+# =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================
 if !FLOWVPM._FMM_HAS_RADIX

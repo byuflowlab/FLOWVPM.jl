@@ -747,16 +747,20 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
 
     # update U_prev
     if update_U_prev
-        if pfield.np > MIN_MT_NP
-            Threads.@threads for i in 1:pfield.np
-                Ux, Uy, Uz = get_U(pfield, i)
-                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+        if pfield.particles isa Array
+            if pfield.np > MIN_MT_NP
+                Threads.@threads for i in 1:pfield.np
+                    Ux, Uy, Uz = get_U(pfield, i)
+                    set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+                end
+            else
+                for i in 1:pfield.np
+                    Ux, Uy, Uz = get_U(pfield, i)
+                    set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
+                end
             end
         else
-            for i in 1:pfield.np
-                Ux, Uy, Uz = get_U(pfield, i)
-                set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
-            end
+            _update_U_prev_broadcast!(pfield)
         end
     end
 
@@ -786,6 +790,26 @@ function _reset_particles(pfield::ParticleField)
     else
         _reset_particles_broadcast!(pfield)
     end
+end
+
+"""
+    `_update_U_prev_broadcast!(pfield)`
+
+GPU-safe equivalent of `nextstep`'s U_prev bookkeeping loop, used when
+`pfield.particles` is not a plain `Array` (task 049). The loop version's
+per-particle `get_U`/`set_U_prev` is disallowed scalar indexing on a
+`CuArray`; a single fused broadcast writes `|U|` into `U_PREV_INDEX` for the
+live prefix instead.
+"""
+function _update_U_prev_broadcast!(pfield::ParticleField)
+    np = pfield.np
+    np == 0 && return nothing
+    Ux = view(pfield.particles, U_INDEX[1]:U_INDEX[1], 1:np)
+    Uy = view(pfield.particles, U_INDEX[2]:U_INDEX[2], 1:np)
+    Uz = view(pfield.particles, U_INDEX[3]:U_INDEX[3], 1:np)
+    view(pfield.particles, U_PREV_INDEX:U_PREV_INDEX, 1:np) .=
+        sqrt.(Ux .* Ux .+ Uy .* Uy .+ Uz .* Uz)
+    return nothing
 end
 
 """
