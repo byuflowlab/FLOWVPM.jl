@@ -47,6 +47,11 @@ for m in "${MESHES[@]}"; do
   rsync -az "$FPLOCAL/examples/data/$m" "$REMOTE:$FPDIR/examples/data/"
 done
 
+# CUDA deliberately NOT in fm052env: CUDA >=6.2 pulls CUDATools->PrettyTables 3,
+# unsatisfiable against FLOWPanel's geo stack (PrettyTables 2.x). CUDA is
+# provided at RUN time by environment stacking: JULIA_LOAD_PATH appends the
+# validated fm048env (CUDA 6.3 + local-toolkit JLL prefs) after fm052env —
+# login-node load test confirmed PrettyTables 2.4 + CUDA/CUDATools coexist.
 # local=true preferences for the three CUDA JLLs (fm023env recipe)
 ssh "$REMOTE" 'mkdir -p fm052env && cat > fm052env/LocalPreferences.toml <<EOF
 [CUDA_Compiler_jll]
@@ -66,7 +71,7 @@ EOF'
 # CUDA precompiles on the GPU node against the system toolkit.
 ssh "$REMOTE" "bash -lc 'module load julia/1.11.7-6bmogfl \
   && export JULIA_PKG_PRECOMPILE_AUTO=0 \
-  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add([\\\"CUDA\\\", \\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\"]); Pkg.instantiate()\" \
+  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add([\\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\"]); Pkg.instantiate()\" \
   && cd $VPMDIR \
   && sbatch scripts/fm052_run.sh'"
 

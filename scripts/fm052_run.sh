@@ -32,6 +32,9 @@ ENVDIR="${FP052_ENV:-$HOME/fm052env}"
 STAGES="${FP052_STAGES:-a b c}"
 
 export FASTMULTIPOLE_FORCE_CUDA_LOAD=1
+# env stacking: CUDA (6.3, validated) comes from fm048env, everything else
+# from fm052env (see fm052_submit.sh note)
+export JULIA_LOAD_PATH="$ENVDIR:$HOME/fm048env:@stdlib"
 export JULIA_NUM_THREADS=32
 export BLAS_NUM_THREADS=32
 
