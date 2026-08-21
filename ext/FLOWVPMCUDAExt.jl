@@ -740,10 +740,10 @@ function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
 
     @cuda threads=nthreads blocks=nblocks gpu_zeta_direct_kernel!(out, s, Int32(n), pfield.kernel.zeta)
 
-    # CPU `zeta_direct` zeroes J[1:3] before accumulating (over ALL
+    # CPU `zeta_direct` zeroes VORTICITY_INDEX before accumulating (over ALL
     # particles, per the include_static=true above), so this is an
     # assignment, not an accumulation, to match.
-    view(P, FLOWVPM.J_INDEX[1:3], 1:n) .= view(out, 1:3, :)
+    view(P, FLOWVPM.VORTICITY_INDEX, 1:n) .= view(out, 1:3, :)
 
     return nothing
 end

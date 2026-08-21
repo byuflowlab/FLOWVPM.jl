@@ -296,8 +296,8 @@ function _corespreading_reset_broadcast!(pfield, sgm0)
 
     for i in 1:3
         M = view(P, M_INDEX[6+i], :)
-        J = view(P, J_INDEX[i], :)
-        M .= ifelse.(active .> 0, J, M)
+        W = view(P, VORTICITY_INDEX[i], :)
+        M .= ifelse.(active .> 0, W, M)
     end
 
     sigma = view(P, SIGMA_INDEX, :)
@@ -678,7 +678,7 @@ can't be annotated `::ParticleField` here (same constraint noted on the
 function zeta_direct_multithreaded(pfield)
     np = pfield.np
     for i in 1:np
-        get_J(pfield, i)[1:3] .= 0
+        get_vorticity(pfield, i) .= 0
     end
 
     n_per_thread, rem = divrem(np, Threads.nthreads())
@@ -703,9 +703,9 @@ function zeta_direct_multithreaded(pfield)
 
                 zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
 
-                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
-                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
-                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+                get_vorticity(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_vorticity(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_vorticity(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
             end
         end
     end

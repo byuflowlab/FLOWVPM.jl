@@ -45,7 +45,7 @@ end
         gpu2 = gpu_test_build_gpu_from(cpu2, R)
         vpm.zeta_direct(cpu2)
         vpm.zeta_direct(gpu2)
-        @test gpu_test_relerr(view(cpu2.particles, vpm.J_INDEX[1:3], :), view(gpu2.particles, vpm.J_INDEX[1:3], :)) < tol
+        @test gpu_test_relerr(view(cpu2.particles, vpm.VORTICITY_INDEX, :), view(gpu2.particles, vpm.VORTICITY_INDEX, :)) < tol
 
         cpu3 = gpu_test_build_cpu_pfield(n, R; static_frac=static_frac)
         gpu3 = gpu_test_build_gpu_from(cpu3, R)
