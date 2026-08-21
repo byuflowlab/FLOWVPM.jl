@@ -324,12 +324,10 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
     if a==1 || a==0
 
         # finish dynamic procedure
-        # NOTE: procedure_afterUJ (dynamicprocedure_pseudo3level_afterUJ /
-        # dynamicprocedure_sensorfunction) interleaves scalar-reduction
-        # bookkeeping with `pfield.UJ(...)` N-body re-evaluation at a
-        # different filter width -- CPU-only follow-up, same class as the
-        # zeta/RBF procedures left CPU-only in FLOWVPM_viscous.jl. Not
-        # force-masked into the broadcast fork below.
+        # NOTE: the pseudo3level procedures carry their own GPU broadcast
+        # fork (FLOWVPM_subfilterscale_gpu.jl, task 052); the sensorfunction
+        # procedure remains CPU-only, same class as the zeta/RBF procedures
+        # left CPU-only in FLOWVPM_viscous.jl.
         SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
 
         if pfield.particles isa Array
@@ -746,6 +744,11 @@ small enough to approximate the singular velocity field as \$\\mathbf{u} \\appro
 function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
                                        minC::Real, maxC::Real) where {R}
+    # GPU/CuArray-backed field: whole-field broadcast port (task 052);
+    # identical model arithmetic, no SFS_WATCH diagnostics.
+    if !(pfield.particles isa Array)
+        return _pseudo3level_beforeUJ_broadcast!(pfield, SFS, alpha)
+    end
     haskey(ENV, "SFS_WATCH_INDICES") && println("[sfs_watch] beforeUJ called, np=", pfield.np)
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
@@ -866,6 +869,11 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
                                        minC::Real, maxC::Real;
                                        force_positive::Bool=false) where {R}
+    # GPU/CuArray-backed field: whole-field broadcast port (task 052).
+    if !(pfield.particles isa Array)
+        return _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha, rlxf,
+            minC, maxC; force_positive)
+    end
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
     #                C=<Γ⋅L>/<Γ⋅m> <=> get_C(P)[1], <Γ⋅L> <=> get_C(p)[2], <Γ⋅m> <=> get_C(p)[3]
