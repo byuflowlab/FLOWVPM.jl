@@ -18,7 +18,8 @@ const useGPU_default = 0
     `FMM(; p::Int=4, ncrit::Int=10, theta::Real=0.5, shrink_recenter::Bool=true,
           relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-6,
           autotune_p::Bool=true, autotune_ncrit::Bool=true,
-          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0)`
+          autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0,
+          min_ncrit::Int=50)`
 
 Parameters for FMM solver.
 
@@ -41,6 +42,7 @@ Parameters for FMM solver.
 * `autotune_ncrit` : If true, automatically adjust ncrit to optimize performance.
 * `autotune_reg_error` : If true, constrain regularization error in FMM calls.
 * `default_rho_over_sigma` : Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true).
+* `min_ncrit` : Lower bound for auto-tuned leaf size (`ncrit`) when `autotune_ncrit=true`.
 
 """
 struct FMM
@@ -54,7 +56,7 @@ struct FMM
   autotune_ncrit::Bool            # If true, automatically adjust ncrit to optimize performance
   autotune_reg_error::Bool        # If true, automatically calculate rho/sigma to constrain regularization error
   default_rho_over_sigma::FLOAT_TYPE # Default value for ρ/σ in FMM calls (unused if `autotune_reg_error` is true)
-  min_ncrit::Int64                 # Minimum number of particles per leaf (default to 3 for safety)
+  min_ncrit::Int64                 # Minimum number of particles per leaf (default to 50 for SFS robustness)
 end
 
 function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=50)
@@ -213,12 +215,13 @@ FilamentEdgeWorkspace{R}(maxparticles::Int) where {R} = FilamentEdgeWorkspace{R}
 ################################################################################
 # PARTICLE FIELD STRUCT
 ################################################################################
-mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
+mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TRelaxation, AT<:AbstractMatrix{R}}
     # User inputs
     maxparticles::Int                           # Maximum number of particles
-    particles::Matrix{R}                        # Array of particles
+    particles::AT                               # Array of particles
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
+    scratch::AT                                 # Reusable scratch space for vectorized intermediate computations (see SCRATCH_INDEX)
 
     # Internal properties
     np::Int                                     # Number of particles in the field
@@ -273,6 +276,8 @@ is created with the default values for the other parameters.
 - `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
 - `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
 - `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
+- `arraytype::Type{<:AbstractMatrix}=Matrix`: Array type backing `pfield.particles`. Default is `Matrix`
+    (CPU). Pass `CuArray` (CUDA.jl) to allocate the particle field on GPU.
 """
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
@@ -284,15 +289,17 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_correctedpedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
-        useGPU=useGPU_default
+        useGPU=useGPU_default,
+        arraytype=Matrix
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
     # create particle field
-    particles = zeros(R, nfields, maxparticles)
+    particles = fill!(arraytype{R}(undef, nfields, maxparticles), zero(R))
+    scratch = fill!(arraytype{R}(undef, N_SCRATCH, maxparticles), zero(R))
 
     # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}(maxparticles, particles,
-                                            formulation, viscous, np, nt, t,
+    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, typeof(particles)}(maxparticles, particles,
+                                            formulation, viscous, scratch, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
                                             MergingWorkspace(),
@@ -344,14 +351,18 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     # Add particle to the field
     pfield.np += 1
 
-    # Populate the empty particle
-    set_X(pfield, i_next, X)
-    set_Gamma(pfield, i_next, Gamma)
-    set_sigma(pfield, i_next, sigma)
-    set_vol(pfield, i_next, vol)
-    set_circulation(pfield, i_next, circulation)
-    set_C(pfield, i_next, C)
-    set_static(pfield, i_next, Float64(static))
+    if pfield.particles isa Array
+        # Populate the empty particle
+        set_X(pfield, i_next, X)
+        set_Gamma(pfield, i_next, Gamma)
+        set_sigma(pfield, i_next, sigma)
+        set_vol(pfield, i_next, vol)
+        set_circulation(pfield, i_next, circulation)
+        set_C(pfield, i_next, C)
+        set_static(pfield, i_next, Float64(static))
+    else
+        _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C, static)
+    end
 
     # Initialize per-particle splitting state for this slot
     R = eltype(pfield.particles)
@@ -371,6 +382,38 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     g.degree[i_next] = UInt8(0)
     g.filament_id[i_next] = 0
 
+    return nothing
+end
+
+"""
+    `_add_particle_broadcast!(pfield, i, X, Gamma, sigma, vol, circulation, C, static)`
+
+GPU-safe particle population used by `add_particle` when `pfield.particles`
+is not a plain `Array` (e.g. `CuArray`). Two separate CUDA.jl restrictions
+apply here, not just one:
+  1. The scalar per-field setters (`set_sigma`, `set_vol`, `set_circulation`,
+     `set_static`) assign into a single (row, column) index, which is
+     disallowed scalar indexing on a `CuArray`. Indexing with a length-1
+     range instead of a bare `Int` keeps every write a proper
+     (kernel-dispatched) array broadcast.
+  2. Broadcasting a host `Vector` (e.g. `X`/`Gamma`, as built by every caller
+     in this codebase) directly onto a `CuArray` destination fails to
+     compile ("passing non-bitstype argument") because a heap-allocated
+     `Vector` isn't a valid GPU kernel argument. Converting it to a `Tuple`
+     first (an immutable, stack-allocated bitstype) fixes this.
+"""
+_add_particle_gpu_bcast_val(v::AbstractArray) = Tuple(v)
+_add_particle_gpu_bcast_val(v) = v
+
+function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma,
+                                                    vol, circulation, C, static)
+    view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X)
+    view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma)
+    view(pfield.particles, SIGMA_INDEX:SIGMA_INDEX, i) .= sigma
+    view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= vol
+    view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= circulation
+    view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C)
+    view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= Float64(static)
     return nothing
 end
 
@@ -431,6 +474,25 @@ const C_INDEX = 37:39
 const SFS_INDEX = 40:42
 const STATIC_INDEX = 43
 const U_PREV_INDEX = 44
+
+# Generic scratch rows: reusable per-particle storage for named intermediate
+# quantities in vectorized (broadcast) hot-path computations (e.g. RK3's
+# update_particle_states), so those intermediates write into a persistent
+# buffer with `.=` instead of heap-allocating a fresh array every call. Row
+# meaning is reused/contextual per call site (documented locally), the same
+# way M_INDEX's rows already carry different meanings across integration
+# schemes -- this is not new-field-per-quantity storage. Same fixed row count
+# for every formulation (no per-formulation sizing); a formulation that needs
+# fewer rows (e.g. ClassicVPM) simply leaves the rest unused.
+#
+# 11 is the true minimum for ReformulatedVPM's update_particle_states, achieved
+# by aliasing rows whose value is provably dead before another quantity needs
+# a row (see comments at each reuse site in FLOWVPM_timeintegration.jl) --
+# every formula here is purely elementwise per-particle, so overwriting a row
+# with `x .= f(x, ...)` (reading and writing the same row) is well-defined,
+# same as the standard `x .= x .+ 1` pattern.
+const N_SCRATCH = 11
+const SCRATCH_INDEX = 1:N_SCRATCH
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
@@ -710,16 +772,39 @@ end
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
-    zeroVal = zero(eltype(pfield.particles))
-    if pfield.np > MIN_MT_NP
-        Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+    if pfield.particles isa Array
+        zeroVal = zero(eltype(pfield.particles))
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+            end
+        else
+            for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+            end
         end
     else
-        for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
-        end
+        _reset_particles_broadcast!(pfield)
     end
+end
+
+"""
+    `_reset_particles_broadcast!(pfield)`
+
+GPU-safe equivalent of `_reset_particles`'s per-particle loop, used when
+`pfield.particles` is not a plain `Array`. The scalar `pfield.particles[STATIC_INDEX, i]
+== 0` check in the loop version is disallowed indexing on a `CuArray`;
+multiplying by the (0/1) static mask gets the same "leave static particles
+untouched, zero everything else" behavior as a whole-array broadcast.
+"""
+function _reset_particles_broadcast!(pfield::ParticleField)
+    np = pfield.np
+    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+    view(pfield.particles, U_INDEX, 1:np) .*= is_static
+    view(pfield.particles, VORTICITY_INDEX, 1:np) .*= is_static
+    view(pfield.particles, J_INDEX, 1:np) .*= is_static
+    view(pfield.particles, PSE_INDEX, 1:np) .*= is_static
+    return nothing
 end
 
 function _reset_particle(particle)
@@ -738,16 +823,34 @@ function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfie
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
-    zeroVal = zero(eltype(pfield.particles))
-    if pfield.np > MIN_MT_NP
-        Threads.@threads for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+    if pfield.particles isa Array
+        zeroVal = zero(eltype(pfield.particles))
+        if pfield.np > MIN_MT_NP
+            Threads.@threads for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+            end
+        else
+            for i in 1:pfield.np
+                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+            end
         end
     else
-        for i in 1:pfield.np
-            (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
-        end
+        _reset_particles_sfs_broadcast!(pfield)
     end
+end
+
+"""
+    `_reset_particles_sfs_broadcast!(pfield)`
+
+GPU-safe equivalent of `_reset_particles_sfs`'s per-particle loop, used when
+`pfield.particles` is not a plain `Array`. Same static-particle-mask
+broadcast technique as `_reset_particles_broadcast!`, applied to `SFS_INDEX`.
+"""
+function _reset_particles_sfs_broadcast!(pfield::ParticleField)
+    np = pfield.np
+    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+    view(pfield.particles, SFS_INDEX, 1:np) .*= is_static
+    return nothing
 end
 
 function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))

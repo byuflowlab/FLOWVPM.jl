@@ -59,6 +59,28 @@ end
 #     return one(σ)
 # end
 
+# ------------------------------------------------------------------------------
+# Target-buffer layout shims. Registry FastMultipole 2.0.x uses a FIXED target
+# buffer layout (potential row 4, gradient 5:7, hessian 8:16, always present);
+# FastMultipole matrix-ops (>= 2.3) uses SWITCH-RELATIVE buffers (rows depend
+# on the DerivativesSwitch, e.g. scalar_potential=false shifts gradient to 4:6
+# and hessian to 7:15) with switch-aware accessors. Using the fixed accessors
+# against switch-relative buffers reads/writes off-by-one rows (and
+# set_hessian!'s fixed row 16 lands OUT OF a 15-row buffer, silently corrupting
+# the next column under @inbounds), so pick the accessor family at load time.
+# ------------------------------------------------------------------------------
+if isdefined(fmm, :gradient_range)   # matrix-ops: switch-relative buffers
+    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, switch, i)
+    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, switch, i)
+    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, switch, i, val)
+    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, switch, i, val)
+else                                  # registry 2.0.x: fixed 16-row layout
+    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, i)
+    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, i)
+    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, i, val)
+    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, i, val)
+end
+
 function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
@@ -92,6 +114,14 @@ function previous_influence(system::ParticleField, i)
     prev_potential = zero(eltype(system))
     gx, gy, gz = get_U(system, i)
     return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+end
+
+# `get_previous_influence` exists on registry FastMultipole 2.0-2.2 (legacy
+# dynamic-P error estimation); the unified branch uses buffer metadata rows
+# (`previous_*_metadata_index`) instead, so guard the legacy overload to stay
+# loadable against both (the radix/GPU path never used this hook).
+if isdefined(fmm, :get_previous_influence)
+    fmm.get_previous_influence(system::ParticleField, i) = previous_influence(system, i)
 end
 
 fmm.metadata_per_body(system::ParticleField) = 2

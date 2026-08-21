@@ -57,6 +57,28 @@ _passes_relaxation_filter(::typeof(relax_filter_all), pfield, i::Integer) = true
 (rlx::Relaxation)(pfield, i) =
     _passes_relaxation_filter(rlx.filter, pfield, i) ? rlx.relax(rlx.rlxf, pfield, i) : nothing
 
+"""
+    relax_broadcast!(rlx::Relaxation, pfield)
+
+Whole-field broadcast relaxation, applied to every non-static particle at
+once. Used unconditionally on both CPU and GPU (a single shared
+implementation -- see logs/2026-07-21-gpu-full.md for the benchmark showing
+the CPU cost of unifying is modest, 1.4-2.1x, unlike time integration's
+4-10x, which is why that one stayed forked and this one didn't).
+
+Not made a callable method of `Relaxation` (e.g. `rlx(pfield)`) because that
+would collide with the existing single-particle callable `rlx(p)` -- both
+take exactly one positional argument and Julia dispatches on argument type,
+not on whether it represents a whole field or a single particle view.
+"""
+relax_broadcast!(rlx::Relaxation, pfield) = _relax_broadcast!(rlx.relax, rlx.rlxf, pfield)
+
+_relax_broadcast!(relax, rlxf, pfield) = error(
+    "No whole-field broadcast implementation registered for relaxation scheme `$relax`. " *
+    "Since relaxation now always runs through `relax_broadcast!` (no per-particle CPU loop " *
+    "fallback), a custom relaxation scheme must define a matching method of " *
+    "`FLOWVPM._relax_broadcast!(::typeof($relax), rlxf, pfield)`.")
+
 
 ##### RELAXATION METHODS #######################################################
 """
@@ -163,6 +185,71 @@ function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
         # Normalize the direction of the new vector to maintain the same strength
         G ./= sqrt(b2)
     end
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `relax_pedrizzetti`: same formula as the scalar version, vectorized over all particles."
+function _relax_broadcast!(::typeof(relax_pedrizzetti), rlxf::Real, pfield)
+
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 8, :); active .= 1.0 .- view(P, STATIC_INDEX, :)
+
+    J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+
+    w1, w2, w3 = view(Sc, 1, :), view(Sc, 2, :), view(Sc, 3, :)
+    w1 .= J6 .- J8
+    w2 .= J7 .- J3
+    w3 .= J2 .- J4
+
+    nrmw = view(Sc, 4, :); nrmw .= sqrt.(w1.^2 .+ w2.^2 .+ w3.^2)
+    nrmGamma = view(Sc, 5, :); nrmGamma .= sqrt.(G1.^2 .+ G2.^2 .+ G3.^2)
+
+    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0)
+    safenrmw = view(Sc, 7, :); safenrmw .= ifelse.(nrmw .> 0, nrmw, one(eltype(nrmw)))
+
+    G1 .= ifelse.(apply .> 0, (1-rlxf).*G1 .+ rlxf.*nrmGamma.*w1./safenrmw, G1)
+    G2 .= ifelse.(apply .> 0, (1-rlxf).*G2 .+ rlxf.*nrmGamma.*w2./safenrmw, G2)
+    G3 .= ifelse.(apply .> 0, (1-rlxf).*G3 .+ rlxf.*nrmGamma.*w3./safenrmw, G3)
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `relax_correctedpedrizzetti`: same formula as the scalar version, vectorized over all particles."
+function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfield)
+
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 8, :); active .= 1.0 .- view(P, STATIC_INDEX, :)
+
+    J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+
+    w1, w2, w3 = view(Sc, 1, :), view(Sc, 2, :), view(Sc, 3, :)
+    w1 .= J6 .- J8
+    w2 .= J7 .- J3
+    w3 .= J2 .- J4
+
+    nrmw = view(Sc, 4, :); nrmw .= sqrt.(w1.^2 .+ w2.^2 .+ w3.^2)
+    nrmGamma = view(Sc, 5, :); nrmGamma .= sqrt.(G1.^2 .+ G2.^2 .+ G3.^2)
+
+    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0)
+    safenrmw = view(Sc, 7, :); safenrmw .= ifelse.(nrmw .> 0, nrmw, one(eltype(nrmw)))
+
+    # sqrtb2 reuses nrmw's row: its RHS reads only w1/w2/w3/G1/G2/G3/nrmGamma/safenrmw
+    # (never nrmw itself), so overwriting nrmw's row here is safe (see point 7 of
+    # feedback-gpu-verification-standards on fused read/overwrite of a shared row).
+    # No positivity guard, matching the scalar version's `sqrt(b2)` exactly.
+    sqrtb2 = nrmw
+    sqrtb2 .= sqrt.(1 .- 2 .* (1-rlxf) .* rlxf .* (1 .- (G1.*w1 .+ G2.*w2 .+ G3.*w3) ./ (nrmGamma .* safenrmw)))
+
+    G1 .= ifelse.(apply .> 0, ((1-rlxf).*G1 .+ rlxf.*nrmGamma.*w1./safenrmw) ./ sqrtb2, G1)
+    G2 .= ifelse.(apply .> 0, ((1-rlxf).*G2 .+ rlxf.*nrmGamma.*w2./safenrmw) ./ sqrtb2, G2)
+    G3 .= ifelse.(apply .> 0, ((1-rlxf).*G3 .+ rlxf.*nrmGamma.*w3./safenrmw) ./ sqrtb2, G3)
 
     return nothing
 end

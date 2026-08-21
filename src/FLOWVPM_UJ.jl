@@ -10,6 +10,21 @@
 
 
 """
+    gpu_direct!(pfield::ParticleField)
+
+GPU implementation of the direct (no-FMM) O(N²) N-body sum, used by
+`UJ_direct` when `pfield.particles` is not a plain `Array` (e.g. `CuArray`).
+The real implementation is defined in `ext/FLOWVPMCUDAExt.jl` as a method of
+this function -- loaded automatically whenever `using CUDA` is added
+alongside FLOWVPM (Julia's package-extension mechanism). This stub is only
+reached if a non-`Array` particle field is used without CUDA.jl loaded.
+"""
+gpu_direct!(pfield::ParticleField) = error(
+    "No GPU direct-sum implementation available for particle arrays of type " *
+    "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
+    "the CUDA-accelerated direct (no-FMM) N-body sum for `CuArray`-backed particle fields.")
+
+"""
   `UJ_direct(pfield)`
 
 Calculates the velocity and Jacobian that the field exerts on itself by direct
@@ -32,7 +47,11 @@ function UJ_direct(pfield::ParticleField;
         _reset_particles_sfs(pfield)
     end
 
-    fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    if pfield.particles isa Array
+        fmm.direct!(pfield; scalar_potential=false, hessian=true)
+    else
+        gpu_direct!(pfield)
+    end
     sfs && Estr_direct!(pfield)
 end
 
@@ -60,7 +79,7 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_fmm(
-        pfield::ParticleField{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, useGPU};
+        pfield::ParticleField;
         verbose::Bool=false,
         vorticity::Bool=false,
         sfs::Bool=false,
@@ -69,7 +88,7 @@ function UJ_fmm(
         reset::Bool=true,
         reset_sfs::Bool=false,
         autotune::Bool=true,
-    ) where {useGPU}
+    )
 
     # reset # TODO should this really have an elseif in between?
     if reset
@@ -82,8 +101,22 @@ function UJ_fmm(
     # extract FMM options
     fmm_options = pfield.fmm
 
-    if vorticity && useGPU > 0
+    if vorticity && !(pfield.particles isa Array)
         error("UJ_fmm(...; vorticity=true) is currently CPU-only because the GPU nearfield path still assumes a fixed U/J target buffer.")
+    end
+
+    if !(pfield.particles isa Array)
+        # GPU-backed particle field: device-resident radix FMM lifecycle
+        # (see src/FLOWVPM_fmm_radix.jl). This replaces the former
+        # `nearfield_device=true` legacy-path forwarding, whose generic
+        # FastMultipole fallback silently DROPPED the nearfield contribution
+        # (no override existed) — the legacy octree path below is now
+        # CPU-only by construction and any unsupported GPU configuration
+        # fails loudly inside UJ_fmm_gpu!.
+        # reset already performed above; sfs guarded inside UJ_fmm_gpu!
+        UJ_fmm_gpu!(pfield; reset=false, reset_sfs=false, sfs=sfs, rbf=false,
+                    verbose=verbose)
+        return nothing
     end
 
     # Calculate FMM of vector potential and, optionally, the induced vorticity.
@@ -95,7 +128,7 @@ function UJ_fmm(
                     tune=true,
                     shrink=fmm_options.shrink_recenter,
                     recenter=fmm_options.shrink_recenter,
-                    nearfield_device=(useGPU>0),
+                    nearfield_device=false, # CPU-only branch: GPU fields dispatch to UJ_fmm_gpu! above; legacy nearfield_device forwarding silently dropped the nearfield
                     scalar_potential=false,
                     hessian=true,
                     extra_outputs=vorticity ? 3 : 0,

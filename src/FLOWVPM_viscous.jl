@@ -157,8 +157,12 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
     if pfield.integration == euler
 
         # Core spreading
-        for p in iterator(pfield)
-            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
+        if pfield.particles isa Array
+            for p in iterator(pfield)
+                get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
+            end
+        else
+            _corespreading_euler_broadcast!(pfield, scheme.nu, dt)
         end
 
         proceed = true
@@ -186,11 +190,15 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
     elseif pfield.integration == rungekutta3
 
         # Core spreading
-        for p in iterator(pfield)
-            # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
-            # Should I be solving dsigmadt = nu/sigma instead?
-            get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
-            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
+        # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
+        # Should I be solving dsigmadt = nu/sigma instead?
+        if pfield.particles isa Array
+            for p in iterator(pfield)
+                get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
+                get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
+            end
+        else
+            _corespreading_rk3_broadcast!(pfield, scheme.nu, dt, aux1, aux2)
         end
 
         # Update things in the last RK inner iteration
@@ -220,18 +228,28 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         # Reset core sizes if cores have overgrown
         if beta_cur >= scheme.beta
             # Calculate approximated vorticity into the dedicated vorticity field.
+            # NOTE: zeta (direct or FMM tree sum) is not GPU-broadcastable --
+            # same class of CPU-only iterative/reduction logic as
+            # `dynamicprocedure_sensorfunction`. Left as a follow-up, not
+            # force-masked.
             scheme.zeta(pfield)
 
-            for p in iterator(pfield)
-                # Use approximated vorticity as target vorticity (stored under P.M[7:9]).
-                for i in 1:3
-                    get_M(p)[6+i] = get_vorticity(p)[i]
+            if pfield.particles isa Array
+                for p in iterator(pfield)
+                    # Use approximated vorticity as target vorticity (stored under P.M[7:9]).
+                    for i in 1:3
+                        get_M(p)[6+i] = get_vorticity(p)[i]
+                    end
+                    # Reset core sizes
+                    get_sigma(p)[] = scheme.sgm0
                 end
-                # Reset core sizes
-                get_sigma(p)[] = scheme.sgm0
+            else
+                _corespreading_reset_broadcast!(pfield, scheme.sgm0)
             end
 
             # Calculate new strengths through RBF to preserve original vorticity
+            # NOTE: RBF conjugate-gradient is a scalar-reduction iterative
+            # solver -- CPU-only, same rationale as `scheme.zeta` above.
             scheme.rbf(pfield, scheme)
 
             # Reset core growth timer
@@ -239,6 +257,53 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         end
 
     end
+end
+
+"GPU-compatible broadcast path for `CoreSpreading`'s Euler core-growth update."
+function _corespreading_euler_broadcast!(pfield, nu, dt)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    sigma = view(P, SIGMA_INDEX, :)
+
+    sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ 2*nu*dt), sigma)
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `CoreSpreading`'s RK3 core-growth update."
+function _corespreading_rk3_broadcast!(pfield, nu, dt, aux1, aux2)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    M7 = view(P, M_INDEX[7], :)
+    sigma = view(P, SIGMA_INDEX, :)
+
+    M7 .= ifelse.(active .> 0, aux1 .* M7 .+ dt*2*nu, M7)
+    sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ aux2 .* M7), sigma)
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `CoreSpreading`'s core-size reset."
+function _corespreading_reset_broadcast!(pfield, sgm0)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+
+    for i in 1:3
+        M = view(P, M_INDEX[6+i], :)
+        J = view(P, J_INDEX[i], :)
+        M .= ifelse.(active .> 0, J, M)
+    end
+
+    sigma = view(P, SIGMA_INDEX, :)
+    sigma .= ifelse.(active .> 0, sgm0, sigma)
+
+    return nothing
 end
 ##### END OF CORE SPREADING SCHEME #############################################
 
@@ -282,8 +347,12 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
 
     # Recalculate particle volume from current particle smoothing
     if scheme.recalculate_vols
-        for p in iterator(pfield)
-            get_vol(p)[] = 4/3*pi*get_sigma(p)[]^3
+        if pfield.particles isa Array
+            for p in iterator(pfield)
+                get_vol(p)[] = 4/3*pi*get_sigma(p)[]^3
+            end
+        else
+            _pse_recalcvols_broadcast!(pfield)
         end
     end
 
@@ -291,21 +360,29 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     if pfield.integration == euler || pfield.integration == euler_exp
 
         # Update Gamma
-        for p in iterator(pfield)
-            for i in 1:3
-                get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
+        if pfield.particles isa Array
+            for p in iterator(pfield)
+                for i in 1:3
+                    get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
+                end
             end
+        else
+            _pse_euler_broadcast!(pfield, scheme.nu, dt)
         end
 
         # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
     elseif pfield.integration == rungekutta3
 
         # Update Gamma
-        for p in iterator(pfield)
-            for i in 1:3
-                get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
-                get_Gamma(p)[i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
+        if pfield.particles isa Array
+            for p in iterator(pfield)
+                for i in 1:3
+                    get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
+                    get_Gamma(p)[i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
+                end
             end
+        else
+            _pse_rk3_broadcast!(pfield, scheme.nu, dt, aux2)
         end
 
         # ------------------ DEFAULT -----------------------------------------------
@@ -314,6 +391,54 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
               " implemented in PSE viscous scheme yet!")
     end
 
+end
+
+"GPU-compatible broadcast path for `ParticleStrengthExchange`'s volume recalculation."
+function _pse_recalcvols_broadcast!(pfield)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    vol = view(P, VOL_INDEX, :)
+    sigma = view(P, SIGMA_INDEX, :)
+
+    vol .= ifelse.(active .> 0, (4/3*pi) .* sigma.^3, vol)
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `ParticleStrengthExchange`'s Euler Gamma update."
+function _pse_euler_broadcast!(pfield, nu, dt)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+
+    for i in 1:3
+        G = view(P, GAMMA_INDEX[i], :)
+        PSE = view(P, PSE_INDEX[i], :)
+        G .= ifelse.(active .> 0, G .+ dt*nu .* PSE, G)
+    end
+
+    return nothing
+end
+
+"GPU-compatible broadcast path for `ParticleStrengthExchange`'s RK3 Gamma update."
+function _pse_rk3_broadcast!(pfield, nu, dt, aux2)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+
+    for i in 1:3
+        M = view(P, M_INDEX[3+i], :)
+        G = view(P, GAMMA_INDEX[i], :)
+        PSE = view(P, PSE_INDEX[i], :)
+        M .= ifelse.(active .> 0, M .+ dt*nu .* PSE, M)
+        G .= ifelse.(active .> 0, G .+ aux2*dt*nu .* PSE, G)
+    end
+
+    return nothing
 end
 ##### END OF PARTICLE STRENGTH EXCHANGE SCHEME ###################################
 
@@ -499,18 +624,92 @@ end
 
 
 """
+    gpu_zeta_direct!(pfield::ParticleField)
+
+GPU implementation of the O(N²) direct-sum basis-function evaluation used by
+`zeta_direct`, dispatched to when `pfield.particles` is not a plain `Array`.
+Real implementation is a method of this function defined in
+`ext/FLOWVPMCUDAExt.jl` (loaded automatically alongside CUDA.jl). This stub
+is only reached if a non-`Array` particle field is used without CUDA.jl
+loaded.
+"""
+gpu_zeta_direct!(pfield) = error(
+    "No GPU zeta_direct implementation available for particle arrays of type " *
+    "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
+    "the CUDA-accelerated direct basis-function evaluation for `CuArray`-backed particle fields.")
+
+"""
   `zeta_direct(pfield)`
 
 Evaluates the basis function that the field exerts on itself through direct
 particle-to-particle interactions, saving the results under `VORTICITY_INDEX`.
 """
 function zeta_direct(pfield)
+    if pfield.particles isa Array
+        if Threads.nthreads() > 1
+            return zeta_direct_multithreaded(pfield)
+        else
+            return zeta_direct_singlethreaded(pfield)
+        end
+    else
+        return gpu_zeta_direct!(pfield)
+    end
+end
+
+function zeta_direct_singlethreaded(pfield)
     for P in iterator(pfield; include_static=true)
         get_vorticity(P) .= 0
     end
     return zeta_direct( iterator(pfield; include_static=true),
                         iterator(pfield; include_static=true),
                         pfield.kernel.zeta)
+end
+
+"""
+    `zeta_direct_multithreaded(pfield)`
+
+`Threads.@threads`-parallel version of `zeta_direct`'s CPU path, chunking
+target particles across threads (mirrors `Estr_direct_multithreaded` in
+`FLOWVPM_subfilterscale_models.jl`). Untyped `pfield` argument: this file is
+`include`d before `FLOWVPM_particlefield.jl` defines `ParticleField`, so it
+can't be annotated `::ParticleField` here (same constraint noted on the
+`gpu_zeta_direct!` stub above).
+"""
+function zeta_direct_multithreaded(pfield)
+    np = pfield.np
+    for i in 1:np
+        get_J(pfield, i)[1:3] .= 0
+    end
+
+    n_per_thread, rem = divrem(np, Threads.nthreads())
+    n = n_per_thread + (rem > 0)
+    assignments = 1:n:np
+    zeta = pfield.kernel.zeta
+
+    Threads.@threads for i_assignment in eachindex(assignments)
+        start_idx = assignments[i_assignment]
+        end_idx = min(start_idx + n - 1, np)
+
+        for i_target in start_idx:end_idx
+            Pi = get_particle(pfield, i_target)
+
+            for i_source in 1:np
+                Pj = get_particle(pfield, i_source)
+
+                dX1 = get_X(Pi)[1] - get_X(Pj)[1]
+                dX2 = get_X(Pi)[2] - get_X(Pj)[2]
+                dX3 = get_X(Pi)[3] - get_X(Pj)[3]
+                r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+                zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
+
+                get_J(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
+                get_J(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
+                get_J(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
+            end
+        end
+    end
+    return nothing
 end
 
 function zeta_direct(sources, targets, zeta::Function)
@@ -542,7 +741,8 @@ the FMM neglecting the far field, saving the results under `VORTICITY_INDEX`.
 function zeta_fmm(pfield)
     fmm_options = pfield.fmm
     leaf_size=fmm_options.ncrit
-    shrink_recenter=fmm_options.shrink_recenter
+    shrink=fmm_options.shrink_recenter
+    recenter=fmm_options.shrink_recenter
     multipole_acceptance = fmm_options.theta
     zeta = pfield.kernel.zeta
 
@@ -551,8 +751,8 @@ function zeta_fmm(pfield)
     leaf_sizes = SVector(leaf_size)
     tree = FastMultipole.Tree((pfield,), false, switches;
                               leaf_size=leaf_sizes,
-                              shrink=shrink_recenter,
-                              recenter=shrink_recenter,
+                              shrink=shrink,
+                              recenter=recenter,
                               interaction_list_method=FastMultipole.SelfTuningTargetStop())
     _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_sizes, multipole_acceptance, false, true, true)
     sort_index = tree.sort_index_list[1]
