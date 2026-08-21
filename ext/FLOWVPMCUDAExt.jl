@@ -180,7 +180,11 @@ const const4 = 0.25/pi
     # Mapping to variables
     @inbounds sigma = s[7i32, j]
 
-    if r2 > T(eps2) && abs(sigma) > T(eps2)
+    # exact-coincidence / zero-sigma guard only (matches the CPU pair loop,
+    # FLOWVPM_fmm.jl): the former absolute r2 > 1e-6 cutoff silently dropped
+    # every sub-1mm pair — measured 2.6e-4 U rel RMS on the p018 rotor field
+    # (task 049/051 diagnosis).
+    if r2 > zero(T) && abs(sigma) > zero(T)
         # Mapping to variables
         c4 = -T(const4)/(r*r2)
         @inbounds gam1 = c4 * s[4i32, j]
