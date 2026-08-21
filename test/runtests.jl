@@ -18,6 +18,7 @@ include("runtests_filament_calibration.jl")
 include("runtests_subfilterscale.jl")
 include("runtests_vorticity_storage.jl")
 include("runtests_relaxation_filter.jl")
+include("runtests_expint.jl")
 
 # Run tests on GPU if device is functional
 # if CUDA.functional()

@@ -212,4 +212,27 @@ end
         @test all(coordinate_span .> 0.85)
         @test maximum(relative_differences) < 0.03
     end
+
+    @testset "Widely spread field stays O(N) in memory" begin
+        # Regression: the old dense (extent/cell_size)^3 grid OOM'd when a
+        # single runaway particle stretched the bounding box (e.g. 10 m extent
+        # at 2.4 mm cell size -> ~1.2 TB). The sparse cell list must handle
+        # this with O(N) memory and still merge the close pair correctly.
+        pfield = FLOWVPM.ParticleField(10)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        FLOWVPM.add_particle(pfield, (0.001, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        FLOWVPM.add_particle(pfield, (1.0e7, 1.0e7, 1.0e7), (1.0, 0.0, 0.0), 1.0)
+
+        # cell_size = 0.005 over a 1e7 extent: 2e9 cells per axis, 8e27 total
+        # in the old dense scheme. Warm up compilation, then bound allocation.
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.005, sigma_relative=false)
+        @test removed == 1
+        @test FLOWVPM.get_np(pfield) == 2
+
+        # Re-run on the merged field (nothing left to merge): the workspace is
+        # warm, so allocation must stay far below anything extent-scaled.
+        allocated = @allocated FLOWVPM.merge_particles!(pfield; r_merge=0.005, sigma_relative=false)
+        @test FLOWVPM.get_np(pfield) == 2
+        @test allocated < 10^6
+    end
 end

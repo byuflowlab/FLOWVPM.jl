@@ -163,6 +163,25 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         proceed = true
 
+    # -------- FROZEN-GRADIENT GEOMETRIC SCHEME -------------------------------
+    elseif pfield.integration == euler_exp
+
+        # `_euler_exp` has already applied the homogeneous contraction and
+        # stored its constant-effective rate Zeff in M[9]. Add the exact
+        # diffusion contribution for y'=-2Zeff*y+2nu. This avoids the prior
+        # full-step Lie split, while retaining its Z->0 CoreSpreading limit.
+        for p in iterator(pfield)
+            zdt = dt*get_M(p)[9]
+            diffusion = if abs(zdt) < 1e-8
+                2*scheme.nu*dt*(1 - zdt + (2/3)*zdt*zdt)
+            else
+                -scheme.nu*expm1(-2*zdt)/get_M(p)[9]
+            end
+            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + diffusion)
+        end
+
+        proceed = true
+
     # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
     elseif pfield.integration == rungekutta3
 
@@ -269,7 +288,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     end
 
     # ------------------ EULER SCHEME ------------------------------------------
-    if pfield.integration == euler
+    if pfield.integration == euler || pfield.integration == euler_exp
 
         # Update Gamma
         for p in iterator(pfield)

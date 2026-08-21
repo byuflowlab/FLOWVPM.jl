@@ -173,6 +173,125 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 end
 
 
+"""
+    euler_exp(pfield::ParticleField, dt::Real; relax::Bool=false, custom_UJ=nothing)
+
+Frozen-gradient geometric integrator for the reformulated VPM with `f == 0`.
+
+Holding the velocity gradient `L` fixed, first evolve `q' = L*q` exactly and
+define `r = norm(q(dt))/norm(Γ(0))`.  The homogeneous rVPM geometry is then
+
+    Γ(dt) = q(dt) * r^(-3g),
+    σ(dt) = σ(0) * r^(-g).
+
+For the live `g = 1/5` formulation this preserves the intended stretching
+source: aligned strain amplifies Γ by `exp(2*dt*Z)`, rather than freezing the
+initial stretching vector as a constant forcing.  Positive σ is preserved for
+every finite gradient and timestep.  SFS forcing is applied afterward as an
+explicit first-order Lie split.  `CoreSpreading` uses the step's effective
+constant `Z = g*log(r)/dt` to integrate strain and diffusion together; other
+viscous schemes retain their existing post-step update.
+"""
+function euler_exp(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
+
+    # Evaluate UJ, SFS, and C
+    pfield.SFS(pfield, BeforeUJ())
+    if isnothing(custom_UJ)
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    else
+        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
+    end
+
+    _euler_exp(pfield, dt; relax)
+
+    return nothing
+end
+
+"""
+Steps the field forward in time by dt with the exponential (exact-in-Z) local
+update using the VPM reformulation. See `euler_exp` and `_euler`.
+"""
+function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
+                               dt::Real; relax::Bool=false) where {R, V, R2}
+
+    pfield.SFS(pfield, AfterUJ())
+
+    # Calculate freestream
+    Uinf = pfield.Uinf(pfield.t)
+
+    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
+    f == zero(f) || throw(ArgumentError(
+        "euler_exp geometric update currently requires ReformulatedVPM f == 0; got f=$f"))
+    zeta0::R = pfield.kernel.zeta(0)
+
+    # Update the particle field: convection and stretching
+    Threads.@threads for i in 1:pfield.np
+        p = get_particle(pfield, i)
+        is_static(p) && continue # skip static particles
+
+        C::R = get_C(p)[1]
+
+        # Update position
+        X = get_X(p)
+        U = get_U(p)
+        for i in 1:3
+            X[i] += dt*(U[i] + Uinf[i])
+        end
+
+        # Build the frozen stretching operator L such that S = L*Gamma.
+        J = get_J(p)
+        G = get_Gamma(p)
+        if pfield.transposed
+            L = @SMatrix [J[1] J[2] J[3];
+                          J[4] J[5] J[6];
+                          J[7] J[8] J[9]]
+        else
+            L = @SMatrix [J[1] J[4] J[7];
+                          J[2] J[5] J[8];
+                          J[3] J[6] J[9]]
+        end
+
+        G0 = SVector{3,R}(G[1], G[2], G[3])
+        Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
+        if Gnorm2 > zero(Gnorm2)
+            q = exp(dt*L)*G0
+            ratio = sqrt(q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) / sqrt(Gnorm2)
+            isfinite(ratio) && ratio > zero(ratio) || throw(DomainError(ratio,
+                "non-finite frozen-gradient strength ratio in euler_exp"))
+            gamma_scale = ratio^(-3*g)
+            G[1] = q[1]*gamma_scale
+            G[2] = q[2]*gamma_scale
+            G[3] = q[3]*gamma_scale
+            get_sigma(p)[] *= ratio^(-g)
+            # M[9] is private scratch for the euler_exp/CoreSpreading
+            # composition. It stores the constant rate with the same total
+            # contraction over this step: sigma(dt)/sigma(0)=exp(-dt*Zeff).
+            get_M(p)[9] = dt == zero(dt) ? zero(R) : g*log(ratio)/dt
+        else
+            get_M(p)[9] = zero(R)
+        end
+
+        # Existing SFS contribution, isolated as an explicit first-order Lie
+        # split because it is an additive modeled forcing rather than part of
+        # the homogeneous frozen-gradient geometry above.
+        SFS = get_SFS(p)
+        sigma3 = get_sigma(p)[]^3
+        G[1] -= dt*C*SFS[1]*sigma3/zeta0
+        G[2] -= dt*C*SFS[2]*sigma3/zeta0
+        G[3] -= dt*C*SFS[3]*sigma3/zeta0
+
+        # Relaxation: Align vectorial circulation to local vorticity
+        if relax
+            pfield.relaxation(p)
+        end
+    end
+
+    # Update the particle field: viscous diffusion
+    viscousdiffusion(pfield, dt)
+
+end
+
+
 
 
 

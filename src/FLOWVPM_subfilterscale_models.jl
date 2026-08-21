@@ -49,6 +49,8 @@ function Estr_direct!(pfield)
 end
 
 function Estr_direct_multithreaded(pfield::ParticleField)
+    # An empty field would build a zero-step assignment range below.
+    pfield.np > 0 || return nothing
     n_per_thread, rem = divrem(pfield.np, Threads.nthreads())
     n = n_per_thread + (rem > 0)
     assignments = 1:n:pfield.np
