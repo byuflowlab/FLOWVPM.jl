@@ -71,7 +71,7 @@ EOF'
 # CUDA precompiles on the GPU node against the system toolkit.
 ssh "$REMOTE" "bash -lc 'module load julia/1.11.7-6bmogfl \
   && export JULIA_PKG_PRECOMPILE_AUTO=0 \
-  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add([\\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\"]); Pkg.instantiate()\" \
+  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add(Pkg.PackageSpec(name=\\\"CUDA\\\", version=\\\"5.8\\\")); Pkg.add([\\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\"]); Pkg.instantiate()\" \
   && cd $VPMDIR \
   && sbatch scripts/fm052_run.sh'"
 
