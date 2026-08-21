@@ -958,6 +958,21 @@ function fmm.buffer_to_target!(
     return pfield
 end
 
+# Task 048: framework-owned per-system 3 x np device SFS buffer (E_str,
+# global particle order). ACCUMULATE into SFS_INDEX (rows 40:42), mirroring
+# the Estr_direct/Estr_fmm! += convention; the caller (UJ_fmm) owns the SFS
+# reset. Steady-state allocation-free: broadcast into the live prefix only.
+function fmm.sfs_to_target!(
+        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
+        buf::CUDA.AnyCuArray,
+        sort_index=1:pfield.np) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:CuArray{R}}
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected device SFS buffer shape $(size(buf)) for np=$np")
+    view(pfield.particles, FLOWVPM.SFS_INDEX, 1:np) .+= buf
+    return pfield
+end
+
 end # FLOWVPM._FMM_HAS_RADIX
 
 # Load FastMultipole's CUDA radix lifecycle at extension-init time (top level,

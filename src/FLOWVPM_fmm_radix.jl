@@ -428,12 +428,17 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
     # (particles added/removed between steps) with no reallocation.
+    # Task 048: SFS is armed unconditionally for this vortex coupling
+    # (sfs=true requires only hessian=true + sigma in packed row 8, both
+    # already guaranteed here), so any SFS scheme works without a cache
+    # rebuild; the per-evaluation `sfs` flag gates delivery only.
     return fmm.RadixFMMCache(pfield;
         expansion_order=P, ell,
         max_n_bodies=pfield.maxparticles,
         bounds=(SVector{3,TF}(bounds[1]),
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
-        hessian=true, near_radius2=q,
+        hessian=true, sfs=true, sfs_transposed=pfield.transposed,
+        near_radius2=q,
         level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)
 end
@@ -469,11 +474,11 @@ cache's fixed box. With derived bounds the coupling recenters once
 (`fmm.recenter!`, derived padded bounds, no reallocation) and retries; with
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
-function _radix_fmm_evaluate!(pfield::ParticleField)
+function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false)
     st = _radix_fmm_coupling!(pfield)
     try
         fmm.fmm!(pfield, st.cache;
-            scalar_potential=false, gradient=true, hessian=true)
+            scalar_potential=false, gradient=true, hessian=true, sfs)
     catch err
         (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
         # out-of-box (or other geometry) rejection: recenter and retry once;
@@ -484,7 +489,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField)
             (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
         fmm.recenter!(st.cache, pfield; bounds)
         fmm.fmm!(pfield, st.cache;
-            scalar_potential=false, gradient=true, hessian=true)
+            scalar_potential=false, gradient=true, hessian=true, sfs)
     end
     return nothing
 end
@@ -497,21 +502,39 @@ GPU/radix counterpart of `UJ_fmm` for a `CuArray`-backed `ParticleField`
 (also runnable on a `Matrix`-backed field through FastMultipole's
 transfer-based host path, used by the CPU-side tests). Computes U and J via
 the resident radix FMM (device-to-device for a GPU field: no per-step body
-transfers) and accumulates into `U_INDEX`/`J_INDEX`. Unsupported
-configurations (`rbf`, `sfs`) fail loudly rather than silently dropping
-physics.
+transfers) and accumulates into `U_INDEX`/`J_INDEX`. With `sfs=true` the
+lifecycle's SFS pass (task 048) additionally ACCUMULATES the vortex-stretching
+term `E_str` into `SFS_INDEX` (rows 40:42) — the caller owns the reset
+(`UJ_fmm` resets SFS rows before dispatching here, matching the CPU
+`Estr_fmm!` convention). Unsupported configurations (`rbf`) fail loudly
+rather than silently dropping physics.
 """
 function UJ_fmm_gpu!(pfield::ParticleField;
         reset::Bool=true, reset_sfs::Bool=false, sfs::Bool=false,
         rbf::Bool=false, verbose::Bool=false, optargs...)
     rbf && error("rbf/zeta evaluation is not supported on the radix/GPU FMM " *
         "path (use UJ_direct/zeta_direct for CuArray-backed fields)")
-    sfs && error("SFS (Estr_fmm) is not supported on the radix/GPU FMM path " *
-        "yet; use SFS=NoSFS() with GPU-backed particle fields")
     reset && _reset_particles(pfield)
     reset_sfs && _reset_particles_sfs(pfield)
-    _radix_fmm_evaluate!(pfield)
+    _radix_fmm_evaluate!(pfield; sfs)
     return nothing
+end
+
+################################################################################
+# SFS delivery hook (task 048): FastMultipole hands back a framework-owned
+# 3 x np E_str buffer in global particle order; ACCUMULATE into SFS_INDEX
+# (rows 40:42), mirroring the `Estr_direct`/`Estr_fmm!` += convention (the
+# caller resets SFS rows). This host-Matrix method serves the transfer-based
+# host path; the CuArray method lives in ext/FLOWVPMCUDAExt.jl.
+################################################################################
+
+function fmm.sfs_to_target!(pfield::ParticleField, buf::AbstractMatrix,
+        sort_index=1:pfield.np)
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected SFS output buffer shape $(size(buf)) for np=$np")
+    view(pfield.particles, SFS_INDEX, 1:np) .+= buf
+    return pfield
 end
 
 else # !_FMM_HAS_RADIX ---------------------------------------------------------

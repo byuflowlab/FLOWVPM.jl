@@ -46,23 +46,25 @@ const FMM034_WAKE_PITCH = 2 * FMM034_WAKE_R
 fmm034_settings() = vpm_fmm.FMM(; p=4, ncrit=50, theta=0.4,
     autotune_p=false, autotune_ncrit=false, autotune_reg_error=false)
 
-function fmm034_pfield(maxparticles, R=Float64; arraytype=Matrix, UJ=vpm_fmm.UJ_fmm)
+function fmm034_pfield(maxparticles, R=Float64; arraytype=Matrix, UJ=vpm_fmm.UJ_fmm,
+        transposed=true)
     return vpm_fmm.ParticleField(maxparticles, R;
         formulation=vpm_fmm.rVPM,
         kernel=vpm_fmm.gaussianerf,
         viscous=vpm_fmm.Inviscid(),
         SFS=vpm_fmm.noSFS,
-        transposed=true,
+        transposed=transposed,
         integration=vpm_fmm.rungekutta3,
         UJ=UJ,
         fmm=fmm034_settings(),
         arraytype=arraytype)
 end
 
-function fmm034_build_cube(n; R=Float64, maxparticles=n, UJ=vpm_fmm.UJ_fmm)
+function fmm034_build_cube(n; R=Float64, maxparticles=n, UJ=vpm_fmm.UJ_fmm,
+        transposed=true)
     rng = MersenneTwister(FMM034_SEED + n)
     sigma = 2.0 * (1.0 / n)^(1 / 3)
-    pfield = fmm034_pfield(maxparticles, R; UJ=UJ)
+    pfield = fmm034_pfield(maxparticles, R; UJ=UJ, transposed=transposed)
     for _ in 1:n
         X = rand(rng, 3)
         Gamma = (2 .* rand(rng, 3) .- 1) ./ n
@@ -397,10 +399,171 @@ end
     end
     @test_throws ErrorException vpm_fmm.UJ_fmm_gpu!(pfield3)
 
-    # rbf/sfs are unsupported on this path (raised before any cache is built)
+    # rbf remains unsupported on this path (raised before any cache is built);
+    # sfs is supported since task 048 (see the dedicated SFS testset below)
     pfield4 = fmm034_build_cube(500)
     @test_throws ErrorException vpm_fmm.UJ_fmm_gpu!(pfield4; rbf=true)
-    @test_throws ErrorException vpm_fmm.UJ_fmm_gpu!(pfield4; sfs=true)
+    # sfs no longer throws (n=1500: the 500-particle cube's σ overlap is too
+    # large for the radix auto-geometry rule, unrelated to SFS)
+    pfield5 = fmm034_build_cube(1500)
+    vpm_fmm.UJ_fmm_gpu!(pfield5; sfs=true)
+    @test any(!iszero, pfield5.particles[vpm_fmm.SFS_INDEX, 1:1500])
+end
+
+# relative RMS of the SFS rows (40:42) against a reference particle matrix
+function fmm034_sfs_relrms(particles, ref_particles, np)
+    A = Array(particles)
+    B = Array(ref_particles)
+    e2 = r2 = 0.0
+    for i in 1:np
+        for r in vpm_fmm.SFS_INDEX
+            d = Float64(A[r, i]) - Float64(B[r, i])
+            e2 += d * d
+            r2 += Float64(B[r, i])^2
+        end
+    end
+    return sqrt(e2 / max(r2, eps()))
+end
+
+# all-pairs ζ brute force of E_str from the J currently ON the particles
+# (rows J_INDEX), FLOWVPM Estr_direct algebra, saturation cutoff matched to
+# the framework (ρ² ≤ 81 in F64, ≤ 42.25 in F32 — contributions ≤ 1e-18/1e-9
+# of ζ(0)). Isolates the SFS pass from the FMM's own U/J error.
+function fmm034_sfs_bruteforce(pfield, np; transposed=true)
+    P = Array(pfield.particles)
+    K1 = 1 / (2pi)^1.5
+    rc2 = eltype(pfield.particles) === Float32 ? 42.25 : 81.0
+    E = zeros(3, np)
+    for i in 1:np
+        Ji = view(P, vpm_fmm.J_INDEX, i)
+        for j in 1:np
+            i == j && continue
+            dx = P[1, i] - P[1, j]; dy = P[2, i] - P[2, j]; dz = P[3, i] - P[3, j]
+            sig = Float64(P[vpm_fmm.SIGMA_INDEX, j])
+            rho2 = (dx^2 + dy^2 + dz^2) / sig^2
+            rho2 <= rc2 || continue
+            z = K1 * exp(-rho2 / 2) / sig^3
+            Jj = view(P, vpm_fmm.J_INDEX, j)
+            G1, G2, G3 = P[vpm_fmm.GAMMA_INDEX, j]
+            if transposed
+                E[1, i] += z * ((Ji[1] - Jj[1]) * G1 + (Ji[2] - Jj[2]) * G2 + (Ji[3] - Jj[3]) * G3)
+                E[2, i] += z * ((Ji[4] - Jj[4]) * G1 + (Ji[5] - Jj[5]) * G2 + (Ji[6] - Jj[6]) * G3)
+                E[3, i] += z * ((Ji[7] - Jj[7]) * G1 + (Ji[8] - Jj[8]) * G2 + (Ji[9] - Jj[9]) * G3)
+            else
+                E[1, i] += z * ((Ji[1] - Jj[1]) * G1 + (Ji[4] - Jj[4]) * G2 + (Ji[7] - Jj[7]) * G3)
+                E[2, i] += z * ((Ji[2] - Jj[2]) * G1 + (Ji[5] - Jj[5]) * G2 + (Ji[8] - Jj[8]) * G3)
+                E[3, i] += z * ((Ji[3] - Jj[3]) * G1 + (Ji[6] - Jj[6]) * G2 + (Ji[9] - Jj[9]) * G3)
+            end
+        end
+    end
+    return E
+end
+
+fmm034_sfs_vs_matrix(pfield, E, np) = begin
+    S = Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:np]
+    sqrt(sum(abs2, S .- E) / max(sum(abs2, E), eps()))
+end
+
+@testset "radix FMM coupling: SFS host path (task 048)" begin
+    # Host-radix SFS (UJ_fmm_gpu! sfs=true) on the cube case at FM expansion
+    # orders 4 AND 8 (standing P=4 rule), two-tier gates:
+    #
+    # (1) MECHANICAL parity (what task 048 owns): radix SFS vs an all-pairs
+    #     ζ brute force built from the radix-delivered J itself — gate 1e-6.
+    #     Requires the widened shell ell=2/near_radius2=20 (min ρ ≈ 5.2) so
+    #     the U-list covers every non-negligible ζ pair; at the DERIVED
+    #     defaults (ell=2, q=12, min ρ ≈ 3.84) the U-list ζ truncation alone
+    #     measures ≈ 3.0e-3 rel RMS (recorded default-list gap, 2026-08-20 —
+    #     the design-anticipated risk; widened here per its instruction).
+    # (2) PHYSICS vs the exact-erf references (Estr_direct!/Estr_fmm!): E is
+    #     built from J, and the radix J carries the 031a erf-free g/h
+    #     nearfield approximation (j_rel_rms ≈ 1.9e-3 on this overlap-2 cube,
+    #     P- and shell-independent; U meets its own 1e-3 gate). The E error is
+    #     J-bound (measured e/j ratio ≈ 1.9), so the gate is
+    #     max(1e-3, 3 · j_rel_rms): it tightens automatically if the g/h
+    #     arithmetic ever improves, and a mechanism regression (not J-bound)
+    #     still fails loudly. A flat 1e-3 vs exact-erf references is
+    #     unattainable at any radix setting while J itself is ≈ 2e-3.
+    n = 1500
+    for P in (4, 8)
+        pfield = fmm034_build_cube(n)
+        FLOWVPM.radix_fmm_settings!(pfield; expansion_order=P, ell=2,
+            near_radius2=20)
+        vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=true, sfs=true)
+
+        # (1) mechanical parity from the radix-delivered J
+        E_mech = fmm034_sfs_bruteforce(pfield, n)
+        e_mech = fmm034_sfs_vs_matrix(pfield, E_mech, n)
+
+        # exact reference: direct U/J then the direct pairwise Estr
+        ref = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
+        vpm_fmm.UJ_direct(ref)
+        vpm_fmm.Estr_direct!(ref)
+
+        # legacy-octree FMM SFS reference (UJ_fmm runs Estr_fmm! when sfs=true)
+        fmmref = fmm034_build_cube(n)
+        vpm_fmm.UJ_fmm(fmmref; sfs=true, reset=true)
+
+        j_rel = fmm034_uj_errors(pfield.particles, ref.particles, n).j_rel_rms
+        e_direct = fmm034_sfs_relrms(pfield.particles, ref.particles, n)
+        e_fmm = fmm034_sfs_relrms(pfield.particles, fmmref.particles, n)
+        e_sanity = fmm034_sfs_relrms(fmmref.particles, ref.particles, n)
+        @info "SFS host radix [cube n=$n P=$P]" e_mech e_direct e_fmm e_sanity j_rel
+        @test e_mech <= 1e-6
+        @test e_direct <= max(1e-3, 3 * j_rel)
+        @test e_fmm <= max(1e-3, 3 * j_rel)
+
+        # accumulate semantics: without reset_sfs a second sfs evaluation
+        # doubles the SFS rows
+        S1 = copy(Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n])
+        vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=true)
+        S2 = Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n]
+        @test isapprox(S2, 2 .* S1; rtol=1e-10)
+
+        # sfs=false evaluations leave the SFS rows untouched
+        vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=false)
+        @test Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n] == S2
+    end
+
+    # classic (transposed=false) scheme, Float64, P = 4: mechanical parity
+    # (scheme-flag correctness) + the J-bound physics gate
+    pfield_c = fmm034_build_cube(n; transposed=false)
+    FLOWVPM.radix_fmm_settings!(pfield_c; expansion_order=4, ell=2,
+        near_radius2=20)
+    vpm_fmm.UJ_fmm_gpu!(pfield_c; reset=true, reset_sfs=true, sfs=true)
+    e_mech_c = fmm034_sfs_vs_matrix(pfield_c,
+        fmm034_sfs_bruteforce(pfield_c, n; transposed=false), n)
+    ref_c = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct, transposed=false)
+    vpm_fmm.UJ_direct(ref_c)
+    vpm_fmm.Estr_direct!(ref_c)
+    j_rel_c = fmm034_uj_errors(pfield_c.particles, ref_c.particles, n).j_rel_rms
+    e_classic = fmm034_sfs_relrms(pfield_c.particles, ref_c.particles, n)
+    @info "SFS host radix classic scheme [cube n=$n P=4]" e_mech_c e_classic j_rel_c
+    @test e_mech_c <= 1e-6
+    @test e_classic <= max(1e-3, 3 * j_rel_c)
+    # the two schemes genuinely differ on this field (guards against the
+    # transposed flag being silently ignored)
+    ref_t = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
+    vpm_fmm.UJ_direct(ref_t)
+    vpm_fmm.Estr_direct!(ref_t)
+    @test fmm034_sfs_relrms(ref_c.particles, ref_t.particles, n) > 1e-3
+
+    # Float32 host path: mechanical parity at the F32 arithmetic floor plus
+    # the J-bound physics gate (J itself is F32 here)
+    pfield_32 = fmm034_build_cube(n; R=Float32)
+    FLOWVPM.radix_fmm_settings!(pfield_32; expansion_order=4, ell=2,
+        near_radius2=20)
+    vpm_fmm.UJ_fmm_gpu!(pfield_32; reset=true, reset_sfs=true, sfs=true)
+    e_mech_32 = fmm034_sfs_vs_matrix(pfield_32,
+        fmm034_sfs_bruteforce(pfield_32, n), n)
+    ref_32 = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
+    vpm_fmm.UJ_direct(ref_32)
+    vpm_fmm.Estr_direct!(ref_32)
+    j_rel_32 = fmm034_uj_errors(pfield_32.particles, ref_32.particles, n).j_rel_rms
+    e_32 = fmm034_sfs_relrms(pfield_32.particles, ref_32.particles, n)
+    @info "SFS host radix Float32 [cube n=$n P=4]" e_mech_32 e_32 j_rel_32
+    @test e_mech_32 <= 1e-4
+    @test e_32 <= max(1e-3, 3 * j_rel_32)
 end
 
 # =========================================================================
