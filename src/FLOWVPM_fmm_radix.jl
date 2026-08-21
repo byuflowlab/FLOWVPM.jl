@@ -528,7 +528,7 @@ end
 # host path; the CuArray method lives in ext/FLOWVPMCUDAExt.jl.
 ################################################################################
 
-function fmm.sfs_to_target!(pfield::ParticleField, buf::AbstractMatrix,
+function fmm.sfs_to_target!(pfield::ParticleField, buf::Matrix,
         sort_index=1:pfield.np)
     np = pfield.np
     size(buf, 2) == np || error(
