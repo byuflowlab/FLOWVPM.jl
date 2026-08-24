@@ -27,6 +27,9 @@ export FASTMULTIPOLE_FORCE_CUDA_LOAD=1
 export JULIA_NUM_THREADS=8
 
 cd "$WORKDIR"
+echo "=== fm051 device testsets (tile-boundary parity sweeps) ==="
+julia --project="$ENVDIR" --threads=8 "$HOME/FastMultipole-046/test/direct_rectangular_test.jl"
+
 echo "=== fm051 rectangular direct benchmark ==="
 julia --project="$ENVDIR" scripts/fm051_rect_bench.jl "$BINFILE"
 
