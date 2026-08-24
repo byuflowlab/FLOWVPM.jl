@@ -912,7 +912,7 @@ end
 
 if FLOWVPM._FMM_HAS_RADIX
 
-# Framework-owned persistent device source buffer, passed as an 8 x np view
+# Framework-owned persistent device source buffer, passed as a 9 x np view
 # (live prefix; identity sort index). Packed layout (integration-api-spec §3):
 #   rows 1:3  position            (X_INDEX)
 #   row  4    MAC/error radius    rho_sigma * sigma (autotuning off, so
@@ -920,6 +920,7 @@ if FLOWVPM._FMM_HAS_RADIX
 #                                 — the host `source_system_to_buffer!` value)
 #   rows 5:7  vector strength     (GAMMA_INDEX)
 #   row  8    raw smoothing sigma (SIGMA_INDEX; read by RegularizedVortex)
+#   row  9    SFS active mask (1 non-static, 0 static)
 # Steady-state allocation-free: broadcasts into the existing buffer only.
 function fmm.source_to_buffer!(buf::CUDA.AnyCuArray,
         pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
@@ -928,7 +929,7 @@ function fmm.source_to_buffer!(buf::CUDA.AnyCuArray,
     (first(sort_index) == 1 && last(sort_index) == np) || error(
         "FLOWVPM device source_to_buffer! expects the identity sort index over " *
         "the live particle prefix (got $(first(sort_index)):$(last(sort_index)) for np=$np)")
-    size(buf, 1) >= 8 && size(buf, 2) == np || error(
+    size(buf, 1) >= 9 && size(buf, 2) == np || error(
         "unexpected device source buffer shape $(size(buf)) for np=$np")
     P = pfield.particles
     rho_sigma = R(pfield.fmm.default_rho_over_sigma)
@@ -936,6 +937,7 @@ function fmm.source_to_buffer!(buf::CUDA.AnyCuArray,
     view(buf, 4, :) .= rho_sigma .* view(P, FLOWVPM.SIGMA_INDEX, 1:np)
     view(buf, 5:7, :) .= view(P, FLOWVPM.GAMMA_INDEX, 1:np)
     view(buf, 8, :) .= view(P, FLOWVPM.SIGMA_INDEX, 1:np)
+    view(buf, 9, :) .= view(P, FLOWVPM.STATIC_INDEX, 1:np) .== 0
     return buf
 end
 

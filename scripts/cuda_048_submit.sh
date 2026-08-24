@@ -13,6 +13,7 @@ VPMDIR=FLOWVPM-046
 FMDIR=FastMultipole-046
 ENVDIR='$HOME/fm048env'
 FMLOCAL=../FastMultipole
+BINLOCAL=../FastMultipole/MATRIX_OPERATOR_REFACTOR/data/rotor_field_gpu_verification/p018_710_particles.bin
 
 ssh "$REMOTE" "mkdir -p $VPMDIR $FMDIR"
 
@@ -23,6 +24,10 @@ rsync -az --delete --exclude .git \
 rsync -az --delete --exclude .git \
     "$FMLOCAL/src" "$FMLOCAL/test" "$FMLOCAL/Project.toml" \
     "$REMOTE:$FMDIR/"
+
+test -f "$BINLOCAL"
+ssh "$REMOTE" "mkdir -p $VPMDIR/data/fm048"
+rsync -az "$BINLOCAL" "$REMOTE:$VPMDIR/data/fm048/"
 
 # local=true preferences for the three CUDA JLLs (fm023env recipe)
 ssh "$REMOTE" 'mkdir -p fm048env && cat > fm048env/LocalPreferences.toml <<EOF

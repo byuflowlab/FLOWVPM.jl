@@ -65,7 +65,8 @@ NOTE: This method accumulates the calculation on the properties U and J of
 every particle without previously emptying those properties.
 """
 function UJ_direct(source::ParticleField, target::ParticleField)
-    return fmm.direct!(target, source)
+    return fmm.direct!(target, source;
+        scalar_potential=false, gradient=true, hessian=true)
 end
 
 

@@ -28,14 +28,12 @@ echo "CUDA_HOME=${CUDA_HOME:-unset}"
 
 FPDIR="${FP052_DIR:-$HOME/FLOWPanel-052}"
 VPMDIR="${FP052_VPMDIR:-$HOME/FLOWVPM-046}"
-ENVDIR="${FP052_ENV:-$HOME/fm052env}"
+ENVDIR="${FP052_ENV:-$HOME/fm052env_cuda63_geoiofree}"
 STAGES="${FP052_STAGES:-a b c}"
 
 export FASTMULTIPOLE_FORCE_CUDA_LOAD=1
-# single env with CUDA 5.8.5 (last pre-CUDATools line): env stacking with
-# fm048env's CUDA 6.3 failed — CUDATools' PRECOMPILE workload hard-uses
-# PrettyTables 3 API (TextHighlighter), incompatible with the geo stack's
-# PrettyTables 2.x (job 13247860).
+# Single GeoIO-free environment with CUDA 6.3. Julia remains pinned to 1.11.7
+# until the separate Julia 1.12 device-step LLVM-crash gate passes.
 export JULIA_NUM_THREADS=32
 export BLAS_NUM_THREADS=32
 

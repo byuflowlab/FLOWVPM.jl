@@ -57,7 +57,7 @@ fmm.residency(pfield::ParticleField) =
 # rho_sigma*sigma MAC radius, distinct from sigma by convention.
 # The kernel strategy is selectable through `RadixFMMSettings.direct_kernel`
 # (task 035 tuning surface); the shipped default is `PartitionedVortex` at
-# `rho_t = 3.668` (035 cycles 1 and 3).
+# `rho_t = 4.789` (048 production selection, 2026-08-22).
 function fmm.direct_kernel(pfield::ParticleField)
     is_gaussianerf(pfield.kernel) || error(
         "the radix/GPU FMM path supports only the `gaussianerf` kernel " *
@@ -67,15 +67,16 @@ function fmm.direct_kernel(pfield::ParticleField)
     return _radix_direct_kernel(settings)
 end
 
-# Coupling default smoothing cutoff for the partitioned kernel (task 035
-# cycle 3, user-approved 2026-08-12): the 031a velocity-RMS-target cutoff.
-# This task's winner gate is sampled velocity RMS <= 1e-3 (Jacobian is
-# diagnostic), so the coupling defaults to rho_t = 3.668 rather than the
-# kernel constructor's Jacobian-RMS-derived 4.252. The cycle-3C error
-# decomposition validated it under the conservative sum gate
-# (||P-R|| + ||F-P||)/||R|| < 1e-3 at cube/wake, n = 1e5/1e6. Applies only
-# to :partitioned; :regularized/:twopass keep their constructor defaults.
-const _PARTITIONED_RHO_T_DEFAULT = 3.668
+# Coupling default smoothing cutoff for the partitioned kernel (task 048
+# production selection, user-approved 2026-08-22): the conservative
+# Jacobian-per-pair cutoff. Together with expansion_order = 6 and derived
+# near-shell geometry it passes the strict 5e-4 F64 delivered-E_str gate on
+# the p018 210k production field (e_sfs 1.46e-4, +3% U/J cost vs the P4
+# baseline; H200 job 13303399 sweep, `fm048_sweep_13303399.csv`). Supersedes
+# the 035-cycle-3 velocity-RMS cutoff 3.668 (superseded value validated
+# under the sum gate < 1e-3 at cube/wake n = 1e5/1e6). Applies only to
+# :partitioned; :regularized/:twopass keep their constructor defaults.
+const _PARTITIONED_RHO_T_DEFAULT = 4.789
 
 "Resolve the FastMultipole nearfield direct-kernel functor from settings."
 function _radix_direct_kernel(settings)
@@ -166,9 +167,10 @@ to automatic derivation:
   regularized-everywhere `RegularizedVortex`), or `:twopass`
   (`TwoPassVortex`).
 - `rho_t`: override the nearfield kernel's smoothing-cutoff radius. For
-  `:partitioned` the coupling default is `3.668` (031a velocity-RMS cutoff;
-  task 035 cycle 3 — see `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and
-  `:twopass` default to their shipped constructor values.
+  `:partitioned` the coupling default is `4.789` (conservative Jacobian
+  per-pair cutoff; task 048 production selection, 2026-08-22 — see
+  `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and `:twopass` default to
+  their shipped constructor values.
 - `m2l_strategy`: `:dense` (default since task 035 cycle 1,
   `DenseTranslationM2L` — FastMultipole's own measured auto rule at P <= 4;
   the 035 sweep measured concat 1.6-2.8x slower at matched geometry),
@@ -188,7 +190,7 @@ to automatic derivation:
   defaults (`rho_t = 4.252`, floor 16) the validated margin was `1.15`.
 """
 Base.@kwdef struct RadixFMMSettings
-    expansion_order::Union{Nothing,Int} = 4
+    expansion_order::Union{Nothing,Int} = 6
     ell::Union{Nothing,Int} = nothing
     near_radius2::Int = 6
     window_classes::Union{Nothing,Int} = nothing
@@ -202,6 +204,115 @@ Base.@kwdef struct RadixFMMSettings
     m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
+end
+
+"""
+    _validate_radix_fmm_settings(settings::RadixFMMSettings)
+
+Eagerly validate every per-field setting using the same kernel, strategy,
+stencil, lifecycle-option, and bounds contracts consumed by cache
+construction. This is deliberately independent of a `ParticleField`, so
+`radix_fmm_settings!` can reject the complete proposal before changing global
+GPU settings or invalidating a live cache.
+"""
+function _validate_radix_fmm_settings(settings::RadixFMMSettings)
+    P = settings.expansion_order
+    (P === nothing || P >= 0) || throw(ArgumentError(
+        "RadixFMMSettings.expansion_order must be nonnegative or nothing; got $P"))
+
+    ell = settings.ell
+    (ell === nothing || 2 <= ell <= fmm.RADIX_GRID_MAX_ELL) || throw(ArgumentError(
+        "RadixFMMSettings.ell must lie in 2:$(fmm.RADIX_GRID_MAX_ELL) or be nothing; got $ell"))
+
+    q = fmm._validate_rigid_near_radius2(
+        settings.near_radius2, "RadixFMMSettings")
+    (settings.window_classes === nothing || settings.window_classes > 0) ||
+        throw(ArgumentError("RadixFMMSettings.window_classes must be positive or nothing"))
+    (isfinite(settings.padding) && settings.padding > 0) || throw(ArgumentError(
+        "RadixFMMSettings.padding must be finite and positive; got $(settings.padding)"))
+    (isfinite(settings.accuracy_margin) && settings.accuracy_margin > 0) ||
+        throw(ArgumentError("RadixFMMSettings.accuracy_margin must be finite and positive; got $(settings.accuracy_margin)"))
+
+    settings.direct_kernel in (:regularized, :partitioned, :twopass) ||
+        throw(ArgumentError("RadixFMMSettings.direct_kernel must be :regularized, " *
+            ":partitioned, or :twopass; got $(repr(settings.direct_kernel))"))
+    (settings.rho_c === nothing || settings.direct_kernel === :twopass) ||
+        throw(ArgumentError("RadixFMMSettings.rho_c applies only to direct_kernel=:twopass"))
+    kernel = _radix_direct_kernel(settings) # actual rho_t/rho_c constructor contract
+    kernel isa fmm.AbstractDirectKernel || error("unreachable direct-kernel resolution")
+    settings.m2l_strategy in (:concat, :dense, :precomputed_y) ||
+        throw(ArgumentError("RadixFMMSettings.m2l_strategy must be :concat, :dense, " *
+            "or :precomputed_y; got $(repr(settings.m2l_strategy))"))
+    m2l_strategy, operator = _radix_m2l_strategy(settings)
+    TF = something(settings.precision, Float64)
+    TF in (Float32, Float64) || throw(ArgumentError(
+        "RadixFMMSettings.precision must be Float32, Float64, or nothing; got $TF"))
+    fmm.CUDARadixLifecycleOptions(;
+        precision=TF, operator, m2l_strategy) # actual strategy/precision contract
+
+    settings.level_radii2 === nothing ||
+        fmm._validate_rigid_level_schedule(settings.level_radii2, q)
+
+    if settings.bounds !== nothing
+        length(settings.bounds) == 2 || throw(ArgumentError(
+            "RadixFMMSettings.bounds must be (x_min, box_size)"))
+        x_min = try
+            fmm.SVector{3,TF}(settings.bounds[1])
+        catch
+            throw(ArgumentError("RadixFMMSettings.bounds x_min must have three numeric entries"))
+        end
+        all(isfinite, x_min) || throw(ArgumentError(
+            "RadixFMMSettings.bounds x_min must be finite"))
+        ell_for_bounds = something(ell, 2)
+        try
+            fmm._resolve_radix_ell_axes(settings.bounds[2], ell_for_bounds, TF)
+        catch err
+            err isa ArgumentError && rethrow()
+            throw(ArgumentError("invalid RadixFMMSettings.bounds box_size: $(sprint(showerror, err))"))
+        end
+    end
+    return settings
+end
+
+"Field-aware semantic validation for contracts that depend on derived geometry."
+function _validate_radix_fmm_settings(pfield::ParticleField,
+                                      settings::RadixFMMSettings)
+    _validate_radix_fmm_settings(settings)
+    settings.level_radii2 === nothing && return settings
+
+    # Mirror the side-effect-free geometry portion of `_build_radix_fmm_cache`:
+    # auto ell and rectangular active levels depend on the live field/bounds.
+    bounds = settings.bounds === nothing ?
+        _radix_derive_bounds(pfield, settings.padding;
+            rectangular=settings.rectangular) : settings.bounds
+    sigma_max = Float64(_radix_sigma_max(pfield))
+    kernel = _radix_direct_kernel(settings)
+    L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
+        Float64(maximum(bounds[2]))
+    ell, q = settings.ell === nothing ?
+        _radix_auto_geometry(L_geo, sigma_max, pfield.np,
+            settings.near_radius2, _radix_primary_reach(kernel),
+            settings.accuracy_margin) :
+        (settings.ell, settings.near_radius2)
+    if settings.bounds === nothing && settings.rectangular
+        bounds = _radix_center_snapped_bounds(bounds, ell)
+    end
+    TF = something(settings.precision, eltype(pfield))
+    ell_axes, _, _ = fmm._resolve_radix_ell_axes(bounds[2], ell, TF)
+    R, L_allnear = fmm._radix_root_level(ell_axes, ell, q)
+    first_m2l = R == L_allnear ? R + 1 : R
+    first_m2l <= ell || throw(ArgumentError(
+        "RadixFMMSettings has no M2L level at resolved ell=$ell, " *
+        "ell_axes=$(Tuple(ell_axes)), near_radius2=$q"))
+    active_length = ell - first_m2l + 1
+    legacy_length = ell - 1
+    n = length(settings.level_radii2)
+    n in (active_length, legacy_length) || throw(ArgumentError(
+        "RadixFMMSettings.level_radii2 has $n entries, but the live field " *
+        "resolves to ell=$ell with active M2L levels $first_m2l:$ell; " *
+        "expected $active_length active entries or $legacy_length legacy " *
+        "entries anchored to levels 2:$ell"))
+    return settings
 end
 
 # The primary direct-list geometry must cover the branch evaluated directly by
@@ -223,7 +334,7 @@ Set radix FMM coupling overrides for `pfield` (see [`RadixFMMSettings`](@ref))
 and invalidate any existing cache so the next evaluation rebuilds with the new
 settings. GPU mechanism tunables (FastMultipole's radix settings, e.g.
 `CUDA_NEARFIELD_GH_MODE`) may be passed as `gpu=(; CUDA_NEARFIELD_GH_MODE=:shipped)`;
-they are validated by `FastMultipole.set_radix_setting!` and applied before the
+they are validated and atomically applied by `FastMultipole.set_radix_settings!` before the
 cache invalidation so construction-locked settings take effect on the rebuild. Not exported; internal tuning surface (task 035 owns performance).
 """
 function radix_fmm_settings!(pfield::ParticleField; gpu::NamedTuple=NamedTuple(), kwargs...)
@@ -231,10 +342,14 @@ function radix_fmm_settings!(pfield::ParticleField; gpu::NamedTuple=NamedTuple()
     # settings surface, applied BEFORE the cache is cleared so the rebuild
     # snapshots the new values (construction-locked settings must be set
     # pre-construction; late flips error loudly at the next device step).
-    for (name, value) in pairs(gpu)
-        fmm.set_radix_setting!(name, value)
-    end
-    _radix_fmm_settings[pfield] = RadixFMMSettings(; kwargs...)
+    # Ordering contract: construct and semantically validate the complete local
+    # proposal before the atomic GPU batch write; only after both validations
+    # succeed do we replace the per-field value and clear its cache. Thus any
+    # invalid local or GPU proposal leaves all three state surfaces unchanged.
+    proposed = _validate_radix_fmm_settings(
+        pfield, RadixFMMSettings(; kwargs...))
+    fmm.set_radix_settings!(gpu)
+    _radix_fmm_settings[pfield] = proposed
     clear_radix_fmm_cache!(pfield)
     return _radix_fmm_settings[pfield]
 end
@@ -428,16 +543,19 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
     # (particles added/removed between steps) with no reallocation.
-    # Task 048: SFS is armed unconditionally for this vortex coupling
+    # Task 048: SFS storage is armed unconditionally for this vortex coupling
     # (sfs=true requires only hessian=true + sigma in packed row 8, both
     # already guaranteed here), so any SFS scheme works without a cache
-    # rebuild; the per-evaluation `sfs` flag gates delivery only.
+    # rebuild; the per-evaluation `sfs` flag gates both execution and delivery.
+    # Packed row 9 is the non-static mask used by the SFS pair pass, matching
+    # CPU Estr_direct!/Estr_fmm! source and target semantics.
     return fmm.RadixFMMCache(pfield;
         expansion_order=P, ell,
         max_n_bodies=pfield.maxparticles,
         bounds=(SVector{3,TF}(bounds[1]),
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
         hessian=true, sfs=true, sfs_transposed=pfield.transposed,
+        sfs_active_row=9,
         near_radius2=q,
         level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)

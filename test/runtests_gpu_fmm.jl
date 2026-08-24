@@ -98,11 +98,20 @@ fmm034_build(case, n; kwargs...) = case == "cube" ?
 # ------------------------------------------------------------------- metrics
 # relative RMS of U (rows 10:12) and J (rows 16:24) against a reference
 # particle matrix (both downloaded to host Arrays first)
-function fmm034_uj_errors(particles, ref_particles, np)
+# `skip`: static-particle columns to exclude. FLOWVPM's static convention
+# (2026-08-22, H200 jobs 13299959/13302646): `_reset_particles` PRESERVES
+# statics' U/J while every UJ evaluation delivers to all targets, so statics'
+# U/J rows accumulate one full contribution per evaluation and are consumed
+# by nothing (integration/relaxation skip statics). Comparing them across
+# differing evaluation counts produces a spurious linear-growth "error"
+# (sqrt(3/20000) per extra call reproduced job 13298230's replay j ~ 0.1098
+# exactly — the CUDA-graph replay itself is bit-faithful).
+function fmm034_uj_errors(particles, ref_particles, np; skip=())
     A = Array(particles)
     B = Array(ref_particles)
     u_err2 = u_ref2 = j_err2 = j_ref2 = 0.0
     for i in 1:np
+        i in skip && continue
         for r in vpm_fmm.U_INDEX
             d = Float64(A[r, i]) - Float64(B[r, i])
             u_err2 += d * d
@@ -214,6 +223,52 @@ end
     # strategy selection must produce the same gate-passing answer as the
     # defaults. p = 4 throughout (P = 4 standing test rule).
     n = 1500
+    # A multi-setting update is transactional across semantic local validation,
+    # global GPU settings, the per-field registry, and an already-live cache.
+    atomic_field = fmm034_build("wake", 200)
+    atomic_before = FLOWVPM.radix_fmm_settings!(atomic_field; rectangular=true)
+    vpm_fmm.UJ_fmm_gpu!(atomic_field)
+    @test haskey(FLOWVPM._radix_fmm_couplings, atomic_field)
+    coupling_before = FLOWVPM._radix_fmm_couplings[atomic_field]
+    cache_before = coupling_before.cache
+    gh_before = vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE)
+    gh_proposed = gh_before === :shipped ? :fp32 : :shipped
+    @test_throws ArgumentError FLOWVPM.radix_fmm_settings!(atomic_field;
+        gpu=(; CUDA_NEARFIELD_GH_MODE=gh_proposed),
+        direct_kernel=:bogus, rectangular=false)
+    @test vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE) === gh_before
+    @test FLOWVPM._radix_fmm_settings[atomic_field] === atomic_before
+    @test FLOWVPM._radix_fmm_couplings[atomic_field] === coupling_before
+    @test FLOWVPM._radix_fmm_couplings[atomic_field].cache === cache_before
+
+    # Every settings field with a downstream semantic contract is rejected at
+    # the eager boundary, before the valid proposed GPU change can leak.
+    invalid_local = (
+        (; expansion_order=-1),
+        (; ell=1),
+        (; near_radius2=-1),
+        (; window_classes=0),
+        (; padding=0.0),
+        (; bounds=([0.0, 0.0, 0.0], -1.0)),
+        (; precision=Float16),
+        (; direct_kernel=:bogus),
+        (; direct_kernel=:regularized, rho_t=0.0),
+        (; direct_kernel=:regularized, rho_c=2.0),
+        (; m2l_strategy=:bogus),
+        (; ell=3, near_radius2=6, level_radii2=(6,)),
+        # n=200 resolves auto ell=2, so the legacy 2:ell schedule has length 1.
+        (; near_radius2=6, level_radii2=(6, 6)),
+        (; accuracy_margin=0.0),
+    )
+    for local_kwargs in invalid_local
+        @test_throws ArgumentError FLOWVPM.radix_fmm_settings!(atomic_field;
+            gpu=(; CUDA_NEARFIELD_GH_MODE=gh_proposed), local_kwargs...)
+        @test vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE) === gh_before
+        @test FLOWVPM._radix_fmm_settings[atomic_field] === atomic_before
+        @test FLOWVPM._radix_fmm_couplings[atomic_field] === coupling_before
+        @test FLOWVPM._radix_fmm_couplings[atomic_field].cache === cache_before
+    end
+
     ref = fmm034_build("wake", n; UJ=vpm_fmm.UJ_direct)
     vpm_fmm.UJ_direct(ref)
     for (kernel, strategy) in ((:partitioned, :concat),
@@ -229,21 +284,23 @@ end
         @test err.j_rel_rms < 1e-1
     end
     # rho_t override reaches the constructed kernel. The partitioned coupling
-    # default is the 031a velocity-RMS cutoff 3.668 (task 035 cycle 3);
+    # default is the conservative Jacobian-per-pair cutoff 4.789 (task 048
+    # production selection, 2026-08-22; supersedes 035's 3.668);
     # :regularized keeps its constructor default 4.789.
     s = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned)
-    @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 3.668
+    @test FLOWVPM._radix_direct_kernel(s).rho_t ≈ 4.789
     s2 = FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_t=4.252)
     @test FLOWVPM._radix_direct_kernel(s2).rho_t ≈ 4.252
     @test FLOWVPM._radix_direct_kernel(
         FLOWVPM.RadixFMMSettings(; direct_kernel=:regularized)).rho_t ≈ 4.789
-    # cycle-3 shipped defaults (task 035, user-approved 2026-08-12):
-    # literature P5 + PartitionedVortex(rho_t=3.668) + DenseTranslationM2L,
-    # q floor 6, margin 1.03
+    # shipped defaults (task 048 production selection, user-approved
+    # 2026-08-22): P6 + PartitionedVortex(rho_t=4.789) + DenseTranslationM2L,
+    # derived near shell (q floor 6), margin 1.03 — passes the strict 5e-4
+    # F64 delivered-E_str gate on the p018 production field (job 13303399)
     sdef = FLOWVPM.RadixFMMSettings()
     @test FLOWVPM._radix_direct_kernel(sdef) isa FLOWVPM.fmm.PartitionedVortex
     @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.DenseTranslationM2L
-    @test sdef.expansion_order == 4       # literature P = 5
+    @test sdef.expansion_order == 6       # literature P = 7
     @test sdef.near_radius2 == 6
     @test sdef.accuracy_margin ≈ 1.03
     # joint auto-geometry rule at the shipped defaults reproduces every
@@ -465,15 +522,18 @@ end
 # (rows J_INDEX), FLOWVPM Estr_direct algebra, saturation cutoff matched to
 # the framework (ρ² ≤ 81 in F64, ≤ 42.25 in F32 — contributions ≤ 1e-18/1e-9
 # of ζ(0)). Isolates the SFS pass from the FMM's own U/J error.
-function fmm034_sfs_bruteforce(pfield, np; transposed=true)
+function fmm034_sfs_bruteforce(pfield, np; transposed=true,
+        honor_static=true)
     P = Array(pfield.particles)
     K1 = 1 / (2pi)^1.5
     rc2 = eltype(pfield.particles) === Float32 ? 42.25 : 81.0
     E = zeros(3, np)
     for i in 1:np
+        honor_static && P[vpm_fmm.STATIC_INDEX, i] != 0 && continue
         Ji = view(P, vpm_fmm.J_INDEX, i)
         for j in 1:np
             i == j && continue
+            honor_static && P[vpm_fmm.STATIC_INDEX, j] != 0 && continue
             dx = P[1, i] - P[1, j]; dy = P[2, i] - P[2, j]; dz = P[3, i] - P[3, j]
             sig = Float64(P[vpm_fmm.SIGMA_INDEX, j])
             rho2 = (dx^2 + dy^2 + dz^2) / sig^2
@@ -499,6 +559,8 @@ fmm034_sfs_vs_matrix(pfield, E, np) = begin
     S = Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:np]
     sqrt(sum(abs2, S .- E) / max(sum(abs2, E), eps()))
 end
+fmm034_matrix_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
+                                   max(sum(abs2, Float64.(B)), eps()))
 
 @testset "radix FMM coupling: SFS host path (task 048)" begin
     # Host-radix SFS (UJ_fmm_gpu! sfs=true) on the cube case at FM expansion
@@ -523,10 +585,13 @@ end
     #     (not J-bound) still fails loudly. A flat 1e-3 vs exact-erf
     #     references is unattainable at any radix setting while J is ≈ 2e-3.
     n = 1500
-    for P in (4, 8)
-        pfield = fmm034_build_cube(n)
+    # Required matrix: P=4/P=8 x Float32/Float64. The original delivery only
+    # covered P=4 in Float32 and substituted a J-scaled mechanical gate for
+    # the required CPU physics gate.
+    for R in (Float64, Float32), P in (4, 8), rho_t in (4.211, 4.789)
+        pfield = fmm034_build_cube(n; R)
         FLOWVPM.radix_fmm_settings!(pfield; expansion_order=P, ell=2,
-            near_radius2=20)
+            near_radius2=20, rho_t)
         vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=true, sfs=true)
 
         # (1) mechanical parity from the radix-delivered J
@@ -534,11 +599,14 @@ end
         e_mech = fmm034_sfs_vs_matrix(pfield, E_mech, n)
 
         # exact reference: direct U/J then the direct pairwise Estr
-        ref = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
+        ref = fmm034_build_cube(n; R, UJ=vpm_fmm.UJ_direct)
         vpm_fmm.UJ_direct(ref)
         vpm_fmm.Estr_direct!(ref)
 
         # legacy-octree FMM SFS reference (UJ_fmm runs Estr_fmm! when sfs=true)
+        # The legacy octree Tree constructor is not Float32-clean in this
+        # stack, so use its Float64 CPU Estr_fmm! result as the reference for
+        # both delivered precisions (as with the usual high-precision oracle).
         fmmref = fmm034_build_cube(n)
         vpm_fmm.UJ_fmm(fmmref; sfs=true, reset=true)
 
@@ -546,21 +614,33 @@ end
         e_direct = fmm034_sfs_relrms(pfield.particles, ref.particles, n)
         e_fmm = fmm034_sfs_relrms(pfield.particles, fmmref.particles, n)
         e_sanity = fmm034_sfs_relrms(fmmref.particles, ref.particles, n)
-        @info "SFS host radix [cube n=$n P=$P]" e_mech e_direct e_fmm e_sanity j_rel
-        @test e_mech <= 1e-6
-        @test e_direct <= max(1e-3, 3 * j_rel)
-        @test e_fmm <= max(1e-3, 3 * j_rel)
+        # Conservative per-pair candidates were derived at ε=1e-3 with half
+        # reserved for the omitted tail. F64 can enforce that ε/2 budget;
+        # F32 retains the phase-wide 1e-3 delivered gate.
+        strict_gate = R === Float64 ? 5e-4 : 1e-3
+        mech_gate = R === Float64 ? 1e-6 : 1e-4
+        @info "SFS host radix [cube n=$n P=$P $R rho_t=$rho_t]" e_mech e_direct e_fmm e_sanity j_rel strict_gate
+        @test e_mech <= mech_gate
+        # Required delivered-physics gates; mechanical parity above is a
+        # separate mechanism gate and never substitutes for CPU Estr parity.
+        @test e_direct <= strict_gate
+        @test e_fmm <= strict_gate
 
         # accumulate semantics: without reset_sfs a second sfs evaluation
         # doubles the SFS rows
         S1 = copy(Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n])
         vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=true)
         S2 = Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n]
-        @test isapprox(S2, 2 .* S1; rtol=1e-10)
+        @test isapprox(S2, 2 .* S1; rtol=R === Float64 ? 1e-10 : 1e-5)
 
         # sfs=false evaluations leave the SFS rows untouched
+        sfs_ctx = FLOWVPM._radix_fmm_couplings[pfield].cache.state.sfs
+        om_before = copy(sfs_ctx.om)
+        q_before = copy(sfs_ctx.q)
         vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=false)
         @test Array(pfield.particles)[vpm_fmm.SFS_INDEX, 1:n] == S2
+        @test sfs_ctx.om == om_before
+        @test sfs_ctx.q == q_before
     end
 
     # classic (transposed=false) scheme, Float64, P = 4: mechanical parity
@@ -586,23 +666,6 @@ end
     vpm_fmm.Estr_direct!(ref_t)
     @test fmm034_sfs_relrms(ref_c.particles, ref_t.particles, n) > 1e-3
 
-    # Float32 host path: mechanical parity at the F32 arithmetic floor plus
-    # the J-bound physics gate (J itself is F32 here)
-    pfield_32 = fmm034_build_cube(n; R=Float32)
-    FLOWVPM.radix_fmm_settings!(pfield_32; expansion_order=4, ell=2,
-        near_radius2=20)
-    vpm_fmm.UJ_fmm_gpu!(pfield_32; reset=true, reset_sfs=true, sfs=true)
-    e_mech_32 = fmm034_sfs_vs_matrix(pfield_32,
-        fmm034_sfs_bruteforce(pfield_32, n), n)
-    ref_32 = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
-    vpm_fmm.UJ_direct(ref_32)
-    vpm_fmm.Estr_direct!(ref_32)
-    j_rel_32 = fmm034_uj_errors(pfield_32.particles, ref_32.particles, n).j_rel_rms
-    e_32 = fmm034_sfs_relrms(pfield_32.particles, ref_32.particles, n)
-    @info "SFS host radix Float32 [cube n=$n P=4]" e_mech_32 e_32 j_rel_32
-    @test e_mech_32 <= 1e-4
-    @test e_32 <= max(1e-3, 3 * j_rel_32)
-
     # capacity > np: the cache's SFS scatter buffers are capacity-wide, so
     # delivery passes the SubArray prefix view to sfs_to_target! — regression
     # for the buf::Matrix over-pinning (2026-08-21). Identical answer to the
@@ -616,6 +679,38 @@ end
         near_radius2=20)
     vpm_fmm.UJ_fmm_gpu!(pfield_eq; reset=true, reset_sfs=true, sfs=true)
     @test fmm034_sfs_relrms(pfield_cap.particles, pfield_eq.particles, n) < 1e-12
+
+    # CPU Estr semantics: static particles are neither SFS sources nor SFS
+    # targets. Their pre-existing SFS rows remain untouched.
+    pfield_static = fmm034_build_cube(n)
+    ref_static = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
+    for i in (2, 17, 201)
+        vpm_fmm.set_static(pfield_static, i, 1.0)
+        vpm_fmm.set_static(ref_static, i, 1.0)
+    end
+    sentinel = [3.0, -2.0, 1.0]
+    for i in (2, 17, 201)
+        pfield_static.particles[vpm_fmm.SFS_INDEX, i] .= sentinel
+        ref_static.particles[vpm_fmm.SFS_INDEX, i] .= sentinel
+    end
+    S_static_before = copy(pfield_static.particles[vpm_fmm.SFS_INDEX, 1:n])
+    FLOWVPM.radix_fmm_settings!(pfield_static; expansion_order=4, ell=2,
+        near_radius2=20)
+    vpm_fmm.UJ_fmm_gpu!(pfield_static; reset=true, reset_sfs=false, sfs=true)
+    vpm_fmm.UJ_direct(ref_static)
+    vpm_fmm.Estr_direct!(ref_static)
+    static_indices = [2, 17, 201]
+    active_indices = setdiff(collect(1:n), static_indices)
+    S_static_delta = pfield_static.particles[vpm_fmm.SFS_INDEX, 1:n] .-
+        S_static_before
+    E_masked = fmm034_sfs_bruteforce(pfield_static, n)
+    E_all_active = fmm034_sfs_bruteforce(pfield_static, n;
+        honor_static=false)
+    @test all(iszero, S_static_delta[:, static_indices])
+    @test fmm034_matrix_relrms(S_static_delta[:, active_indices],
+                               E_masked[:, active_indices]) < 1e-6
+    # Explicitly proves static SOURCE removal matters, not just target masking.
+    @test E_masked[:, active_indices] != E_all_active[:, active_indices]
 end
 
 # =========================================================================

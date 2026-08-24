@@ -91,10 +91,13 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     buffer[4, i_buffer] = ρ_σ * σ
     buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
     buffer[8, i_buffer] = σ
+    # Radix SFS active mask: one for non-static, zero for static. Legacy FMM
+    # kernels ignore this extra packed row.
+    buffer[9, i_buffer] = is_static(get_particle(system, i_body)) ? 0 : 1
 end
 
 function fmm.data_per_body(system::ParticleField)
-    return 8
+    return 9
 end
 #--- getters ---#
 

@@ -5,16 +5,14 @@
 # deps; FLOWVPM/FastMultipole path-dev'd), then submit the H200 job
 # (scripts/fm052_run.sh). Pattern: fm049_submit.sh (fm023env local-toolkit
 # CUDA recipe: compute nodes have no internet, the three CUDA JLLs get
-# local=true preferences, precompilation deferred to the GPU node; heavy
-# FLOWPanel deps (GeoIO/VSPGeom/Xfoil artifacts) download during the
-# login-node instantiate).
+# local=true preferences, with CUDA precompilation deferred to the GPU node).
 #   bash scripts/fm052_submit.sh          # from the FLOWVPM.jl repo root
 set -euo pipefail
 REMOTE=orc
 VPMDIR=FLOWVPM-046
 FMDIR=FastMultipole-046
 FPDIR=FLOWPanel-052
-ENVDIR='$HOME/fm052env'
+ENVDIR='$HOME/fm052env_cuda63_geoiofree'
 FMLOCAL=../FastMultipole
 FPLOCAL=../FLOWPanel.jl
 
@@ -47,13 +45,11 @@ for m in "${MESHES[@]}"; do
   rsync -az "$FPLOCAL/examples/data/$m" "$REMOTE:$FPDIR/examples/data/"
 done
 
-# CUDA deliberately NOT in fm052env: CUDA >=6.2 pulls CUDATools->PrettyTables 3,
-# unsatisfiable against FLOWPanel's geo stack (PrettyTables 2.x). CUDA is
-# provided at RUN time by environment stacking: JULIA_LOAD_PATH appends the
-# validated fm048env (CUDA 6.3 + local-toolkit JLL prefs) after fm052env —
-# login-node load test confirmed PrettyTables 2.4 + CUDA/CUDATools coexist.
+# GeoIO is no longer a FLOWPanel dependency, so CUDA 6.3 and PrettyTables 3
+# resolve in this single environment. Keep Julia 1.11.7 pinned until the known
+# Julia 1.12 device-step LLVM crash has passed its separate H200 gate.
 # local=true preferences for the three CUDA JLLs (fm023env recipe)
-ssh "$REMOTE" 'mkdir -p fm052env && cat > fm052env/LocalPreferences.toml <<EOF
+ssh "$REMOTE" 'mkdir -p fm052env_cuda63_geoiofree && cat > fm052env_cuda63_geoiofree/LocalPreferences.toml <<EOF
 [CUDA_Compiler_jll]
 local = "true"
 
@@ -66,12 +62,11 @@ EOF'
 
 # login-node env setup (compute nodes have no internet): develop the two
 # unregistered path deps FIRST so FLOWPanel's resolve can see them, then
-# develop FLOWPanel (its registered deps — GeoIO, VSPGeom, CCBlade, Xfoil,
-# PythonPlot, ... — resolve+download here), then the extras the drivers use.
+# develop FLOWPanel, then add CUDA 6.3 and the direct driver dependencies.
 # CUDA precompiles on the GPU node against the system toolkit.
 ssh "$REMOTE" "bash -lc 'module load julia/1.11.7-6bmogfl \
   && export JULIA_PKG_PRECOMPILE_AUTO=0 \
-  && julia --project=$ENVDIR -e \"using Pkg; Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add(Pkg.PackageSpec(name=\\\"CUDA\\\", version=\\\"5.8\\\")); Pkg.add([\\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\", \\\"VSPGeom\\\", \\\"GeoIO\\\"]); Pkg.instantiate()\" \
+  && julia --project=$ENVDIR -e \"using Pkg; haskey(Pkg.project().dependencies, \\\"GeoIO\\\") && Pkg.rm(\\\"GeoIO\\\"); Pkg.develop(path=\\\"\$HOME/$FMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$VPMDIR\\\"); Pkg.develop(path=\\\"\$HOME/$FPDIR\\\"); Pkg.add(Pkg.PackageSpec(name=\\\"CUDA\\\", version=\\\"6.3\\\")); Pkg.add([\\\"Test\\\", \\\"Random\\\", \\\"SHA\\\", \\\"Statistics\\\", \\\"StaticArrays\\\", \\\"VSPGeom\\\"]); Pkg.resolve(); Pkg.instantiate()\" \
   && cd $VPMDIR \
   && sbatch scripts/fm052_run.sh'"
 

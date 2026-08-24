@@ -35,6 +35,11 @@ if cuda_functional
     include("runtests_gpu.jl")
 end
 
+# Independent ForwardDiff oracle for the Gaussian-erf velocity Jacobian,
+# including direct-path orientation/aggregation semantics and a small host
+# radix localization sweep.
+include("runtests_unit_j_reference.jl")
+
 # Radix FMM coupling tests (task 034): Part A (host-resident transfer path)
 # runs on CPU whenever the installed FastMultipole provides the radix device
 # interface (self-skips with an @info otherwise); Part B (device-resident
