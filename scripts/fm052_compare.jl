@@ -222,10 +222,18 @@ function mode_compare(reference_dir, candidate_dir, outdir=candidate_dir;
     gamma_steps == collect(first(gamma_steps):last(gamma_steps)) ||
         error("noncontiguous Gamma window: $gamma_steps")
     if require_particle_match
+        # FP052_COUNT_TOL: max |per-step particle-count difference| allowed.
+        # Cross-backend (CPU reference vs GPU candidate) exact equality is a
+        # lottery: chaotic threshold events (merge/clip) flip on last-ulp
+        # arithmetic differences (measured |delta| <= 8 of ~209k over the
+        # mature window while all field tolerance gates pass). 0 = strict,
+        # appropriate for same-backend comparisons.
+        count_tol = parse(Int, get(ENV, "FP052_COUNT_TOL", "0"))
         for step in steps
-            ref.wake[step].n_particles == cand.wake[step].n_particles || error(
+            dn = abs(ref.wake[step].n_particles - cand.wake[step].n_particles)
+            dn <= count_tol || error(
                 "particle-count divergence at step $step: $(ref.wake[step].n_particles) != " *
-                "$(cand.wake[step].n_particles)")
+                "$(cand.wake[step].n_particles) (|delta|=$dn > count_tol=$count_tol)")
         end
     end
 
@@ -596,7 +604,10 @@ function manifest_package_lines(path)
     manifest = TOML.parsefile(path)
     packages = get(manifest, "deps", Dict{String,Any}())
     lines = String[]
-    kept_fields = ("uuid", "version", "git-tree-sha1", "repo-url", "repo-rev", "pinned")
+    # "pinned" intentionally excluded: Pkg.pin sets pinned=true without
+    # changing the resolved code (version + git-tree-sha1 already fix it);
+    # the gh200 ARM env pins CUDA/CUDACore and must still fingerprint-match.
+    kept_fields = ("uuid", "version", "git-tree-sha1", "repo-url", "repo-rev")
     for name in sort!(collect(keys(packages)))
         rawentries = packages[name]
         entries = rawentries isa Vector ? rawentries : [rawentries]

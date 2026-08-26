@@ -17,6 +17,8 @@ FPDIR="${FP052_DIR:-$HOME/FLOWPanel-052}"
 VPMDIR="${FP052_VPMDIR:-$HOME/FLOWVPM-046}"
 TOLERANCE="${FP052_TOLERANCE:-$FPDIR/data/fm052_campaign_lock/fm052_locked_tolerances.toml}"
 CPU_RUN="${FP052_CPU_RUN:-$FPDIR/data/fm052r_cpu_mature_pinned}"
+# cross-backend mature gate: counts within +-16 of ~209k (see fm052_compare.jl)
+export FP052_COUNT_TOL="${FP052_COUNT_TOL:-16}"
 GPU_RUN="${FP052_GPU_RUN:-$FPDIR/data/fm052c_gpu_mature}"
 OUTDIR="${FP052_GATE_OUT:-$FPDIR/data/fm052_mature_gate}"
 

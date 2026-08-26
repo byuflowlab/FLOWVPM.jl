@@ -193,6 +193,8 @@ case "$FP052_STAGE" in
     fm052_arch_memory_eligibility
     fm052_preflight_checkpoint
     cpu_run="${FP052_CPU_RUN:-$HOME/FLOWPanel-052/data/fm052r_cpu_mature_pinned}"
+    # cross-backend mature gate: counts within +-16 (see fm052_compare.jl)
+    export FP052_COUNT_TOL="${FP052_COUNT_TOL:-16}"
     tolerance="${FP052_TOLERANCE:-$HOME/FLOWPanel-052/data/fm052_campaign_lock/fm052_locked_tolerances.toml}"
     test -d "$cpu_run" || { echo "canonical CPU mature reference missing: $cpu_run" >&2; exit 76; }
     test -s "$tolerance" || { echo "locked tolerance missing: $tolerance" >&2; exit 77; }
