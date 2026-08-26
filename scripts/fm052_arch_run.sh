@@ -192,7 +192,7 @@ case "$FP052_STAGE" in
     require_stage_pass smoke "$FP052_SMOKE_JOB"
     fm052_arch_memory_eligibility
     fm052_preflight_checkpoint
-    cpu_run="${FP052_CPU_RUN:-$HOME/FLOWPanel-052/data/fm052r_cpu_mature}"
+    cpu_run="${FP052_CPU_RUN:-$HOME/FLOWPanel-052/data/fm052r_cpu_mature_pinned}"
     tolerance="${FP052_TOLERANCE:-$HOME/FLOWPanel-052/data/fm052_campaign_lock/fm052_locked_tolerances.toml}"
     test -d "$cpu_run" || { echo "canonical CPU mature reference missing: $cpu_run" >&2; exit 76; }
     test -s "$tolerance" || { echo "locked tolerance missing: $tolerance" >&2; exit 77; }
