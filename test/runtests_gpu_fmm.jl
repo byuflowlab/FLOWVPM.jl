@@ -225,9 +225,22 @@ end
     n = 1500
     # A multi-setting update is transactional across semantic local validation,
     # global GPU settings, the per-field registry, and an already-live cache.
+    # Geometry pinned explicitly (052c): at n=200 the auto pick at the shipped
+    # rho_t=4.789 is (ell=2, near_radius2=12), which on the rectangular 2x2x4
+    # leaf grid puts every offset inside the near ball — a ZERO-M2L degenerate
+    # cache that evaluates pure direct. The explicit pin keeps this block
+    # independent of auto-geometry defaults (the 048 rho_t bump 3.668->4.789
+    # is what moved q from 6 to 12 and broke the unpinned build) and doubles
+    # as host-path coverage of the degenerate pure-direct support.
     atomic_field = fmm034_build("wake", 200)
-    atomic_before = FLOWVPM.radix_fmm_settings!(atomic_field; rectangular=true)
+    atomic_before = FLOWVPM.radix_fmm_settings!(atomic_field;
+        rectangular=true, ell=2, near_radius2=12)
     vpm_fmm.UJ_fmm_gpu!(atomic_field)
+    # degenerate pure-direct correctness: no M2L anywhere, answer ~= UJ_direct
+    atomic_ref = fmm034_build("wake", 200; UJ=vpm_fmm.UJ_direct)
+    vpm_fmm.UJ_direct(atomic_ref)
+    atomic_err = fmm034_uj_errors(atomic_field.particles, atomic_ref.particles, 200)
+    @test atomic_err.u_rel_rms <= FMM034_U_GATE
     @test haskey(FLOWVPM._radix_fmm_couplings, atomic_field)
     coupling_before = FLOWVPM._radix_fmm_couplings[atomic_field]
     cache_before = coupling_before.cache
@@ -360,6 +373,112 @@ end
     vpm_fmm.UJ_fmm_gpu!(pfield2)
     pfield2.particles[vpm_fmm.X_INDEX, 1:n] .+= shift
     @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield2)
+end
+
+@testset "radix FMM coupling: depth rebuild on particle growth (052c)" begin
+    # A wake growing from hundreds to thousands of particles must not keep
+    # the shallow grid depth frozen at first build (052 stage-d root cause:
+    # ell=2 chosen at np=330 served 242k particles near-dense). Fixed sigma
+    # so only np drives the occupancy cap: build at n0=300 (ell=2), grow to
+    # n1=8000 (occupancy admits ell=4) and expect a strictly deeper rebuild.
+    n0, n1 = 300, 8000
+    sigma = 0.03
+    rng = MersenneTwister(FMM034_SEED + 52)
+    pfield = fmm034_pfield(n1)
+    ref = fmm034_pfield(n1; UJ=vpm_fmm.UJ_direct)
+    Xs = [rand(rng, 3) for _ in 1:n1]
+    Gs = [(2 .* rand(rng, 3) .- 1) ./ n1 for _ in 1:n1]
+    for i in 1:n0
+        vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma)
+        vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma)
+    end
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    st0 = FLOWVPM._radix_fmm_couplings[pfield]
+    ell0 = st0.cache.ell
+    for i in (n0 + 1):n1
+        vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma)
+        vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma)
+    end
+    vpm_fmm.UJ_direct(ref)
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    st1 = FLOWVPM._radix_fmm_couplings[pfield]
+    @test st1.cache !== st0.cache
+    @test st1.cache.ell > ell0
+    err = fmm034_uj_errors(pfield.particles, ref.particles, n1)
+    @info "depth rebuild on growth" ell0 st1.cache.ell err.u_rel_rms
+    @test err.u_rel_rms <= FMM034_U_GATE
+
+    # unchanged np must not churn the coupling
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    @test FLOWVPM._radix_fmm_couplings[pfield] === st1
+
+    # a user-fixed ell is a promise: growth must never rebuild it
+    pfield2 = fmm034_pfield(n1)
+    for i in 1:n0
+        vpm_fmm.add_particle(pfield2, Xs[i], Gs[i], sigma)
+    end
+    FLOWVPM.radix_fmm_settings!(pfield2; ell=2, near_radius2=6)
+    vpm_fmm.UJ_fmm_gpu!(pfield2)
+    st2 = FLOWVPM._radix_fmm_couplings[pfield2]
+    for i in (n0 + 1):n1
+        vpm_fmm.add_particle(pfield2, Xs[i], Gs[i], sigma)
+    end
+    vpm_fmm.UJ_fmm_gpu!(pfield2)
+    @test FLOWVPM._radix_fmm_couplings[pfield2] === st2
+    @test FLOWVPM._radix_fmm_couplings[pfield2].cache.ell == 2
+end
+
+@testset "radix FMM coupling: sigma-outgrown rebuild (052c near-peak)" begin
+    # Merge-produced oversize particles grow sigma_max between cache builds;
+    # the cached grid must rebuild to an admissible geometry (shallower ell
+    # and/or larger near set) instead of tripping FastMultipole's runtime
+    # adequacy gate (job 13497184: ell=4 admissible at sigma_max=0.0198 near
+    # step 473, refused at 0.02137 by step 502).
+    n = 8000
+    sigma0 = 0.005
+    rng = MersenneTwister(FMM034_SEED + 53)
+    pfield = fmm034_pfield(n)
+    ref = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct)
+    Xs = [rand(rng, 3) for _ in 1:n]
+    Gs = [(2 .* rand(rng, 3) .- 1) ./ n for _ in 1:n]
+    for i in 1:n
+        vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma0)
+        vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma0)
+    end
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    st0 = FLOWVPM._radix_fmm_couplings[pfield]
+    ell0 = st0.cache.ell
+    @test isfinite(st0.sigma_limit)
+    # a single oversize particle (the fat tail) past the cached limit
+    sigma_big = 1.05 * st0.sigma_limit
+    vpm_fmm.get_sigma(pfield, 1) .= sigma_big
+    vpm_fmm.get_sigma(ref, 1) .= sigma_big
+    vpm_fmm.UJ_direct(ref)
+    vpm_fmm.UJ_fmm_gpu!(pfield)   # must rebuild, not throw
+    st1 = FLOWVPM._radix_fmm_couplings[pfield]
+    @test st1.cache !== st0.cache
+    @test sigma_big <= st1.sigma_limit  # rebuilt geometry admits the new sigma
+    err = fmm034_uj_errors(pfield.particles, ref.particles, n)
+    @info "sigma-outgrown rebuild" ell0 st1.cache.ell st0.sigma_limit st1.sigma_limit err.u_rel_rms
+    @test err.u_rel_rms <= FMM034_U_GATE
+
+    # steady sigma: no churn
+    vpm_fmm.UJ_fmm_gpu!(pfield)
+    @test FLOWVPM._radix_fmm_couplings[pfield] === st1
+
+    # user-fixed ell is a promise: no auto rebuild — the runtime adequacy
+    # gate reports instead of a silent geometry change
+    pfield2 = fmm034_pfield(n)
+    for i in 1:n
+        vpm_fmm.add_particle(pfield2, Xs[i], Gs[i], sigma0)
+    end
+    FLOWVPM.radix_fmm_settings!(pfield2; ell=2, near_radius2=6)
+    vpm_fmm.UJ_fmm_gpu!(pfield2)
+    st2 = FLOWVPM._radix_fmm_couplings[pfield2]
+    lim2 = FLOWVPM._radix_sigma_limit(st2.cache, st2.settings)
+    vpm_fmm.get_sigma(pfield2, 1) .= 1.5 * lim2
+    @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield2)
+    @test FLOWVPM._radix_fmm_couplings[pfield2] === st2
 end
 
 @testset "radix FMM coupling: rectangular bounds (task 037, host path)" begin

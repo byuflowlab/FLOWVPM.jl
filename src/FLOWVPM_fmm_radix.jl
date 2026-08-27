@@ -301,9 +301,13 @@ function _validate_radix_fmm_settings(pfield::ParticleField,
     ell_axes, _, _ = fmm._resolve_radix_ell_axes(bounds[2], ell, TF)
     R, L_allnear = fmm._radix_root_level(ell_axes, ell, q)
     first_m2l = R == L_allnear ? R + 1 : R
+    # Zero-M2L degenerate geometry runs pure direct (task 052c) — legal
+    # without a schedule, but an explicit level_radii2 cannot anchor to zero
+    # active levels (we are in the level_radii2 !== nothing branch here).
     first_m2l <= ell || throw(ArgumentError(
-        "RadixFMMSettings has no M2L level at resolved ell=$ell, " *
-        "ell_axes=$(Tuple(ell_axes)), near_radius2=$q"))
+        "RadixFMMSettings.level_radii2 cannot apply: the live field resolves " *
+        "to ell=$ell, ell_axes=$(Tuple(ell_axes)), near_radius2=$q with no " *
+        "M2L level (pure direct evaluation); omit level_radii2"))
     active_length = ell - first_m2l + 1
     legacy_length = ell - 1
     n = length(settings.level_radii2)
@@ -562,18 +566,122 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
 end
 
 """
-    _radix_fmm_coupling!(pfield) -> (; cache, settings)
+    _radix_depth_outgrown!(pfield, st) -> Bool
 
-Get-or-create the persistent radix coupling for `pfield`. The cache is built
-once (sized to `pfield.maxparticles`) and reused by every subsequent
-evaluation; `clear_radix_fmm_cache!` or `radix_fmm_settings!` invalidate it.
+Task 052c: auto grid depth (`settings.ell === nothing`) is derived at cache
+build from the LIVE `pfield.np` (occupancy cap of about `np^(1/3)` cells per
+side). A wake that grows from hundreds to hundreds of thousands of particles
+would otherwise keep its first build's shallow grid forever — `recenter!`
+preserves `ell` — degrading the near field toward dense (measured in the 052
+stage-d run: first build at np=330 froze `ell=2`, ~91% of dense pairs at
+np=242k). Return `true` when `_radix_auto_geometry` at the CURRENT np/bounds/
+sigma would pick a strictly deeper `ell` than the cached one, so the caller
+drops the coupling and rebuilds. User-fixed `ell` is a promise and is never
+outgrown. The full geometry re-derivation runs only after np has doubled
+since the last check (cheap host-side guards first); if no admissible
+geometry exists at the grown shape the existing cache is kept.
+"""
+function _radix_depth_outgrown!(pfield::ParticleField, st)
+    st.settings.ell === nothing || return false
+    np = pfield.np
+    np > 2 * st.np_checked[] || return false
+    st.np_checked[] = np
+    # the auto rule never exceeds its occupancy cap, so a deeper choice is
+    # impossible until the cap itself passes the cached depth
+    max(2, floor(Int, log2(max(np, 8)) / 3)) > st.cache.ell || return false
+    bounds = st.settings.bounds === nothing ?
+        _radix_derive_bounds(pfield, st.settings.padding;
+            rectangular=st.settings.rectangular) : st.settings.bounds
+    sigma_max = Float64(_radix_sigma_max(pfield))
+    kernel = _radix_direct_kernel(st.settings)
+    L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
+        Float64(maximum(bounds[2]))
+    ell = try
+        first(_radix_auto_geometry(L_geo, sigma_max, np,
+            st.settings.near_radius2, _radix_primary_reach(kernel),
+            st.settings.accuracy_margin))
+    catch
+        return false
+    end
+    return ell > st.cache.ell
+end
+
+"""
+    _radix_sigma_limit(cache, settings) -> Float64
+
+Task 052c (near-peak probe 13497184): largest `sigma_max` the cached grid
+can serve. FastMultipole's runtime adequacy gate (row 032a) refuses to
+evaluate when `g_min*h_leaf <= rho_reach*sigma_max`; merge-produced oversize
+particles grow `sigma_max` between builds, so a geometry picked with
+headroom at build time can become inadmissible mid-run (measured in stage d:
+ell=4 admissible at sigma_max=0.0198 near step 473, refused at 0.02137 by
+step 502). The limit divides out the SAME `accuracy_margin` the auto rule
+applies at build, so a rebuild triggers while the bare gate still holds.
+`Inf` for a zero-M2L degenerate cache (the gate is vacuous there).
+"""
+function _radix_sigma_limit(cache, settings::RadixFMMSettings)
+    isempty(cache.accepted_offsets) && return Inf
+    g_min = fmm._leaf_stencil_min_gap(cache)
+    h_leaf = 2 * Float64(cache.h0) / (1 << cache.ell)
+    rho_reach = _radix_primary_reach(_radix_direct_kernel(settings))
+    return g_min * h_leaf / (Float64(settings.accuracy_margin) * Float64(rho_reach))
+end
+
+"""
+    _radix_sigma_outgrown!(pfield, st) -> Bool
+
+Companion to [`_radix_depth_outgrown!`](@ref) in the opposite direction:
+return `true` when the LIVE `sigma_max` exceeds the cached geometry's
+admissible limit (see [`_radix_sigma_limit`](@ref)), so the caller drops the
+coupling and rebuilds — `_radix_auto_geometry` at the grown sigma then picks
+an admissible geometry (shallower `ell` and/or a larger near set). Checked
+every call: the cost is one O(np) device row reduction. User-fixed `ell` is
+a promise and is never rebuilt (FastMultipole's gate error propagates). If
+no admissible geometry exists at the grown shape the existing cache is kept
+and the runtime gate reports.
+"""
+function _radix_sigma_outgrown!(pfield::ParticleField, st)
+    st.settings.ell === nothing || return false
+    sigma_max = Float64(_radix_sigma_max(pfield))
+    sigma_max > st.sigma_limit || return false
+    bounds = st.settings.bounds === nothing ?
+        _radix_derive_bounds(pfield, st.settings.padding;
+            rectangular=st.settings.rectangular) : st.settings.bounds
+    L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
+        Float64(maximum(bounds[2]))
+    kernel = _radix_direct_kernel(st.settings)
+    try
+        _radix_auto_geometry(L_geo, sigma_max, pfield.np,
+            st.settings.near_radius2, _radix_primary_reach(kernel),
+            st.settings.accuracy_margin)
+    catch
+        return false
+    end
+    return true
+end
+
+"""
+    _radix_fmm_coupling!(pfield) -> (; cache, settings, np_checked, sigma_limit)
+
+Get-or-create the persistent radix coupling for `pfield`. The cache is sized
+once to `pfield.maxparticles` and reused by every subsequent evaluation;
+`clear_radix_fmm_cache!` or `radix_fmm_settings!` invalidate it, and the
+auto-derived geometry rebuilds when the live field outgrows it in either
+direction: particle count vs grid depth ([`_radix_depth_outgrown!`](@ref))
+or `sigma_max` vs the adequacy limit ([`_radix_sigma_outgrown!`](@ref)).
 """
 function _radix_fmm_coupling!(pfield::ParticleField)
     st = get(_radix_fmm_couplings, pfield, nothing)
+    if st !== nothing && (_radix_depth_outgrown!(pfield, st) ||
+                          _radix_sigma_outgrown!(pfield, st))
+        delete!(_radix_fmm_couplings, pfield)
+        st = nothing
+    end
     if st === nothing
         settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
         cache = _build_radix_fmm_cache(pfield, settings)
-        st = (; cache, settings)
+        st = (; cache, settings, np_checked=Ref(pfield.np),
+                sigma_limit=_radix_sigma_limit(cache, settings))
         _radix_fmm_couplings[pfield] = st
     end
     return st
