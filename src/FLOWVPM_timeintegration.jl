@@ -9,6 +9,34 @@
 =###############################################################################
 
 """
+    _sigma_guard_params(R, sigma_guard::NamedTuple)
+
+Sigma-collapse guards for the rVPM core-size update `sigma -= dt*sigma*Z`,
+passed as the `sigma_guard` kwarg of `euler`/`_euler` (052c trial 1). The
+unguarded Euler update flips sigma's sign whenever a strained outlier
+reaches `dt*Z > 1` (observed in the 052c 1080-step rotor acceptance: dt*Z
+hit 1.24 then 164 near step 1015 while the population's p1 sigma
+percentile stayed healthy). Recognized keys:
+
+- `dtz_cap`: max per-step contraction fraction `dt*Z` (default `Inf`);
+- `floor`: absolute lower bound on sigma (default `-Inf`; callers
+  typically pass a fraction of the shed sigma).
+
+An empty `sigma_guard` (the default) reproduces the unguarded update
+bit-exactly. Unknown keys throw, so alternative guard laws added later
+must be named here. Guards apply to the standard reformulated `euler`
+paths only (scalar + broadcast); `rungekutta3` and `euler_exp` sigma
+updates are unguarded and reject a non-empty `sigma_guard`.
+"""
+function _sigma_guard_params(::Type{R}, sigma_guard::NamedTuple) where R
+    for k in keys(sigma_guard)
+        k in (:dtz_cap, :floor) || throw(ArgumentError(
+            "unknown sigma_guard key $(k); recognized: (:dtz_cap, :floor)"))
+    end
+    return R(get(sigma_guard, :dtz_cap, Inf)), R(get(sigma_guard, :floor, -Inf))
+end
+
+"""
     _reset_M_storage!(pfield)
 
 Zero the per-particle `M` storage rows (the RK3 low-storage state) of every
@@ -43,9 +71,12 @@ Convects the `pfield` by timestep `dt` using a forward Euler step.
 - `dt::Real` The time step.
 - `relax::Bool` Whether to apply relaxation (default: false).
 - `custom_UJ` Optional custom function for updating U and J.
+- `sigma_guard::NamedTuple` Sigma-collapse guards for the core-size
+  update (ReformulatedVPM only) — see `_sigma_guard_params`.
 
 """
-function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
+function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing,
+               sigma_guard::NamedTuple=NamedTuple())
 
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
@@ -56,7 +87,7 @@ function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
         custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
     end
 
-    _euler(pfield, dt; relax)
+    _euler(pfield, dt; relax, sigma_guard)
 
     return nothing
 end
@@ -65,7 +96,12 @@ end
 Steps the field forward in time by dt in a first-order Euler integration scheme.
 """
 function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                                dt; relax::Bool=false) where {R, V}
+                                dt; relax::Bool=false,
+                                sigma_guard::NamedTuple=NamedTuple()) where {R, V}
+
+    isempty(sigma_guard) || throw(ArgumentError(
+        "sigma_guard is only supported for the ReformulatedVPM euler " *
+        "(ClassicVPM has no sigma update)"))
 
     pfield.SFS(pfield, AfterUJ())
 
@@ -183,7 +219,8 @@ Steps the field forward in time by dt in a first-order Euler integration scheme
 using the VPM reformulation. See notebook 20210104.
 """
 function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                               dt::Real; relax::Bool=false) where {R, V, R2}
+                               dt::Real; relax::Bool=false,
+                               sigma_guard::NamedTuple=NamedTuple()) where {R, V, R2}
 
     pfield.SFS(pfield, AfterUJ())
 
@@ -198,9 +235,9 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     # which works unchanged for CuArray but allocates and is not competitive on CPU (see
     # logs/2026-07-21-gpu-full.md for the benchmark that motivated this split).
     if pfield.particles isa Array
-        _euler_cpu_reformulated!(pfield, dt, Uinf, f, g, zeta0)
+        _euler_cpu_reformulated!(pfield, dt, Uinf, f, g, zeta0; sigma_guard)
     else
-        _euler_broadcast_reformulated!(pfield, dt, Uinf, f, g, zeta0)
+        _euler_broadcast_reformulated!(pfield, dt, Uinf, f, g, zeta0; sigma_guard)
     end
 
     # Relaxation: Align vectorial circulation to local vorticity
@@ -220,7 +257,9 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 end
 
 "CPU path for `_euler` (ReformulatedVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
-function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0) where {R, R2}
+function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
+                                  sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
+    cap, sfloor = _sigma_guard_params(R, sigma_guard)
     for i in 1:pfield.np
         p = get_particle(pfield, i)
         is_static(p) && continue # skip static particles
@@ -266,14 +305,18 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         G[2] += dt * (MM2 - 3*MM4*G[2] - C*SFS[2]*sigma3/zeta0)
         G[3] += dt * (MM3 - 3*MM4*G[3] - C*SFS[3]*sigma3/zeta0)
 
-        # Update cross-sectional area of the tube σ = -Δt*σ*Z
-        get_sigma(p)[] -= dt * ( get_sigma(p)[] * MM4 )
+        # Update cross-sectional area of the tube σ = -Δt*σ*Z, guarded
+        # against sign flip (dt*Z > 1) and floored — see _sigma_guard_params.
+        sig = get_sigma(p)[]
+        new_sig = dt*MM4 > cap ? sig * (1 - cap) : sig - dt * ( sig * MM4 )
+        get_sigma(p)[] = max(new_sig, sfloor)
     end
     return nothing
 end
 
 "GPU-compatible path for `_euler` (ReformulatedVPM): broadcasts over row-slices, works unchanged for `CuArray`."
-function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0) where {R, R2}
+function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
+                                        sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
 
     # Static-particle mask: 0 for static, 1 for active
     active = 1.0 .- pfield.particles[STATIC_INDEX, :]
@@ -315,8 +358,16 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     G[2, :] .+= dt .* active .* (MM2 .- 3 .* MM4 .* G[2, :] .- C_all[1, :] .* SFS_all[2, :] .* sigma3 ./ zeta0)
     G[3, :] .+= dt .* active .* (MM3 .- 3 .* MM4 .* G[3, :] .- C_all[1, :] .* SFS_all[3, :] .* sigma3 ./ zeta0)
 
-    # Update cross-sectional area of the tube σ = -Δt*σ*Z
-    pfield.particles[SIGMA_INDEX, :] .-= dt .* active .* (sigma .* MM4)
+    # Update cross-sectional area of the tube σ = -Δt*σ*Z, guarded against
+    # sign flip (dt*Z > 1) and floored (active particles only) — see
+    # _sigma_guard_params. An empty sigma_guard reproduces the unguarded
+    # update bit-exactly.
+    cap, sfloor = _sigma_guard_params(R, sigma_guard)
+    sig_new = ifelse.(active .* (dt .* MM4) .> cap,
+                      sigma .* (1 - cap),
+                      sigma .- dt .* active .* (sigma .* MM4))
+    pfield.particles[SIGMA_INDEX, :] .= ifelse.(active .> 0,
+                                                max.(sig_new, sfloor), sig_new)
 
     return nothing
 end

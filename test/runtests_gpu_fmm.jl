@@ -165,6 +165,77 @@ const FMM034_U_GATE = 1e-3   # fixed Integration Phase velocity tolerance
     end
 end
 
+@testset "euler sigma_guard: dt*Z cap + floor (052c trial 1)" begin
+    # Reproduces the 052c acceptance step-1015 failure mode in miniature:
+    # a strained outlier with dt*Z > 1 flips sigma's sign under the
+    # unguarded Euler update. Under transposed rVPM (f=0, g=1/5) with
+    # Gamma=(1,0,0) and only J[1] nonzero, Z = J[1]/5 exactly.
+    sigma0 = 0.1
+    dt = 0.1
+    function guard_field(n=6)
+        pf = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct)
+        for i in 1:n
+            vpm_fmm.add_particle(pf, [Float64(i), 0.0, 0.0],
+                                 [1.0, 0.0, 0.0], sigma0)
+        end
+        P = pf.particles
+        P[vpm_fmm.U_INDEX, 1:n] .= 0
+        P[vpm_fmm.J_INDEX, 1:n] .= 0
+        P[first(vpm_fmm.J_INDEX), 1] = 100.0  # dt*Z = 2.0  -> would flip sign
+        P[first(vpm_fmm.J_INDEX), 2] = 10.0   # dt*Z = 0.2  -> mild contraction
+        return pf
+    end
+    args(pf) = (pf.formulation.f, pf.formulation.g, pf.kernel.zeta(0))
+    Uinf = zeros(3)
+
+    # (a) unguarded update flips the strained particle's sigma negative
+    pf = guard_field()
+    f, g, zeta0 = args(pf)
+    vpm_fmm._euler_cpu_reformulated!(pf, dt, Uinf, f, g, zeta0)
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 1] < 0
+
+    # (b) cap prevents the flip (floor low enough to stay out of the way);
+    # untriggered particles keep the exact unguarded update
+    guard = (dtz_cap=0.5, floor=0.001)
+    pf = guard_field()
+    vpm_fmm._euler_cpu_reformulated!(pf, dt, Uinf, f, g, zeta0;
+                                     sigma_guard=guard)
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 1] ≈ sigma0 * (1 - 0.5)  # capped
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 2] ≈ 0.08                # mild, uncapped
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 3] ≈ sigma0              # untouched (Z=0)
+
+    # (c) floor engages after the cap: both the capped outlier (0.05 raw)
+    # and the mild contraction (0.08 raw) land on the floor
+    pf = guard_field()
+    vpm_fmm._euler_cpu_reformulated!(pf, dt, Uinf, f, g, zeta0;
+                                     sigma_guard=(dtz_cap=0.5, floor=0.085))
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 1] ≈ 0.085
+    @test pf.particles[vpm_fmm.SIGMA_INDEX, 2] ≈ 0.085
+
+    # (d) explicit (Inf, -Inf) guard is bit-identical to the empty guard
+    pf1, pf2 = guard_field(), guard_field()
+    vpm_fmm._euler_cpu_reformulated!(pf1, dt, Uinf, f, g, zeta0)
+    vpm_fmm._euler_cpu_reformulated!(pf2, dt, Uinf, f, g, zeta0;
+                                     sigma_guard=(dtz_cap=Inf, floor=-Inf))
+    @test pf1.particles[vpm_fmm.SIGMA_INDEX, 1:6] ==
+          pf2.particles[vpm_fmm.SIGMA_INDEX, 1:6]
+
+    # (e) broadcast twin matches the scalar loop with the guard armed
+    pf3 = guard_field()
+    vpm_fmm._euler_broadcast_reformulated!(pf3, dt, Uinf, f, g, zeta0;
+                                           sigma_guard=guard)
+    pf4 = guard_field()
+    vpm_fmm._euler_cpu_reformulated!(pf4, dt, Uinf, f, g, zeta0;
+                                     sigma_guard=guard)
+    @test pf3.particles[vpm_fmm.SIGMA_INDEX, 1:6] ≈
+          pf4.particles[vpm_fmm.SIGMA_INDEX, 1:6]
+
+    # (f) unknown guard keys are rejected loudly
+    pf5 = guard_field()
+    @test_throws ArgumentError vpm_fmm._euler_cpu_reformulated!(
+        pf5, dt, Uinf, f, g, zeta0; sigma_guard=(bogus=1.0,))
+end
+
 # =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================
