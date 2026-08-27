@@ -407,13 +407,14 @@ _add_particle_gpu_bcast_val(v) = v
 
 function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma,
                                                     vol, circulation, C, static)
+    R = eltype(pfield.particles)
     view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X)
     view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma)
     view(pfield.particles, SIGMA_INDEX:SIGMA_INDEX, i) .= sigma
     view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= vol
     view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= circulation
     view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C)
-    view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= Float64(static)
+    view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= R(static)
     return nothing
 end
 

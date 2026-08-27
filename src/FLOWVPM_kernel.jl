@@ -52,8 +52,9 @@ zeta_gauserf(r) = const1*exp(-r*r/2)
 g_gauserf(r) = custom_erf(r/sqr2) - const2*r*exp(-r*r/2)
 dgdr_gauserf(r) = const2*r*r*exp(-r*r/2)
 @inline function g_dgdr_gauserf(r)
-  aux = const2*r*exp(-r*r/2)
-  return custom_erf(r/sqr2)-aux, r*aux
+  T = typeof(r)
+  aux = T(const2)*r*exp(-r*r/2)
+  return custom_erf(r/T(sqr2))-aux, r*aux
 end
 
 # Gaussian kernel

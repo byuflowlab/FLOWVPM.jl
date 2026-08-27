@@ -1,0 +1,6 @@
+[deps]
+FLOWVPM = "6e19019d-7c31-4940-9d16-c3f15dfe6020"
+FastMultipole = "ce07d0d3-2b9f-49ba-89eb-12c800257c85"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
