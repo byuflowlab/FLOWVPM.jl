@@ -513,9 +513,14 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     _validate_radix_fmm_settings(pfield)
     device = !(pfield.particles isa Array)
     if device
-        fmm.load_cuda_radix_lifecycle!() || error(
-            "GPU FMM requested (CuArray-backed particle field) but the CUDA " *
-            "radix lifecycle is unavailable: $(fmm.cuda_radix_status())")
+        # A non-Array-backed field takes the device path on whatever backend it
+        # lives on. CUDA loads its lifecycle by runtime `include`; any other
+        # backend registers itself with FastMultipole from a package extension
+        # (FastMultipole.jl, register_radix_device_backend!), so try CUDA first
+        # and fall back to a registered backend rather than erroring on it.
+        fmm.load_cuda_radix_lifecycle!() || fmm.radix_device_backend_available() ||
+            error("GPU FMM requested (device-backed particle field) but no " *
+                "device radix lifecycle is available: $(fmm.cuda_radix_status())")
     end
 
     bounds = settings.bounds === nothing ?
