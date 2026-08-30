@@ -84,6 +84,22 @@ function fmm.buffer_to_target!(
     return pfield
 end
 
+# ACCUMULATE into SFS_INDEX (rows 40:42), the MtlArray mirror of
+# FLOWVPMCUDAExt.jl:971-980. FastMultipole's `ka_finalize_radix_sfs_output!`
+# takes the DeviceResident branch for a Metal-backed field and hands back a
+# device-side 3 x np E_str buffer in global particle order; the caller resets
+# the SFS rows, matching the `Estr_direct`/`Estr_fmm!` += convention.
+function fmm.sfs_to_target!(
+        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
+        buf::MtlArray,
+        sort_index=1:pfield.np) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:MtlArray{R}}
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected device SFS buffer shape $(size(buf)) for np=$np")
+    view(pfield.particles, FLOWVPM.SFS_INDEX, 1:np) .+= buf
+    return pfield
+end
+
 # Each thread handles one target and loops directly over all sources in
 # global (device) memory. Math mirrors FLOWVPMCUDAExt.jl's gpu_interaction!.
 @kernel function ka_direct_kernel!(out, @Const(s), n::Int32, kernel)
