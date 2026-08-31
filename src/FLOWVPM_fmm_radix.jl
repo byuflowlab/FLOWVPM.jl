@@ -292,7 +292,9 @@ function _validate_radix_fmm_settings(pfield::ParticleField,
     ell, q = settings.ell === nothing ?
         _radix_auto_geometry(L_geo, sigma_max, pfield.np,
             settings.near_radius2, _radix_primary_reach(kernel),
-            settings.accuracy_margin) :
+            settings.accuracy_margin;
+            cost_field=_radix_cost_select(pfield) ? pfield : nothing,
+            cost_bounds=bounds) :
         (settings.ell, settings.near_radius2)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
@@ -469,6 +471,88 @@ function _radix_center_snapped_bounds(bounds, ell::Integer)
     return (center - snapped / 2, snapped)
 end
 
+################################################################################
+# GPU cost model for radix depth selection
+################################################################################
+# `_radix_auto_geometry` used to return the DEEPEST admissible (ell, q). That
+# minimizes near-field work, but on the GPU the far field it buys can cost far
+# more than the near work it removes, because the far field carries a large
+# fixed cost and a route count that grows much faster than the depth. Measured
+# on the for_ryan rotor wake (Metal, P=5, :concat), the deepest-admissible
+# choice was 1.92x slower than ell=2 at np=2048 and 3.06x slower than ell=3 at
+# np=62792, at equal accuracy (relerr 5.8e-4 vs 5.5e-4).
+#
+# These constants price the two halves so the rule can pick the cheaper
+# admissible depth instead. Calibrated over 16 measured (np, ell, q)
+# configurations spanning np = 2048..115455. The fit is coarse in absolute
+# seconds (residuals reach ~50%) but it only has to ORDER candidates, and on
+# the calibration set it selects the measured-fastest depth 5 times out of 5.
+# Re-derive with FastMultipole/test/metal_env/_probe_ell_and_occupancy.jl if
+# the kernels or the target device change.
+const _RADIX_COST_ROUTES_A   = 0.155454    # routes ~ A * n_cells^B
+const _RADIX_COST_ROUTES_B   = 2.22449
+const _RADIX_COST_FAR_FIXED  = 0.0157731   # s, far-field pipeline floor
+const _RADIX_COST_PER_ROUTE  = 6.03049e-7  # s per M2L route
+const _RADIX_COST_PER_BODY   = 1.03962e-6  # s per body (B2M/M2M/L2L/L2B, sort)
+const _RADIX_COST_NEAR_FIXED = 0.00256341  # s
+const _RADIX_COST_PER_INTER  = 1.19469e-10 # s per near-field interaction
+
+"Cost-based depth selection applies to device-backed fields only: the
+constants above are GPU-calibrated and the CPU path has a different balance."
+_radix_cost_select(pfield::ParticleField) = !(pfield.particles isa Array)
+
+"""
+    _radix_grid_counts(pfield, bounds, ell, q) -> (n_cells, ninter)
+
+Bin the live particles into the `2^ell`-per-axis grid implied by `bounds` and
+return the number of OCCUPIED cells together with the number of near-field
+interactions the rigid stencil `q` would enumerate,
+`sum over near cell pairs of occ_target * occ_source` (self-pairs included).
+
+Both counts are exact for the given geometry, which is what makes the cost
+comparison meaningful: only the route count is modelled. Costs `O(np +
+n_cells * |stencil(q)|)` and runs once per cache build, not per step.
+"""
+function _radix_grid_counts(pfield::ParticleField, bounds, ell::Int, q::Int)
+    np = pfield.np
+    np > 0 || return (0, 0.0)
+    x_min, L = bounds
+    n = 1 << ell
+    hx, hy, hz = L isa Real ? (L / n, L / n, L / n) : (L[1] / n, L[2] / n, L[3] / n)
+    # one host copy: a device-backed field must not be indexed elementwise
+    X = Array(view(pfield.particles, X_INDEX, 1:np))
+    occ = Dict{NTuple{3,Int},Int}()
+    for i in 1:np
+        cx = clamp(floor(Int, (X[1, i] - x_min[1]) / hx), 0, n - 1)
+        cy = clamp(floor(Int, (X[2, i] - x_min[2]) / hy), 0, n - 1)
+        cz = clamp(floor(Int, (X[3, i] - x_min[3]) / hz), 0, n - 1)
+        key = (cx, cy, cz)
+        occ[key] = get(occ, key, 0) + 1
+    end
+    reach = ceil(Int, sqrt(q))
+    offsets = NTuple{3,Int}[]
+    for oz in -reach:reach, oy in -reach:reach, ox in -reach:reach
+        ox * ox + oy * oy + oz * oz <= q && push!(offsets, (ox, oy, oz))
+    end
+    ninter = 0.0
+    for (c, ot) in occ, o in offsets
+        nb = (c[1] + o[1], c[2] + o[2], c[3] + o[3])
+        os = get(occ, nb, 0)
+        os == 0 && continue
+        ninter += Float64(ot) * Float64(os)
+    end
+    return (length(occ), ninter)
+end
+
+"Estimated seconds for one device U/J evaluation at this geometry."
+function _radix_cost_estimate(np::Int, n_cells::Int, ninter::Real)
+    routes = _RADIX_COST_ROUTES_A * float(n_cells)^_RADIX_COST_ROUTES_B
+    far = _RADIX_COST_FAR_FIXED + _RADIX_COST_PER_ROUTE * routes +
+          _RADIX_COST_PER_BODY * np
+    near = _RADIX_COST_NEAR_FIXED + _RADIX_COST_PER_INTER * ninter
+    return far + near
+end
+
 """
     _radix_auto_geometry(L, sigma_max, np, q_floor, rho_t, margin) -> (ell, q)
 
@@ -483,18 +567,41 @@ adequacy gate FastMultipole enforces (`margin = 1` reproduces adequacy-only
 selection). Errors loudly when no depth `>= 2` is admissible.
 """
 function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
-                              rho_t::Real, margin::Real)
+                              rho_t::Real, margin::Real;
+                              cost_field=nothing, cost_bounds=nothing)
     reach = margin * rho_t * sigma_max
     qs = sort!([Int(q) for q in fmm._SUPPORTED_RIGID_NEAR_RADII2 if q >= q_floor])
     isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
         "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
     gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
     ell_occupancy = max(2, floor(Int, log2(max(np, 8)) / 3))
+    # every admissible depth, with the smallest near set that satisfies it
+    admissible = Tuple{Int,Int}[]
     for ell in ell_occupancy:-1:2
         h = L / 2^ell
         for q in qs
-            gaps[q] * h >= reach && return (ell, q)
+            if gaps[q] * h >= reach
+                push!(admissible, (ell, q))
+                break
+            end
         end
+    end
+    if !isempty(admissible)
+        # Legacy behaviour: deepest admissible. Correct for accuracy, but not
+        # for speed -- see the cost-model block above.
+        (cost_field === nothing || cost_bounds === nothing) && return first(admissible)
+        best = first(admissible)
+        best_cost = Inf
+        for cand in admissible
+            n_cells, ninter = _radix_grid_counts(cost_field, cost_bounds, cand[1], cand[2])
+            n_cells == 0 && continue
+            c = _radix_cost_estimate(cost_field.np, n_cells, ninter)
+            if c < best_cost
+                best_cost = c
+                best = cand
+            end
+        end
+        return best
     end
     error("no admissible radix depth (need ell >= 2): the margin-guarded " *
         "near-set inequality requires g_min(q)*L/2^ell >= " *
@@ -539,7 +646,9 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     ell, q = settings.ell === nothing ?
         _radix_auto_geometry(L_geo, sigma_max, pfield.np,
             settings.near_radius2, kernel_primary_reach,
-            settings.accuracy_margin) :
+            settings.accuracy_margin;
+            cost_field=(device && _radix_cost_select(pfield)) ? pfield : nothing,
+            cost_bounds=bounds) :
         (settings.ell, settings.near_radius2)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
@@ -591,9 +700,15 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     np = pfield.np
     np > 2 * st.np_checked[] || return false
     st.np_checked[] = np
-    # the auto rule never exceeds its occupancy cap, so a deeper choice is
-    # impossible until the cap itself passes the cached depth
-    max(2, floor(Int, log2(max(np, 8)) / 3)) > st.cache.ell || return false
+    # Under the legacy deepest-admissible rule a deeper choice was impossible
+    # until the occupancy cap itself passed the cached depth, so the cap was a
+    # sound early-out. Cost-based selection can also move the depth DOWN (a
+    # spreading wake makes the far field cheaper), so that shortcut only holds
+    # when the cost model is not in play.
+    cost_selecting = _radix_cost_select(pfield)
+    if !cost_selecting
+        max(2, floor(Int, log2(max(np, 8)) / 3)) > st.cache.ell || return false
+    end
     bounds = st.settings.bounds === nothing ?
         _radix_derive_bounds(pfield, st.settings.padding;
             rectangular=st.settings.rectangular) : st.settings.bounds
@@ -604,11 +719,13 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     ell = try
         first(_radix_auto_geometry(L_geo, sigma_max, np,
             st.settings.near_radius2, _radix_primary_reach(kernel),
-            st.settings.accuracy_margin))
+            st.settings.accuracy_margin;
+            cost_field=cost_selecting ? pfield : nothing,
+            cost_bounds=bounds))
     catch
         return false
     end
-    return ell > st.cache.ell
+    return cost_selecting ? ell != st.cache.ell : ell > st.cache.ell
 end
 
 """
