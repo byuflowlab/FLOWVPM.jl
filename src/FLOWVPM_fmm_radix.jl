@@ -685,6 +685,12 @@ function _radix_fmm_coupling!(pfield::ParticleField)
                           _radix_sigma_outgrown!(pfield, st))
         delete!(_radix_fmm_couplings, pfield)
         st = nothing
+        # 052 long-run leak: the dropped cache holds GB-scale device arrays
+        # that have long since been promoted to the old generation, and device
+        # bytes are invisible to the host GC heuristics — without an explicit
+        # full collection here they would never be freed. Rebuilds are rare
+        # (grid depth or sigma_max outgrown), so the pause is amortized.
+        GC.gc(true)
     end
     if st === nothing
         settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
