@@ -1023,7 +1023,6 @@ function infer_filament_edges!(pfield::ParticleField{R};
     empty!(candidate_indices)
 
     xmin = ymin = zmin =  Inf
-    xmax = ymax = zmax = -Inf
     sigma_max = zero(R)
 
     @inbounds for i in 1:np
@@ -1041,7 +1040,6 @@ function infer_filament_edges!(pfield::ParticleField{R};
         sigma = pfield.particles[SIGMA_INDEX, i]
 
         xmin = min(xmin, x); ymin = min(ymin, y); zmin = min(zmin, z)
-        xmax = max(xmax, x); ymax = max(ymax, y); zmax = max(zmax, z)
         sigma_max = max(sigma_max, R(sigma))
     end
 
@@ -1050,19 +1048,11 @@ function infer_filament_edges!(pfield::ParticleField{R};
 
     # ------------------------------------------------------------------- bin
     cell_size = R(max_eta) * sigma_max
-    Nx = max(1, floor(Int, (xmax - xmin) / cell_size) + 1)
-    Ny = max(1, floor(Int, (ymax - ymin) / cell_size) + 1)
-    Nz = max(1, floor(Int, (zmax - zmin) / cell_size) + 1)
-    n_cells = Nx * Ny * Nz
-
-    resize!(ws.sorted_indices, length(candidate_indices))
-    resize!(ws.offsets, n_cells + 1); fill!(ws.offsets, 0)
-    resize!(ws.counts,  n_cells + 1)
-    resize!(ws.keys,    np)
+    resize!(ws.keys, np)
 
     origin = (xmin, ymin, zmin)
-    _build_cell_list!(ws.sorted_indices, ws.offsets, ws.counts, ws.keys,
-                      candidate_indices, pfield, cell_size, origin, Nx, Ny, Nz)
+    n_cells = _build_cell_list!(ws.sorted_indices, ws.offsets, ws.counts, ws.keys,
+                                candidate_indices, pfield, cell_size, origin)
 
     # --------------------------------------------------------------- scoring
     inv_cell = inv(cell_size)
@@ -1077,21 +1067,19 @@ function infer_filament_edges!(pfield::ParticleField{R};
         sp = R(pfield.particles[SIGMA_INDEX, p])
         ex_p = ws.axis_x[p]; ey_p = ws.axis_y[p]; ez_p = ws.axis_z[p]
 
-        ix = clamp(floor(Int, (xp - xmin) * inv_cell), 0, Nx - 1)
-        iy = clamp(floor(Int, (yp - ymin) * inv_cell), 0, Ny - 1)
-        iz = clamp(floor(Int, (zp - zmin) * inv_cell), 0, Nz - 1)
+        ix = _cell_coord(xp - xmin, inv_cell)
+        iy = _cell_coord(yp - ymin, inv_cell)
+        iz = _cell_coord(zp - zmin, inv_cell)
 
         capped_p = false
         for (dx, dy, dz) in STENCIL_OFFSETS_27
             capped_p && break
             jx = ix + dx; jy = iy + dy; jz = iz + dz
-            (jx < 0 || jx >= Nx) && continue
-            (jy < 0 || jy >= Ny) && continue
-            (jz < 0 || jz >= Nz) && continue
-            key = jx + jy * Nx + jz * Nx * Ny
-            a = ws.offsets[key + 1] + 1
-            b = ws.offsets[key + 2]
-            for slot in a:b
+            (jx < 0 || jx > CELL_COORD_MAX) && continue
+            (jy < 0 || jy > CELL_COORD_MAX) && continue
+            (jz < 0 || jz > CELL_COORD_MAX) && continue
+            key = _pack_cell_key(jx, jy, jz)
+            for slot in _cell_range(ws.offsets, ws.counts, n_cells, key)
                 q = ws.sorted_indices[slot]
                 q <= p && continue
                 ws.axis_ok[q] || continue
@@ -2439,7 +2427,6 @@ function _observe_inference_candidates!(pfield::ParticleField{R};
     cand = ws.candidates
     empty!(cand)
     xmin = ymin = zmin = Inf
-    xmax = ymax = zmax = -Inf
     sigma_max = zero(R)
     @inbounds for i in 1:np
         get_static(pfield, i) && continue
@@ -2451,23 +2438,15 @@ function _observe_inference_candidates!(pfield::ParticleField{R};
         x = pfield.particles[1, i]; y = pfield.particles[2, i]; z = pfield.particles[3, i]
         σ = pfield.particles[SIGMA_INDEX, i]
         xmin = min(xmin, x); ymin = min(ymin, y); zmin = min(zmin, z)
-        xmax = max(xmax, x); ymax = max(ymax, y); zmax = max(zmax, z)
         sigma_max = max(sigma_max, R(σ))
     end
     length(cand) < 2 && return (capped=0, visits=0, pairs=0, accepted=0, mutual=0)
     sigma_max > 0 || return (capped=0, visits=0, pairs=0, accepted=0, mutual=0)
 
     cell_size = R(max_eta) * sigma_max
-    Nx = max(1, floor(Int, (xmax - xmin) / cell_size) + 1)
-    Ny = max(1, floor(Int, (ymax - ymin) / cell_size) + 1)
-    Nz = max(1, floor(Int, (zmax - zmin) / cell_size) + 1)
-    n_cells = Nx * Ny * Nz
-    resize!(ws.sorted_indices, length(cand))
-    resize!(ws.offsets, n_cells + 1); fill!(ws.offsets, 0)
-    resize!(ws.counts, n_cells + 1)
     resize!(ws.keys, np)
-    _build_cell_list!(ws.sorted_indices, ws.offsets, ws.counts, ws.keys,
-                      cand, pfield, cell_size, (xmin, ymin, zmin), Nx, Ny, Nz)
+    n_cells = _build_cell_list!(ws.sorted_indices, ws.offsets, ws.counts, ws.keys,
+                                cand, pfield, cell_size, (xmin, ymin, zmin))
 
     inv_cell = inv(cell_size)
     cos_tol = R(cos(angle_tol))
@@ -2478,18 +2457,16 @@ function _observe_inference_candidates!(pfield::ParticleField{R};
         xp = pfield.particles[1, p]; yp = pfield.particles[2, p]; zp = pfield.particles[3, p]
         sp = R(pfield.particles[SIGMA_INDEX, p])
         ex_p = ws.axis_x[p]; ey_p = ws.axis_y[p]; ez_p = ws.axis_z[p]
-        ix = clamp(floor(Int, (xp - xmin) * inv_cell), 0, Nx - 1)
-        iy = clamp(floor(Int, (yp - ymin) * inv_cell), 0, Ny - 1)
-        iz = clamp(floor(Int, (zp - zmin) * inv_cell), 0, Nz - 1)
+        ix = _cell_coord(xp - xmin, inv_cell)
+        iy = _cell_coord(yp - ymin, inv_cell)
+        iz = _cell_coord(zp - zmin, inv_cell)
         capped_p = false
         for (dx, dy, dz) in STENCIL_OFFSETS_27
             capped_p && break
             jx = ix + dx; jy = iy + dy; jz = iz + dz
-            (jx < 0 || jx >= Nx || jy < 0 || jy >= Ny || jz < 0 || jz >= Nz) && continue
-            key = jx + jy * Nx + jz * Nx * Ny
-            a = ws.offsets[key + 1] + 1
-            b = ws.offsets[key + 2]
-            for slot in a:b
+            (jx < 0 || jx > CELL_COORD_MAX || jy < 0 || jy > CELL_COORD_MAX || jz < 0 || jz > CELL_COORD_MAX) && continue
+            key = _pack_cell_key(jx, jy, jz)
+            for slot in _cell_range(ws.offsets, ws.counts, n_cells, key)
                 q = ws.sorted_indices[slot]
                 q <= p && continue
                 ws.axis_ok[q] || continue

@@ -23,44 +23,90 @@ function _uf_union!(parent::Vector{Int}, rank::Vector{Int}, i::Int, j::Int)
     return true
 end
 
+# Sparse cell binning: candidates are labeled by packing their integer cell
+# coordinates into a single Int64 key, then grouped by sorting. Only occupied
+# cells are materialized (CSR over the sorted unique keys), so memory is
+# O(#candidates) regardless of spatial extent. A dense (extent/cell_size)^3
+# grid here has caused OutOfMemoryError whenever a single runaway particle
+# stretched the bounding box.
+const CELL_COORD_BITS = 21
+const CELL_COORD_MAX = (1 << CELL_COORD_BITS) - 1
+
+# Coordinates beyond CELL_COORD_MAX cells from the origin collapse into the
+# boundary cell. That only groups extreme outliers together, and every pair is
+# still distance-checked before acting, so results are unaffected. Comparing
+# in float before converting also absorbs Inf/huge values that would throw in
+# floor(Int, ·).
+@inline function _cell_coord(delta::Real, inv_cell::Real)
+    r = delta * inv_cell
+    r >= CELL_COORD_MAX && return CELL_COORD_MAX
+    r <= 0 && return 0
+    return floor(Int, r)
+end
+
+@inline _pack_cell_key(ix::Int, iy::Int, iz::Int) =
+    ix | (iy << CELL_COORD_BITS) | (iz << (2 * CELL_COORD_BITS))
+
+"""
+Bin `candidate_indices` into cells of size `cell_size` anchored at `origin`.
+On return `sorted_indices` holds the candidates grouped by cell (ascending
+particle index within a cell), `unique_keys[1:n_cells]` the sorted packed key
+of each occupied cell, and `offsets[c]+1 : offsets[c+1]` cell `c`'s range in
+`sorted_indices`. `keys[i]` is left holding the packed key of candidate `i`
+(`keys` must have length ≥ the largest candidate index). Returns `n_cells`,
+the number of occupied cells. All buffers end up O(#candidates)-sized.
+"""
 function _build_cell_list!(
     sorted_indices::Vector{Int},
     offsets::Vector{Int},
-    counts::Vector{Int},
+    unique_keys::Vector{Int},
     keys::Vector{Int},
     candidate_indices::Vector{Int},
     pfield::ParticleField,
     cell_size::Real,
     origin,
-    Nx::Int,
-    Ny::Int,
-    Nz::Int,
 )
-    n_cells = Nx * Ny * Nz
-
-    fill!(offsets, 0)
-
-    for i in candidate_indices
-        ix = clamp(floor(Int, (pfield.particles[1, i] - origin[1]) / cell_size), 0, Nx - 1)
-        iy = clamp(floor(Int, (pfield.particles[2, i] - origin[2]) / cell_size), 0, Ny - 1)
-        iz = clamp(floor(Int, (pfield.particles[3, i] - origin[3]) / cell_size), 0, Nz - 1)
-        key = ix + iy * Nx + iz * Nx * Ny
-        keys[i] = key
-        offsets[key + 2] += 1
+    inv_cell = inv(cell_size)
+    @inbounds for i in candidate_indices
+        ix = _cell_coord(pfield.particles[1, i] - origin[1], inv_cell)
+        iy = _cell_coord(pfield.particles[2, i] - origin[2], inv_cell)
+        iz = _cell_coord(pfield.particles[3, i] - origin[3], inv_cell)
+        keys[i] = _pack_cell_key(ix, iy, iz)
     end
 
-    for i in 2:(n_cells + 1)
-        offsets[i] += offsets[i - 1]
-    end
+    n = length(candidate_indices)
+    resize!(sorted_indices, n)
+    copyto!(sorted_indices, candidate_indices)
+    # Tie-breaking on the index keeps within-cell order ascending in particle
+    # index, matching the stable counting sort this replaces. QuickSort is
+    # in-place: no allocation in the hot loop.
+    sort!(sorted_indices; alg=QuickSort, by=i -> (keys[i], i))
 
-    copyto!(counts, 1, offsets, 1, n_cells + 1)
-    for i in candidate_indices
-        key = keys[i] + 1
-        counts[key] += 1
-        sorted_indices[counts[key]] = i
+    resize!(unique_keys, n)
+    resize!(offsets, n + 1)
+    n_cells = 0
+    prev = typemin(Int)
+    @inbounds for t in 1:n
+        k = keys[sorted_indices[t]]
+        if k != prev
+            n_cells += 1
+            unique_keys[n_cells] = k
+            offsets[n_cells] = t - 1
+            prev = k
+        end
     end
+    offsets[n_cells + 1] = n
+    return n_cells
+end
 
-    return nothing
+# Range of the cell with packed key `key` in `sorted_indices`, or an empty
+# range if that cell is unoccupied.
+@inline function _cell_range(offsets::Vector{Int}, unique_keys::Vector{Int}, n_cells::Int, key::Int)
+    c = searchsortedfirst(unique_keys, key, 1, n_cells, Base.Order.Forward)
+    @inbounds if c <= n_cells && unique_keys[c] == key
+        return (offsets[c] + 1):offsets[c + 1]
+    end
+    return 1:0
 end
 
 function _finalize_merged_particle!(
@@ -407,9 +453,6 @@ function merge_particles!(
     xmin = typemax(eltype(pfield.particles))
     ymin = typemax(eltype(pfield.particles))
     zmin = typemax(eltype(pfield.particles))
-    xmax = typemin(eltype(pfield.particles))
-    ymax = typemin(eltype(pfield.particles))
-    zmax = typemin(eltype(pfield.particles))
     sigma_sum = zero(eltype(pfield.particles))
 
     for i in 1:np
@@ -427,9 +470,6 @@ function merge_particles!(
         xmin = min(xmin, x)
         ymin = min(ymin, y)
         zmin = min(zmin, z)
-        xmax = max(xmax, x)
-        ymax = max(ymax, y)
-        zmax = max(zmax, z)
         sigma_sum += sigma
     end
 
@@ -442,26 +482,16 @@ function merge_particles!(
         return 0
     end
 
-    Nx = max(1, floor(Int, (xmax - xmin) / cell_size) + 1)
-    Ny = max(1, floor(Int, (ymax - ymin) / cell_size) + 1)
-    Nz = max(1, floor(Int, (zmax - zmin) / cell_size) + 1)
-    n_cells = Nx * Ny * Nz
-
     sorted_indices = ws.sorted_indices
-    resize!(sorted_indices, length(candidate_indices))
-
     offsets = ws.offsets
-    resize!(offsets, n_cells + 1); fill!(offsets, 0)
-
-    counts = ws.counts
-    resize!(counts, n_cells + 1)
+    unique_keys = ws.counts  # reused as the sorted occupied-cell keys
 
     keys = ws.keys
     resize!(keys, np)  # written before read for every candidate; no fill needed
 
     origin = (xmin, ymin, zmin)
 
-    _build_cell_list!(sorted_indices, offsets, counts, keys, candidate_indices, pfield, cell_size, origin, Nx, Ny, Nz)
+    n_cells = _build_cell_list!(sorted_indices, offsets, unique_keys, keys, candidate_indices, pfield, cell_size, origin)
 
     parent = ws.parent
     rank = ws.rank
@@ -471,10 +501,9 @@ function merge_particles!(
         parent[i] = i
     end
 
-    for key in 0:(n_cells - 1)
-        range_start = offsets[key + 1] + 1
-        range_stop = offsets[key + 2]
-        range_start > range_stop && continue
+    for c in 1:n_cells
+        range_start = offsets[c] + 1
+        range_stop = offsets[c + 1]
 
         for a in range_start:range_stop
             ia = sorted_indices[a]

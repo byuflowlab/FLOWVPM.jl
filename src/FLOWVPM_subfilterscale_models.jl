@@ -40,15 +40,36 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     get_SFS(target_particle)[3] += zeta_sgm*S3
 end
 
+"""
+    gpu_estr_direct!(pfield::ParticleField)
+
+GPU implementation of the O(N²) direct-sum SFS vortex-stretching
+contribution used by `Estr_direct!`, dispatched to when `pfield.particles`
+is not a plain `Array`. Real implementation is a method of this function
+defined in `ext/FLOWVPMCUDAExt.jl` (loaded automatically alongside CUDA.jl).
+This stub is only reached if a non-`Array` particle field is used without
+CUDA.jl loaded.
+"""
+gpu_estr_direct!(pfield::ParticleField) = error(
+    "No GPU Estr_direct implementation available for particle arrays of type " *
+    "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
+    "the CUDA-accelerated direct SFS stretching contribution for `CuArray`-backed particle fields.")
+
 function Estr_direct!(pfield)
-    if Threads.nthreads() > 1
-        Estr_direct_multithreaded(pfield)
+    if pfield.particles isa Array
+        if Threads.nthreads() > 1
+            Estr_direct_multithreaded(pfield)
+        else
+            Estr_direct_singlethreaded(pfield)
+        end
     else
-        Estr_direct_singlethreaded(pfield)
+        gpu_estr_direct!(pfield)
     end
 end
 
 function Estr_direct_multithreaded(pfield::ParticleField)
+    # An empty field would build a zero-step assignment range below.
+    pfield.np > 0 || return nothing
     n_per_thread, rem = divrem(pfield.np, Threads.nthreads())
     n = n_per_thread + (rem > 0)
     assignments = 1:n:pfield.np

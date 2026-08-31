@@ -147,7 +147,7 @@ function custom_erf32(x)
     elseif xabs < 6.0f0
         s = oneval/(x*x)
         R = rb0s+s*(rb1s+s*(rb2s+s*(rb3s+s*(rb4s+s*(rb5s+s*rb6s)))))
-        S = oneval+s*(sb1s+s*(sb2s+s*(sb3s+s*(sb4s+s*(sb5s+s*(sb6s+s*sb7))))))
+        S = oneval+s*(sb1s+s*(sb2s+s*(sb3s+s*(sb4s+s*(sb5s+s*(sb6s+s*sb7s))))))
         r = exp(-x*x - 0.5625f0 + R/S)
         val = sgn * (oneval-r/xabs)
     end
