@@ -496,12 +496,21 @@ function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
             gaps[q] * h >= reach && return (ell, q)
         end
     end
-    error("no admissible radix depth (need ell >= 2): the margin-guarded " *
+    # Task 052f (user decision 2026-08-29): sigma can outgrow every admissible
+    # stencil geometry (core spreading + merging fatten sigma_max without
+    # bound), and killing a production run here loses the campaign. Fall back
+    # to the all-direct zero-M2L grid instead: at ell = 2 every leaf offset
+    # lies inside the q = 27 near ball, so FastMultipole builds the degenerate
+    # pure-direct cache (052c) — every pair runs the regularized direct kernel
+    # on the device and no pair can reach the singular far field. Adequacy is
+    # then vacuous by construction; the cost is O(np^2)-shaped nearfield work.
+    @warn("no admissible radix depth (need ell >= 2): the margin-guarded " *
         "near-set inequality requires g_min(q)*L/2^ell >= " *
         "margin*rho_t*sigma_max = $reach, but even ell = 2 with the largest " *
         "supported q >= $q_floor gives $(maximum(gaps[q] for q in qs) * L / 4). " *
-        "Reduce the smoothing overlap, enlarge the domain box, or use more " *
-        "particles.")
+        "Falling back to the all-direct zero-M2L grid (ell = 2, q = 27): " *
+        "every pair is evaluated by the regularized direct kernel.", maxlog = 4)
+    return (2, 27)
 end
 
 ################################################################################
