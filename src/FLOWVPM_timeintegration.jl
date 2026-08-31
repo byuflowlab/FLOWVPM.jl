@@ -21,6 +21,11 @@ percentile stayed healthy). Recognized keys:
 - `dtz_cap`: max per-step contraction fraction `dt*Z` (default `Inf`);
 - `floor`: absolute lower bound on sigma (default `-Inf`; callers
   typically pass a fraction of the shed sigma).
+- `ceil`: absolute upper bound on sigma (default `Inf`). Interim guard for
+  the growth side (compression, Z < 0): an unbounded outlier sigma drives
+  the radix-FMM auto geometry to a degenerate shallow grid (018 NT144
+  cliff, 2026-08-27). Band-aid until particle splitting (BRAINSTORM item
+  026) re-resolves oversize particles physically.
 
 An empty `sigma_guard` (the default) reproduces the unguarded update
 bit-exactly. Unknown keys throw, so alternative guard laws added later
@@ -30,10 +35,11 @@ updates are unguarded and reject a non-empty `sigma_guard`.
 """
 function _sigma_guard_params(::Type{R}, sigma_guard::NamedTuple) where R
     for k in keys(sigma_guard)
-        k in (:dtz_cap, :floor) || throw(ArgumentError(
-            "unknown sigma_guard key $(k); recognized: (:dtz_cap, :floor)"))
+        k in (:dtz_cap, :floor, :ceil) || throw(ArgumentError(
+            "unknown sigma_guard key $(k); recognized: (:dtz_cap, :floor, :ceil)"))
     end
-    return R(get(sigma_guard, :dtz_cap, Inf)), R(get(sigma_guard, :floor, -Inf))
+    return R(get(sigma_guard, :dtz_cap, Inf)), R(get(sigma_guard, :floor, -Inf)),
+        R(get(sigma_guard, :ceil, Inf))
 end
 
 """
@@ -259,7 +265,7 @@ end
 "CPU path for `_euler` (ReformulatedVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
 function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
                                   sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
-    cap, sfloor = _sigma_guard_params(R, sigma_guard)
+    cap, sfloor, sceil = _sigma_guard_params(R, sigma_guard)
     for i in 1:pfield.np
         p = get_particle(pfield, i)
         is_static(p) && continue # skip static particles
@@ -309,7 +315,7 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         # against sign flip (dt*Z > 1) and floored — see _sigma_guard_params.
         sig = get_sigma(p)[]
         new_sig = dt*MM4 > cap ? sig * (1 - cap) : sig - dt * ( sig * MM4 )
-        get_sigma(p)[] = max(new_sig, sfloor)
+        get_sigma(p)[] = clamp(new_sig, sfloor, sceil)
     end
     return nothing
 end
@@ -362,12 +368,13 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     # sign flip (dt*Z > 1) and floored (active particles only) — see
     # _sigma_guard_params. An empty sigma_guard reproduces the unguarded
     # update bit-exactly.
-    cap, sfloor = _sigma_guard_params(R, sigma_guard)
+    cap, sfloor, sceil = _sigma_guard_params(R, sigma_guard)
     sig_new = ifelse.(active .* (dt .* MM4) .> cap,
                       sigma .* (1 - cap),
                       sigma .- dt .* active .* (sigma .* MM4))
     pfield.particles[SIGMA_INDEX, :] .= ifelse.(active .> 0,
-                                                max.(sig_new, sfloor), sig_new)
+                                                clamp.(sig_new, sfloor, sceil),
+                                                sig_new)
 
     return nothing
 end
