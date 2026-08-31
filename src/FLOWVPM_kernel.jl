@@ -48,7 +48,7 @@ dgdr_sing(r) = 0.0
 @inline g_dgdr_sing(r) = (1.0, 0.0)
 
 # erf Gaussian kernel
-zeta_gauserf(r) = const1*exp(-r*r/2)
+zeta_gauserf(r) = typeof(r)(const1)*exp(-r*r/2)
 g_gauserf(r) = custom_erf(r/sqr2) - const2*r*exp(-r*r/2)
 dgdr_gauserf(r) = const2*r*r*exp(-r*r/2)
 @inline function g_dgdr_gauserf(r)

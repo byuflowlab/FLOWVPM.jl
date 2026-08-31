@@ -51,9 +51,14 @@ const CSV_PATH = get(ENV, "KA_UJ_AB_CSV",
 
 #------- field construction -------#
 
+# The radix/GPU path refuses autotuning (FLOWVPM_fmm_radix.jl:381), and the A/B
+# is only meaningful if both arms share p, so both constructors take this.
+const AB_FMM = FLOWVPM.FMM(; p=4, autotune_p=false, autotune_ncrit=false,
+                           autotune_reg_error=false, default_rho_over_sigma=1.0)
+
 function build_pfield(n, R; seed=1)
     Random.seed!(seed)
-    pfield = FLOWVPM.ParticleField(n, R)
+    pfield = FLOWVPM.ParticleField(n, R; fmm=AB_FMM)
     for _ in 1:n
         X = rand(R, 3) .* 2 .- 1
         Gamma = rand(R, 3) .* 2 .- 1
@@ -66,7 +71,7 @@ end
 function build_cuda_from(cpu_pfield)
     n = cpu_pfield.maxparticles
     R = eltype(cpu_pfield.particles)
-    cfield = FLOWVPM.ParticleField(n, R; arraytype=CUDA.CuArray, np=cpu_pfield.np)
+    cfield = FLOWVPM.ParticleField(n, R; arraytype=CUDA.CuArray, np=cpu_pfield.np, fmm=AB_FMM)
     cfield.particles .= CUDA.CuArray(cpu_pfield.particles)
     return cfield
 end

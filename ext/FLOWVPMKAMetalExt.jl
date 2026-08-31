@@ -30,75 +30,15 @@ using KernelAbstractions
 const KA = KernelAbstractions
 const fmm = FLOWVPM.fmm
 
-#------- radix/FMM device-resident coupling on Metal -------#
+#------- radix/FMM device-resident coupling -------#
 #
-# FLOWVPMCUDAExt.jl:925-966 defines the same two methods for a CuArray-backed
-# field; these are the MtlArray mirrors, needed because `residency(pfield)` is
-# already backend-agnostic (`pfield.particles isa Array`, FLOWVPM_fmm_radix.jl:51)
-# so a Metal-backed field takes the DeviceResident path and FastMultipole then
-# demands both overloads. Both bodies are pure broadcasts and are copied from
-# the CUDA ext verbatim apart from the array type.
-#
-# `device_backend` is what lets FastMultipole's non-CUDA backend registry pick
-# the device to allocate the cache on BEFORE it may touch these buffers.
-
-fmm.device_backend(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT}
-        ) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:MtlArray{R}} =
-    KA.get_backend(pfield.particles)
-
-# Packed layout, rows 1:9 -- see FLOWVPMCUDAExt.jl:915-924 for the row contract.
-function fmm.source_to_buffer!(buf::MtlArray,
-        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
-        sort_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:MtlArray{R}}
-    np = pfield.np
-    (first(sort_index) == 1 && last(sort_index) == np) || error(
-        "FLOWVPM device source_to_buffer! expects the identity sort index over " *
-        "the live particle prefix (got $(first(sort_index)):$(last(sort_index)) for np=$np)")
-    size(buf, 1) >= 9 && size(buf, 2) == np || error(
-        "unexpected device source buffer shape $(size(buf)) for np=$np")
-    P = pfield.particles
-    rho_sigma = R(pfield.fmm.default_rho_over_sigma)
-    view(buf, 1:3, :) .= view(P, FLOWVPM.X_INDEX, 1:np)
-    view(buf, 4, :) .= rho_sigma .* view(P, FLOWVPM.SIGMA_INDEX, 1:np)
-    view(buf, 5:7, :) .= view(P, FLOWVPM.GAMMA_INDEX, 1:np)
-    view(buf, 8, :) .= view(P, FLOWVPM.SIGMA_INDEX, 1:np)
-    view(buf, 9, :) .= view(P, FLOWVPM.STATIC_INDEX, 1:np) .== 0
-    return buf
-end
-
-# ACCUMULATE (.+=): FLOWVPM zeroes U/J in `_reset_particles` per evaluation.
-function fmm.buffer_to_target!(
-        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
-        buf::MtlArray, derivatives_switch,
-        sort_index) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:MtlArray{R}}
-    np = pfield.np
-    size(buf, 2) == np || error(
-        "unexpected device output buffer shape $(size(buf)) for np=$np")
-    P = pfield.particles
-    grange = fmm.gradient_range(derivatives_switch)
-    isempty(grange) ||
-        (view(P, FLOWVPM.U_INDEX, 1:np) .+= view(buf, grange, :))
-    hrange = fmm.hessian_range(derivatives_switch)
-    isempty(hrange) ||
-        (view(P, FLOWVPM.J_INDEX, 1:np) .+= view(buf, hrange, :))
-    return pfield
-end
-
-# ACCUMULATE into SFS_INDEX (rows 40:42), the MtlArray mirror of
-# FLOWVPMCUDAExt.jl:971-980. FastMultipole's `ka_finalize_radix_sfs_output!`
-# takes the DeviceResident branch for a Metal-backed field and hands back a
-# device-side 3 x np E_str buffer in global particle order; the caller resets
-# the SFS rows, matching the `Estr_direct`/`Estr_fmm!` += convention.
-function fmm.sfs_to_target!(
-        pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT},
-        buf::MtlArray,
-        sort_index=1:pfield.np) where {R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,AT<:MtlArray{R}}
-    np = pfield.np
-    size(buf, 2) == np || error(
-        "unexpected device SFS buffer shape $(size(buf)) for np=$np")
-    view(pfield.particles, FLOWVPM.SFS_INDEX, 1:np) .+= buf
-    return pfield
-end
+# MOVED. `device_backend`, `source_to_buffer!`, `buffer_to_target!` and
+# `sfs_to_target!` used to be defined here, typed to `MtlArray`, as verbatim
+# copies of FLOWVPMCUDAExt.jl's `AnyCuArray` versions. Nothing in their bodies
+# was device code -- they are broadcasts over views of `pfield.particles` -- so
+# they now live once in ext/FLOWVPMGPUExt.jl, dispatched on
+# `GPUArraysCore.AnyGPUMatrix`, which covers Metal and every other GPU backend.
+# What remains below is the part that genuinely is Metal-and-KA: the kernels.
 
 # Each thread handles one target and loops directly over all sources in
 # global (device) memory. Math mirrors FLOWVPMCUDAExt.jl's gpu_interaction!.
