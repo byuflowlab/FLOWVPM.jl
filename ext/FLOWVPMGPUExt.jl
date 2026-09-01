@@ -69,12 +69,28 @@ function fmm.source_to_buffer!(buf::AnyGPUMatrix, pfield::GPUField{R}, sort_inde
         "unexpected device source buffer shape $(size(buf)) for np=$np")
     P = pfield.particles
     rho_sigma = R(pfield.fmm.default_rho_over_sigma)
-    view(buf, 1:3, :) .= view(P, FLOWVPM.X_INDEX, 1:np)
-    view(buf, 4, :) .= rho_sigma .* view(P, FLOWVPM.SIGMA_INDEX, 1:np)
-    view(buf, 5:7, :) .= view(P, FLOWVPM.GAMMA_INDEX, 1:np)
-    view(buf, 8, :) .= view(P, FLOWVPM.SIGMA_INDEX, 1:np)
-    view(buf, 9, :) .= view(P, FLOWVPM.STATIC_INDEX, 1:np) .== 0
+    # One flat kernel, lane per particle. The previous five broadcasts over
+    # strided row views cost 0.6 ms/step on Metal for 450 kB (2026-09-01).
+    kernel = _source_to_buffer_kernel!(KA.get_backend(P), 256)
+    kernel(buf, P, rho_sigma, first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX),
+           FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX, np; ndrange=np)
     return buf
+end
+
+@kernel function _source_to_buffer_kernel!(buf, @Const(P), rho_sigma, ix, ig, isig, istat, np)
+    i = @index(Global)
+    @inbounds if i <= np
+        buf[1, i] = P[ix, i]
+        buf[2, i] = P[ix + 1, i]
+        buf[3, i] = P[ix + 2, i]
+        sig = P[isig, i]
+        buf[4, i] = rho_sigma * sig
+        buf[5, i] = P[ig, i]
+        buf[6, i] = P[ig + 1, i]
+        buf[7, i] = P[ig + 2, i]
+        buf[8, i] = sig
+        buf[9, i] = P[istat, i] == 0
+    end
 end
 
 # Framework-owned per-system device output buffer, switch-relative rows, in
