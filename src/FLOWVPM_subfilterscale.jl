@@ -251,6 +251,8 @@ end
 
 "GPU-compatible broadcast path for `ConstantSFS`'s model-coefficient assignment."
 function _constantsfs_coefficient_broadcast!(pfield, Cs)
+    R = eltype(pfield.particles)
+    Cs = R(Cs)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -664,12 +666,13 @@ end
 function _control_broadcast!(::typeof(control_magnitude), pfield)
     pfield.nt == 0 && return nothing
 
+    R = eltype(pfield.particles)
     P = pfield.particles
     Sc = pfield.scratch
 
-    deltat = pfield.t / pfield.nt
-    f = pfield.formulation.f
-    zeta0 = pfield.kernel.zeta(0)
+    deltat = R(pfield.t / pfield.nt)
+    f = R(pfield.formulation.f)
+    zeta0 = R(pfield.kernel.zeta(0))
 
     active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
     C1 = view(P, C_INDEX[1], :)

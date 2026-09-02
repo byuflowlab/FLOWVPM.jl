@@ -261,6 +261,8 @@ end
 
 "GPU-compatible broadcast path for `CoreSpreading`'s Euler core-growth update."
 function _corespreading_euler_broadcast!(pfield, nu, dt)
+    R = eltype(pfield.particles)
+    nu = R(nu); dt = R(dt)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -274,6 +276,8 @@ end
 
 "GPU-compatible broadcast path for `CoreSpreading`'s RK3 core-growth update."
 function _corespreading_rk3_broadcast!(pfield, nu, dt, aux1, aux2)
+    R = eltype(pfield.particles)
+    nu = R(nu); dt = R(dt); aux1 = R(aux1); aux2 = R(aux2)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -289,6 +293,8 @@ end
 
 "GPU-compatible broadcast path for `CoreSpreading`'s core-size reset."
 function _corespreading_reset_broadcast!(pfield, sgm0)
+    R = eltype(pfield.particles)
+    sgm0 = R(sgm0)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -395,6 +401,7 @@ end
 
 "GPU-compatible broadcast path for `ParticleStrengthExchange`'s volume recalculation."
 function _pse_recalcvols_broadcast!(pfield)
+    R = eltype(pfield.particles)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -402,13 +409,15 @@ function _pse_recalcvols_broadcast!(pfield)
     vol = view(P, VOL_INDEX, :)
     sigma = view(P, SIGMA_INDEX, :)
 
-    vol .= ifelse.(active .> 0, (4/3*pi) .* sigma.^3, vol)
+    vol .= ifelse.(active .> 0, R(4/3*pi) .* sigma.^3, vol)
 
     return nothing
 end
 
 "GPU-compatible broadcast path for `ParticleStrengthExchange`'s Euler Gamma update."
 function _pse_euler_broadcast!(pfield, nu, dt)
+    R = eltype(pfield.particles)
+    nu = R(nu); dt = R(dt)
     P = pfield.particles
     Sc = pfield.scratch
 
@@ -425,6 +434,8 @@ end
 
 "GPU-compatible broadcast path for `ParticleStrengthExchange`'s RK3 Gamma update."
 function _pse_rk3_broadcast!(pfield, nu, dt, aux2)
+    R = eltype(pfield.particles)
+    nu = R(nu); dt = R(dt); aux2 = R(aux2)
     P = pfield.particles
     Sc = pfield.scratch
 

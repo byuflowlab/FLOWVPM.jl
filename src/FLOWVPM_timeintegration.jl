@@ -171,9 +171,13 @@ end
 
 "GPU-compatible path for `_euler` (ClassicVPM): broadcasts over row-slices, works unchanged for `CuArray`."
 function _euler_broadcast_classic!(pfield::ParticleField, dt, Uinf, zeta0)
+    R = eltype(pfield.particles)
+    dt = R(dt)
+    Uinf = R.(Uinf)
+    zeta0 = R(zeta0)
 
     # Static-particle mask: 0 for static, 1 for active
-    active = 1.0 .- pfield.particles[STATIC_INDEX, :]
+    active = one(R) .- pfield.particles[STATIC_INDEX, :]
 
     # Update the particle field: convection and stretching
     # Position: X += dt*(U + Uinf)
@@ -317,9 +321,14 @@ end
 "GPU-compatible path for `_euler` (ReformulatedVPM): broadcasts over row-slices, works unchanged for `CuArray`."
 function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
                                         sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
+    dt = R(dt)
+    Uinf = R.(Uinf)
+    f = R(f)
+    g = R(g)
+    zeta0 = R(zeta0)
 
     # Static-particle mask: 0 for static, 1 for active
-    active = 1.0 .- pfield.particles[STATIC_INDEX, :]
+    active = one(R) .- pfield.particles[STATIC_INDEX, :]
 
     # Update the particle field: convection and stretching
     # Position: X += dt*(U + Uinf)
@@ -627,6 +636,8 @@ end
 "GPU-compatible path for RK3's `update_particle_states` (ClassicVPM): broadcasts over row-slices with a preallocated scratch buffer, works unchanged for `CuArray`."
 function update_particle_states_broadcast_classic!(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
 
+    a = R(a); b = R(b); dt = R(dt); Uinf = R.(Uinf); zeta0 = R(zeta0)
+
     # All reads below are single-row *views* into pfield.particles/scratch (zero-copy);
     # every computed intermediate is written in-place into a persistent scratch row via
     # `.=` instead of allocating a fresh array each call.
@@ -634,7 +645,7 @@ function update_particle_states_broadcast_classic!(pfield::ParticleField{R, <:Cl
     Sc = pfield.scratch
 
     static = view(P, STATIC_INDEX, :)
-    active = view(Sc, 8, :); active .= 1.0 .- static  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
+    active = view(Sc, 8, :); active .= one(R) .- static  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)
@@ -855,6 +866,8 @@ end
 "GPU-compatible path for RK3's `update_particle_states` (ReformulatedVPM): broadcasts over row-slices with a preallocated scratch buffer, works unchanged for `CuArray`."
 function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
 
+    a = R(a); b = R(b); dt = R(dt); Uinf = R.(Uinf); f = R(f); g = R(g); zeta0 = R(zeta0)
+
     # All reads below are single-row *views* into pfield.particles/scratch (zero-copy);
     # every computed intermediate is written in-place into a persistent scratch row via
     # `.=` instead of allocating a fresh array each call.
@@ -870,7 +883,7 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     Sc = pfield.scratch
 
     static = view(P, STATIC_INDEX, :)
-    active = view(Sc, 11, :); active .= 1.0 .- static
+    active = view(Sc, 11, :); active .= one(R) .- static
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)

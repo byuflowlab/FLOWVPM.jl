@@ -182,7 +182,7 @@ function save(
     np = get_np(self)
 
     time = overwrite_time != nothing ? overwrite_time :
-            typeof(self.t) in [Float64, Int64] ? self.t :
+            self.t isa Real ? self.t :   # Float32 fields (device) are Real too; duals carry .value
             self.t.value
 
     # Creates/overwrites HDF5 file

@@ -192,10 +192,12 @@ end
 "GPU-compatible broadcast path for `relax_pedrizzetti`: same formula as the scalar version, vectorized over all particles."
 function _relax_broadcast!(::typeof(relax_pedrizzetti), rlxf::Real, pfield)
 
+    R = eltype(pfield.particles)
+    rlxf = R(rlxf)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= 1.0 .- view(P, STATIC_INDEX, :)
+    active = view(Sc, 8, :); active .= one(R) .- view(P, STATIC_INDEX, :)
 
     J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
@@ -221,10 +223,12 @@ end
 "GPU-compatible broadcast path for `relax_correctedpedrizzetti`: same formula as the scalar version, vectorized over all particles."
 function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfield)
 
+    R = eltype(pfield.particles)
+    rlxf = R(rlxf)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= 1.0 .- view(P, STATIC_INDEX, :)
+    active = view(Sc, 8, :); active .= one(R) .- view(P, STATIC_INDEX, :)
 
     J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)

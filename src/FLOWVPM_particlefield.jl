@@ -279,6 +279,30 @@ is created with the default values for the other parameters.
 - `arraytype::Type{<:AbstractMatrix}=Matrix`: Array type backing `pfield.particles`. Default is `Matrix`
     (CPU). Pass `CuArray` (CUDA.jl) to allocate the particle field on GPU.
 """
+# Schemes are usually built at FLOAT_TYPE (Float64) regardless of the field's R;
+# a Float32 device field then mixes Float64 scalars into device broadcasts
+# (InvalidIR on Metal, silent promotion on CUDA). Rebuild them at R.
+_with_precision(x, ::Type) = x                                   # unknown/user types pass through
+_with_precision(x::Formulation{R}, ::Type{R}) where R = x
+_with_precision(x::ViscousScheme{R}, ::Type{R}) where R = x
+_with_precision(x::SubFilterScale{R}, ::Type{R}) where R = x
+_with_precision(x::Relaxation{R}, ::Type{R}) where R = x
+_with_precision(x::ClassicVPM, ::Type{R}) where R = ClassicVPM{R}()
+_with_precision(x::ReformulatedVPM, ::Type{R}) where R = ReformulatedVPM{R}(R(x.f), R(x.g); h=R(x.h))
+_with_precision(x::Inviscid, ::Type{R}) where R = Inviscid{R}(; nu=R(x.nu))
+_with_precision(x::CoreSpreading{R0,Tz,Tr}, ::Type{R}) where {R0,Tz,Tr,R} =
+    CoreSpreading{R,Tz,Tr}(R(x.nu), R(x.sgm0), x.zeta; beta=R(x.beta), itmax=x.itmax, tol=R(x.tol),
+        iterror=x.iterror, verbose=x.verbose, v_lvl=x.v_lvl, debug=x.debug, t_sgm=R(x.t_sgm), rbf=x.rbf)
+_with_precision(x::ParticleStrengthExchange, ::Type{R}) where R =
+    ParticleStrengthExchange{R}(R(x.nu); recalculate_vols=x.recalculate_vols)
+_with_precision(x::Relaxation, ::Type{R}) where R = Relaxation(x.relax, x.nsteps_relax, R(x.rlxf), x.filter)
+_with_precision(x::NoSFS, ::Type{R}) where R = NoSFS{R,typeof(x.model)}(x.model)
+_with_precision(x::ConstantSFS{R0,Tm,Tc,Tcl}, ::Type{R}) where {R0,Tm,Tc,Tcl,R} =
+    ConstantSFS{R,Tm,Tc,Tcl}(x.model; Cs=R(x.Cs), controls=x.controls, clippings=x.clippings)
+_with_precision(x::DynamicSFS{R0,Tm,Tpb,Tpa,Tc,Tcl}, ::Type{R}) where {R0,Tm,Tpb,Tpa,Tc,Tcl,R} =
+    DynamicSFS{R,Tm,Tpb,Tpa,Tc,Tcl}(x.model, x.procedure_beforeUJ, x.procedure_afterUJ;
+        controls=x.controls, clippings=x.clippings, alpha=R(x.alpha), rlxf=R(x.rlxf), minC=R(x.minC), maxC=R(x.maxC))
+
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
@@ -297,8 +321,12 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     particles = fill!(arraytype{R}(undef, nfields, maxparticles), zero(R))
     scratch = fill!(arraytype{R}(undef, N_SCRATCH, maxparticles), zero(R))
 
-    # Generate and return ParticleField
-    return ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, typeof(particles)}(maxparticles, particles,
+    # Generate and return ParticleField (schemes rebuilt at the field's precision)
+    formulation = _with_precision(formulation, R)
+    viscous = _with_precision(viscous, R)
+    SFS = _with_precision(SFS, R)
+    relaxation = _with_precision(relaxation, R)
+    return ParticleField{R, typeof(formulation), typeof(viscous), TUinf, typeof(SFS), Tkernel, TUJ, Tintegration, typeof(relaxation), typeof(particles)}(maxparticles, particles,
                                             formulation, viscous, scratch, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
