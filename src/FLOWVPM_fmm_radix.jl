@@ -497,6 +497,15 @@ const _RADIX_COST_PER_BODY   = 1.03962e-6  # s per body (B2M/M2M/L2L/L2B, sort)
 const _RADIX_COST_NEAR_FIXED = 0.00256341  # s
 const _RADIX_COST_PER_INTER  = 1.19469e-10 # s per near-field interaction
 
+# How far past the occupancy cap cost-based selection may look. On the H200 the
+# deepest admissible depth was the measured-fastest at every rung (job
+# 13562318), and one level past the cap ran 0.32x the cap's time on the ring
+# at np=249k (job 13562379); +2 is one step of extrapolation beyond that. The
+# absolute bound of 8 keeps the dense per-level `node_at` table (sum of 8^L
+# Int32 entries: ~77 MB at 8, ~0.6 GB at 9) in check.
+const _RADIX_COST_EXTRA_DEPTH = 2
+const _RADIX_COST_MAX_ELL = 8
+
 "Cost-based depth selection applies to device-backed fields only: the
 constants above are GPU-calibrated and the CPU path has a different balance."
 _radix_cost_select(pfield::ParticleField) = !(pfield.particles isa Array)
@@ -560,8 +569,9 @@ Task 035 cycle-1 joint depth/leaf-radius rule. Chooses the deepest radix
 depth `ell` for which some supported leaf near radius `q >= q_floor`
 satisfies the margin-guarded inequality
 `g_min(q) * h_leaf >= margin * rho_t * sigma_max` (`h_leaf = L / 2^ell`),
-capped by an occupancy heuristic of about `n^(1/3)` cells per side; at the
-chosen depth the smallest passing `q` (cheapest direct near set) is used.
+capped by an occupancy heuristic of about `n^(1/3)` cells per side (device
+cost selection may look `_RADIX_COST_EXTRA_DEPTH` levels past that cap); at
+the chosen depth the smallest passing `q` (cheapest direct near set) is used.
 The margin buys regularization-deficit accuracy headroom over the bare
 adequacy gate FastMultipole enforces (`margin = 1` reproduces adequacy-only
 selection). Errors loudly when no depth `>= 2` is admissible.
@@ -575,9 +585,11 @@ function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
         "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
     gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
     ell_occupancy = max(2, floor(Int, log2(max(np, 8)) / 3))
+    ell_top = cost_field === nothing ? ell_occupancy :
+        min(ell_occupancy + _RADIX_COST_EXTRA_DEPTH, _RADIX_COST_MAX_ELL)
     # every admissible depth, with the smallest near set that satisfies it
     admissible = Tuple{Int,Int}[]
-    for ell in ell_occupancy:-1:2
+    for ell in ell_top:-1:2
         h = L / 2^ell
         for q in qs
             if gaps[q] * h >= reach
