@@ -154,6 +154,10 @@ Saves the particle field in HDF5 format and a XDMF file specifying its
 attributes. This format can be opened in Paraview for post-processing and
 visualization.
 """
+# HDF5 needs host memory; device-resident fields are copied per dataset.
+_tohost(a::Array) = a
+_tohost(a) = Array(a)
+
 function save(
         self::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any},
         file_name::String; path::String="",
@@ -198,35 +202,35 @@ function save(
     #   when trying to write anything but arrays.
 
     # temp = zeros(1,np)
-    h5["X"] = self.particles[X_INDEX, 1:np]
+    h5["X"] = _tohost(self.particles[X_INDEX, 1:np])
     # h5["X"] = view(self.particles, X_INDEX, 1:np)
-    h5["Gamma"] = self.particles[GAMMA_INDEX, 1:np]
+    h5["Gamma"] = _tohost(self.particles[GAMMA_INDEX, 1:np])
     # h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
     # temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
-    h5["sigma"] = self.particles[SIGMA_INDEX, 1:np]
+    h5["sigma"] = _tohost(self.particles[SIGMA_INDEX, 1:np])
     # h5["sigma"] = temp
     # temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
-    h5["circulation"] = self.particles[CIRCULATION_INDEX, 1:np]
+    h5["circulation"] = _tohost(self.particles[CIRCULATION_INDEX, 1:np])
     # h5["circulation"] = temp
     # temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
-    h5["vol"] = self.particles[VOL_INDEX, 1:np]
+    h5["vol"] = _tohost(self.particles[VOL_INDEX, 1:np])
     # h5["vol"] = temp
     # temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
-    h5["static"] = self.particles[STATIC_INDEX, 1:np]
+    h5["static"] = _tohost(self.particles[STATIC_INDEX, 1:np])
     # h5["static"] = temp
-    h5["velocity"] = self.particles[U_INDEX, 1:np]
+    h5["velocity"] = _tohost(self.particles[U_INDEX, 1:np])
     # h5["velocity"] = view(self.particles, U_INDEX, 1:np)
-    h5["velocity_gradient_x"] = self.particles[J_INDEX[1:3], 1:np]
-    h5["velocity_gradient_y"] = self.particles[J_INDEX[4:6], 1:np]
-    h5["velocity_gradient_z"] = self.particles[J_INDEX[7:9], 1:np]
-    h5["vorticity"] = self.particles[VORTICITY_INDEX, 1:np]
+    h5["velocity_gradient_x"] = _tohost(self.particles[J_INDEX[1:3], 1:np])
+    h5["velocity_gradient_y"] = _tohost(self.particles[J_INDEX[4:6], 1:np])
+    h5["velocity_gradient_z"] = _tohost(self.particles[J_INDEX[7:9], 1:np])
+    h5["vorticity"] = _tohost(self.particles[VORTICITY_INDEX, 1:np])
     # h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
     # h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
     # h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
     # h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
 
     if isLES(self)
-        h5["C"] = self.particles[C_INDEX, 1:np]
+        h5["C"] = _tohost(self.particles[C_INDEX, 1:np])
         # h5["C"] = view(self.particles, C_INDEX, 1:np)
     end
 

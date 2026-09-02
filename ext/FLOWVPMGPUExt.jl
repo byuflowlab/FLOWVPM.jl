@@ -125,6 +125,97 @@ function fmm.sfs_to_target!(pfield::GPUField, buf::AnyGPUMatrix,
     return pfield
 end
 
+#------- core spreading on the device: ζ reconstruction + RBF conjugate gradient -------#
+
+# 3 x maxparticles sorted-order accumulator and global-order delivery buffer,
+# allocated once per field (radix_zeta! owns neither).
+const _zeta_buffers = IdDict{Any,Any}()
+
+function _zeta_buffers_for(pfield::GPUField{R}) where R
+    bufs = get(_zeta_buffers, pfield, nothing)
+    if bufs === nothing || size(bufs[1], 2) < pfield.maxparticles
+        P = pfield.particles
+        bufs = (similar(P, R, 3, pfield.maxparticles), similar(P, R, 3, pfield.maxparticles))
+        _zeta_buffers[pfield] = bufs
+    end
+    return bufs
+end
+
+# ζ arrives in global particle order; the host zeta_fmm assigns (after zeroing).
+function fmm.zeta_to_target!(pfield::GPUField, buf::AnyGPUMatrix, sort_index=1:pfield.np)
+    np = pfield.np
+    view(pfield.particles, FLOWVPM.VORTICITY_INDEX, 1:np) .= view(buf, 1:3, 1:np)
+    return pfield
+end
+
+function FLOWVPM.zeta_fmm(pfield::GPUField)
+    st = FLOWVPM._radix_fmm_coupling!(pfield)
+    om, out = _zeta_buffers_for(pfield)
+    fmm.radix_zeta!(st.cache, (pfield,), om, out)
+    return nothing
+end
+
+# Same algorithm and storage as the host rbf_conjugategradient (x = M[1:3],
+# r = M[4:6], b = M[7:9], A p = vorticity rows, p = Gamma rows), with the
+# per-particle loops as whole-field broadcasts and the dot products as
+# device reductions. Static particles are excluded from the solve exactly as
+# `iterator(pfield)` excludes them on the host.
+function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpreading) where R
+    P = pfield.particles; np = pfield.np
+    X = view(P, FLOWVPM.M_INDEX[1:3], 1:np)      # solution
+    Rr = view(P, FLOWVPM.M_INDEX[4:6], 1:np)     # residual
+    B = view(P, FLOWVPM.M_INDEX[7:9], 1:np)      # target vorticity
+    G = view(P, FLOWVPM.GAMMA_INDEX, 1:np)       # search direction p
+    W = view(P, FLOWVPM.VORTICITY_INDEX, 1:np)   # A p
+    vol = view(P, FLOWVPM.VOL_INDEX:FLOWVPM.VOL_INDEX, 1:np)
+    act = view(P, FLOWVPM.STATIC_INDEX:FLOWVPM.STATIC_INDEX, 1:np) .== 0   # 1 x np mask
+    dots(A, Bm) = [sum(view(A, i:i, :) .* view(Bm, i:i, :) .* act) for i in 1:3]
+
+    cs.rr0s .= 0; cs.rrs .= 0; cs.flags .= false
+    X .= ifelse.(act, B .* vol, X)
+    G .= ifelse.(act, X, G)
+    cs.zeta(pfield)
+    Rr .= ifelse.(act, B .- W, Rr)               # r0 = b - A x0
+    G .= ifelse.(act, Rr, G)                     # p0 = r0
+    cs.rr0s .= dots(Rr, Rr)
+    cs.rrs .= cs.rr0s
+    for i in 1:3
+        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+    end
+    for it in 1:cs.itmax
+        true in cs.flags || break
+        cs.zeta(pfield)                          # A p -> W
+        cs.pAps .= dots(G, W)
+        for i in 1:3
+            cs.alphas[i] = cs.rrs[i] / cs.pAps[i] * cs.flags[i]
+        end
+        cs.prev_rrs .= cs.rrs
+        al = _rowvec(P, cs.alphas)
+        X .= ifelse.(act, X .+ al .* G, X)
+        Rr .= ifelse.(act, Rr .- al .* W, Rr)
+        cs.rrs .= dots(Rr, Rr)
+        cs.betas .= cs.rrs ./ cs.prev_rrs
+        for i in 1:3
+            abs(cs.prev_rrs[i]) <= 2 * eps() && (cs.betas[i] = 1)
+        end
+        be = _rowvec(P, cs.betas)
+        G .= ifelse.(act, Rr .+ be .* G, G)
+        for i in 1:3
+            cs.flags[i] *= abs(cs.rr0s[i]) <= 2 * eps() ? false : sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+        end
+        if it == cs.itmax && true in cs.flags
+            msg = "Maximum number of iterations $(cs.itmax) reached before convergence." *
+                  " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)"
+            cs.iterror ? error(msg) : (cs.verbose && @warn(msg))
+        end
+    end
+    G .= ifelse.(act, X, G)                      # Gamma = solution
+    return nothing
+end
+
+# 3 x 1 device column of per-dimension scalars, for broadcasting against 3 x np views
+_rowvec(P, v) = (c = similar(P, eltype(P), 3, 1); copyto!(c, reshape(eltype(P).(v), 3, 1)); c)
+
 end # FLOWVPM._FMM_HAS_RADIX
 
 end # module
