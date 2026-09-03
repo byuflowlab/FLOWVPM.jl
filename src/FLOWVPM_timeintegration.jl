@@ -266,6 +266,7 @@ end
 function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
                                   sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
     cap, sfloor, sceil = _sigma_guard_params(R, sigma_guard)
+    st = pfield.splitting_state
     for i in 1:pfield.np
         p = get_particle(pfield, i)
         is_static(p) && continue # skip static particles
@@ -315,7 +316,10 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         # against sign flip (dt*Z > 1) and floored — see _sigma_guard_params.
         sig = get_sigma(p)[]
         new_sig = dt*MM4 > cap ? sig * (1 - cap) : sig - dt * ( sig * MM4 )
-        get_sigma(p)[] = clamp(new_sig, sfloor, sceil)
+        clamped_sig = clamp(new_sig, sfloor, sceil)
+        get_sigma(p)[] = clamped_sig
+        # Attribute the *applied* Δσ² (post guard/clamp) to rVPM compression
+        st.dsigma2_rvpm[i] += clamped_sig*clamped_sig - sig*sig
     end
     return nothing
 end
@@ -375,6 +379,10 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     pfield.particles[SIGMA_INDEX, :] .= ifelse.(active .> 0,
                                                 clamp.(sig_new, sfloor, sceil),
                                                 sig_new)
+
+    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
+    # maintained on this device-backed path — splitting is CPU-only. If GPU
+    # splitting ever lands, move the accumulators to persistent device rows.
 
     return nothing
 end
@@ -469,7 +477,13 @@ function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:
             G[1] = q[1]*gamma_scale
             G[2] = q[2]*gamma_scale
             G[3] = q[3]*gamma_scale
+            sig_before = get_sigma(p)[]
             get_sigma(p)[] *= ratio^(-g)
+            # Attribute the applied Δσ² of the geometric contraction to rVPM
+            # compression (the blended diffusion part is attributed in
+            # viscousdiffusion's euler_exp branch).
+            pfield.splitting_state.dsigma2_rvpm[i] +=
+                get_sigma(p)[]^2 - sig_before^2
             # M[9] is private scratch for the euler_exp/CoreSpreading
             # composition. It stores the constant rate with the same total
             # contraction over this step: sigma(dt)/sigma(0)=exp(-dt*Zeff).
@@ -854,7 +868,12 @@ function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:Ref
         G[3] += b*M[6]
 
         # Update cross-sectional area
+        sig_before = get_sigma(p)[]
         get_sigma(p)[] += b*M[8]
+        # Attribute the applied per-stage Δσ² to rVPM compression (stages are
+        # never rolled back, so per-stage accumulation ≡ per-accepted-step)
+        pfield.splitting_state.dsigma2_rvpm[i] +=
+            get_sigma(p)[]^2 - sig_before^2
     end
     return nothing
 end
@@ -945,6 +964,8 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     G3 .+= active .* b .* M6_new
 
     sigma_v .+= active .* b .* M8_new
+    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
+    # maintained on this device-backed path — splitting is CPU-only.
 
     # Static particles keep their previous M storage (frozen), others get the new RK stage value
     M1 .= ifelse.(isactive, M1_new, M1)

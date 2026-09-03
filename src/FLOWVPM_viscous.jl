@@ -158,8 +158,12 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Core spreading
         if pfield.particles isa Array
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                p = get_particle(pfield, i)
+                is_static(p) && continue
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
+                # Attribute the exact viscous Δσ² = 2ν·dt
+                pfield.splitting_state.dsigma2_visc[i] += 2*scheme.nu*dt
             end
         else
             _corespreading_euler_broadcast!(pfield, scheme.nu, dt)
@@ -174,7 +178,9 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         # stored its constant-effective rate Zeff in M[9]. Add the exact
         # diffusion contribution for y'=-2Zeff*y+2nu. This avoids the prior
         # full-step Lie split, while retaining its Z->0 CoreSpreading limit.
-        for p in iterator(pfield)
+        for i in 1:pfield.np
+            p = get_particle(pfield, i)
+            is_static(p) && continue
             zdt = dt*get_M(p)[9]
             diffusion = if abs(zdt) < 1e-8
                 2*scheme.nu*dt*(1 - zdt + (2/3)*zdt*zdt)
@@ -182,6 +188,9 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 -scheme.nu*expm1(-2*zdt)/get_M(p)[9]
             end
             get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + diffusion)
+            # Attribute the diffusion part of the blended update to viscous
+            # spreading (the geometric contraction was attributed in _euler_exp)
+            pfield.splitting_state.dsigma2_visc[i] += diffusion
         end
 
         proceed = true
@@ -193,9 +202,13 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
         # Should I be solving dsigmadt = nu/sigma instead?
         if pfield.particles isa Array
-            for p in iterator(pfield)
+            for i in 1:pfield.np
+                p = get_particle(pfield, i)
+                is_static(p) && continue
                 get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
+                # Attribute the applied per-stage σ² increment to viscous spreading
+                pfield.splitting_state.dsigma2_visc[i] += aux2*get_M(p)[7]
             end
         else
             _corespreading_rk3_broadcast!(pfield, scheme.nu, dt, aux1, aux2)
@@ -254,6 +267,13 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
             # Reset core growth timer
             scheme.t_sgm = 0
+
+            # The σ ← sgm0 reset + RBF re-projection intentionally erases the
+            # physical σ history, so carried-over Δσ² attribution would
+            # misroute future splits — clear both accumulators.
+            st = pfield.splitting_state
+            fill!(view(st.dsigma2_visc, 1:pfield.np), 0)
+            fill!(view(st.dsigma2_rvpm, 1:pfield.np), 0)
         end
 
     end

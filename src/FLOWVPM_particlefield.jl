@@ -103,6 +103,8 @@ mutable struct SplittingState{R}
     H_chi::Vector{R}                # accumulated overlap-loss exposure
     hold_counter::Vector{Int}       # consecutive steps trigger has held
     cooldown_counter::Vector{Int}   # remaining steps a child cannot re-split
+    dsigma2_visc::Vector{R}         # accumulated Δσ² from viscous spreading
+    dsigma2_rvpm::Vector{R}         # accumulated Δσ² from rVPM compression (≤0 typically)
 end
 
 SplittingState{R}(maxparticles::Int) where {R} = SplittingState{R}(
@@ -110,6 +112,8 @@ SplittingState{R}(maxparticles::Int) where {R} = SplittingState{R}(
     zeros(R, maxparticles),
     zeros(Int, maxparticles),
     zeros(Int, maxparticles),
+    zeros(R, maxparticles),
+    zeros(R, maxparticles),
 )
 
 # Scratch buffers reused across calls to `split_particles!` to avoid heap
@@ -371,6 +375,8 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     st.H_chi[i_next] = zero(R)
     st.hold_counter[i_next] = 0
     st.cooldown_counter[i_next] = 0
+    st.dsigma2_visc[i_next] = zero(R)
+    st.dsigma2_rvpm[i_next] = zero(R)
 
     # Initialize filament edge graph adjacency for this slot. Empty
     # (degree 0, all slots zero); edges are wired later by add_edge!.
@@ -674,6 +680,8 @@ function remove_particle(pfield::ParticleField, i::Int)
         st.H_chi[i] = st.H_chi[np]
         st.hold_counter[i] = st.hold_counter[np]
         st.cooldown_counter[i] = st.cooldown_counter[np]
+        st.dsigma2_visc[i] = st.dsigma2_visc[np]
+        st.dsigma2_rvpm[i] = st.dsigma2_rvpm[np]
         # Phase B: mirror swap-with-last in the edge-graph adjacency. The
         # neighbors of the moved particle still point at slot np; Phase C
         # below rewrites them to i.
@@ -711,6 +719,8 @@ function remove_particle(pfield::ParticleField, i::Int)
     st.H_chi[np] = zero(R)
     st.hold_counter[np] = 0
     st.cooldown_counter[np] = 0
+    st.dsigma2_visc[np] = zero(R)
+    st.dsigma2_rvpm[np] = zero(R)
     @inbounds for k in 1:2
         g.up_neighbor[k, np]   = 0
         g.down_neighbor[k, np] = 0

@@ -636,6 +636,10 @@ function _do_split!(pfield::ParticleField{R},
     state.H_chi[i] = zeroR
     state.hold_counter[i] = 0
     state.cooldown_counter[i] = opts.N_cooldown
+    # Children start a fresh Δσ² attribution history — the routing decision
+    # they were born from has been consumed.
+    state.dsigma2_visc[i] = zeroR
+    state.dsigma2_rvpm[i] = zeroR
 
     # ---- Child B appended via add_particle ----
     add_particle(pfield, (xB, yB, zB), (halfgx, halfgy, halfgz), σ_c;
