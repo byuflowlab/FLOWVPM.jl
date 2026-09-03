@@ -640,14 +640,14 @@ end
 GPU implementation of the O(N²) direct-sum basis-function evaluation used by
 `zeta_direct`, dispatched to when `pfield.particles` is not a plain `Array`.
 Real implementation is a method of this function defined in
-`ext/FLOWVPMCUDAExt.jl` (loaded automatically alongside CUDA.jl). This stub
+`ext/FLOWVPMGPUExt.jl` (loaded automatically alongside KernelAbstractions and a GPU package). This stub
 is only reached if a non-`Array` particle field is used without CUDA.jl
 loaded.
 """
 gpu_zeta_direct!(pfield) = error(
     "No GPU zeta_direct implementation available for particle arrays of type " *
     "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
-    "the CUDA-accelerated direct basis-function evaluation for `CuArray`-backed particle fields.")
+    "the GPU direct basis-function evaluation for `CuArray`-backed particle fields.")
 
 """
   `zeta_direct(pfield)`

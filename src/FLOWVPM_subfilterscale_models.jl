@@ -46,14 +46,14 @@ end
 GPU implementation of the O(N²) direct-sum SFS vortex-stretching
 contribution used by `Estr_direct!`, dispatched to when `pfield.particles`
 is not a plain `Array`. Real implementation is a method of this function
-defined in `ext/FLOWVPMCUDAExt.jl` (loaded automatically alongside CUDA.jl).
+defined in `ext/FLOWVPMGPUExt.jl` (loaded automatically alongside KernelAbstractions and a GPU package).
 This stub is only reached if a non-`Array` particle field is used without
-CUDA.jl loaded.
+KernelAbstractions and a GPU package loaded.
 """
 gpu_estr_direct!(pfield::ParticleField) = error(
     "No GPU Estr_direct implementation available for particle arrays of type " *
     "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
-    "the CUDA-accelerated direct SFS stretching contribution for `CuArray`-backed particle fields.")
+    "the GPU direct SFS stretching contribution for `CuArray`-backed particle fields.")
 
 function Estr_direct!(pfield)
     if pfield.particles isa Array

@@ -14,15 +14,15 @@
 
 GPU implementation of the direct (no-FMM) O(N²) N-body sum, used by
 `UJ_direct` when `pfield.particles` is not a plain `Array` (e.g. `CuArray`).
-The real implementation is defined in `ext/FLOWVPMCUDAExt.jl` as a method of
+The real implementation is defined in `ext/FLOWVPMGPUExt.jl` as a method of
 this function -- loaded automatically whenever `using CUDA` is added
 alongside FLOWVPM (Julia's package-extension mechanism). This stub is only
-reached if a non-`Array` particle field is used without CUDA.jl loaded.
+reached if a non-`Array` particle field is used without KernelAbstractions and a GPU package loaded.
 """
 gpu_direct!(pfield::ParticleField) = error(
     "No GPU direct-sum implementation available for particle arrays of type " *
     "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
-    "the CUDA-accelerated direct (no-FMM) N-body sum for `CuArray`-backed particle fields.")
+    "the GPU direct (no-FMM) N-body sum for `CuArray`-backed particle fields.")
 
 """
   `UJ_direct(pfield)`

@@ -348,15 +348,9 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         @test err_replay.u_rel_rms <= 1.5 * err.u_rel_rms + eps(Float32)
         @test err_replay.j_rel_rms <= 1.5 * err.j_rel_rms + eps(Float32)
 
-        # Lifecycle-layer allocation contract: with the graph live, one step
-        # of the resident lifecycle is a single graph launch and must be
-        # device-allocation-free within host launch bookkeeping.
-        ffmm.run_cuda_radix_lifecycle!(state)
-        lifecycle_host = @allocated ffmm.run_cuda_radix_lifecycle!(state)
-        lifecycle_dev = CUDA.@allocated ffmm.run_cuda_radix_lifecycle!(state)
-        @info "device radix SFS [$case n=$n P=$P $R rho_t=$rho_t] lifecycle-layer allocations (bytes)" lifecycle_host lifecycle_dev
-        @test lifecycle_host <= FMM048_HOST_ALLOC_BUDGET
-        @test lifecycle_dev == 0
+        # The lifecycle-layer allocation contract (one graph launch per step)
+        # belonged to the removed native CUDA lifecycle; the wrapper-level
+        # allocation gate above is the one that remains.
 
         # Independent same-state replay parity: the uncaptured launch-sequence
         # body on the IDENTICAL state is ground truth; the replayed graph must

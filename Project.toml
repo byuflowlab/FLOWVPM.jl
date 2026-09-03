@@ -21,22 +21,16 @@ TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [weakdeps]
-CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
-Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [extensions]
-FLOWVPMCUDAExt = "CUDA"
 FLOWVPMGPUExt = ["GPUArraysCore", "KernelAbstractions"]
-FLOWVPMKAMetalExt = ["Metal", "KernelAbstractions"]
 
 [compat]
 BSON = "0.3"
-CUDA = "5, 6"
 GPUArraysCore = "0.1, 0.2"
 KernelAbstractions = "0.9"
-Metal = "1"
 DataStructures = "0.18"
 EllipticFunctions = "2"
 FastMultipole = "2.2.0"

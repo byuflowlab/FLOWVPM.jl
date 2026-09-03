@@ -633,13 +633,12 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     device = !(pfield.particles isa Array)
     if device
         # A non-Array-backed field takes the device path on whatever backend it
-        # lives on. CUDA loads its lifecycle by runtime `include`; any other
-        # backend registers itself with FastMultipole from a package extension
-        # (FastMultipole.jl, register_radix_device_backend!), so try CUDA first
-        # and fall back to a registered backend rather than erroring on it.
-        fmm.load_cuda_radix_lifecycle!() || fmm.radix_device_backend_available() ||
+        # lives on. The lifecycle is registered with FastMultipole by its
+        # KernelAbstractions extension (register_radix_device_backend!), which
+        # loads once KernelAbstractions and a GPU package are both loaded.
+        fmm.radix_device_backend_available() ||
             error("GPU FMM requested (device-backed particle field) but no " *
-                "device radix lifecycle is available: $(fmm.cuda_radix_status())")
+                "device radix lifecycle is available: $(fmm.radix_device_status())")
     end
 
     bounds = settings.bounds === nothing ?
@@ -885,11 +884,11 @@ end
 # 3 x np E_str buffer in global particle order; ACCUMULATE into SFS_INDEX
 # (rows 40:42), mirroring the `Estr_direct`/`Estr_fmm!` += convention (the
 # caller resets SFS rows). This host-Matrix method serves the transfer-based
-# host path; the CuArray method lives in ext/FLOWVPMCUDAExt.jl.
+# host path; the CuArray method lives in ext/FLOWVPMGPUExt.jl.
 ################################################################################
 
 # NOTE on the signature: the buffer is host-pinned to plain-Matrix storage to
-# stay unambiguous against the CuArray method in ext/FLOWVPMCUDAExt.jl, but it
+# stay unambiguous against the CuArray method in ext/FLOWVPMGPUExt.jl, but it
 # must also accept the SubArray prefix view FastMultipole's
 # finalize_radix_sfs_output! passes when the cache capacity (max_n_bodies)
 # exceeds the live np. A SubArray of a host Matrix is never a CUDA.AnyCuArray,
