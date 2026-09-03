@@ -8,7 +8,7 @@
   * Created   : Aug 2020
 =###############################################################################
 
-const nfields = 46
+const nfields = 45
 const useGPU_default = 0
 
 ################################################################################
@@ -57,7 +57,7 @@ struct FMM
   min_ncrit::Int64                 # Minimum number of particles per leaf (default to 3 for safety)
 end
 
-function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=true, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
+function FMM(; p=4, ncrit=10, theta=0.5, shrink_recenter=true, relative_tolerance=1e-3, absolute_tolerance=1e-3, autotune_p=true, autotune_ncrit=false, autotune_reg_error=true, default_rho_over_sigma=1.0, min_ncrit=3)
     return FMM(p, ncrit, theta, shrink_recenter, relative_tolerance, absolute_tolerance, autotune_p, autotune_ncrit, autotune_reg_error, default_rho_over_sigma, min_ncrit)
 end
 
@@ -243,11 +243,18 @@ const U_INDEX = 10:12
 const VORTICITY_INDEX = 13:15
 const J_INDEX = 16:24
 const PSE_INDEX = 25:27
-const M_INDEX = 28:36
-const C_INDEX = 37:39
-const SFS_INDEX = 40:42
-const STATIC_INDEX = 43
-const U_PREV_INDEX = 44
+const M_INDEX = 28:37
+const MU_INDEX = 28:30
+const MQSTR_INDEX = 31:33
+const MQSGM_INDEX = 34
+const MS_INDEX = 35:37
+const MS1_INDEX = 35
+const MS2_INDEX = 36
+const MS3_INDEX = 37
+const C_INDEX = 38:40
+const SFS_INDEX = 41:43
+const STATIC_INDEX = 44
+const U_PREV_INDEX = 45
 
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
@@ -262,6 +269,13 @@ get_vorticity(P) = view(P, VORTICITY_INDEX)
 get_J(P) = view(P, J_INDEX)
 get_PSE(P) = view(P, PSE_INDEX)
 get_M(P) = view(P, M_INDEX)
+get_MU(P) = view(P, MU_INDEX)
+get_MQSTR(P) = view(P, MQSTR_INDEX)
+get_MQSGM(P) = view(P, MQSGM_INDEX)
+get_MS(P) = view(P, MS_INDEX)
+get_MS1(P) = view(P, MS1_INDEX)
+get_MS2(P) = view(P, MS2_INDEX)
+get_MS3(P) = view(P, MS3_INDEX)
 get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
 get_static(P) = view(P, STATIC_INDEX)
@@ -293,6 +307,13 @@ get_J(pfield::ParticleField, i::Int) = view(pfield.particles, J_INDEX, i)
 get_PSE(pfield::ParticleField, i::Int) = view(pfield.particles, PSE_INDEX, i)
 get_W(pfield::ParticleField, i::Int) = get_W(get_particle(pfield, i))
 get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
+get_MU(pfield::ParticleField, i::Int) = view(pfield.particles, MU_INDEX, i)
+get_MQSTR(pfield::ParticleField, i::Int) = view(pfield.particles, MQSTR_INDEX, i)
+get_MQSGM(pfield::ParticleField, i::Int) = view(pfield.particles, MQSGM_INDEX, i)
+get_MS(pfield::ParticleField, i::Int) = view(pfield.particles, MS_INDEX, i)
+get_MS1(pfield::ParticleField, i::Int) = view(pfield.particles, MS1_INDEX, i)
+get_MS2(pfield::ParticleField, i::Int) = view(pfield.particles, MS2_INDEX, i)
+get_MS3(pfield::ParticleField, i::Int) = view(pfield.particles, MS3_INDEX, i)
 get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
 get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
@@ -308,6 +329,13 @@ function set_U(P, val) P[U_INDEX] .= val end
 function set_vorticity(P, val) P[VORTICITY_INDEX] .= val end
 function set_J(P, val) P[J_INDEX] .= val end
 function set_M(P, val) P[M_INDEX] .= val end
+function set_MU(P, val) P[MU_INDEX] .= val end
+function set_MQSTR(P, val) P[MQSTR_INDEX] .= val end
+function set_MQSGM(P, val) P[MQSGM_INDEX] = val end
+function set_MS(P, val) P[MS_INDEX] .= val end
+function set_MS1(P, val) P[MS1_INDEX] = val end
+function set_MS2(P, val) P[MS2_INDEX] = val end
+function set_MS3(P, val) P[MS3_INDEX] = val end
 function set_C(P, val) P[C_INDEX] .= val end
 function set_static(P, val) P[STATIC_INDEX] = val end
 function set_PSE(P, val) P[PSE_INDEX] .= val end
@@ -325,11 +353,20 @@ function set_U(pfield::ParticleField, i::Int, val) pfield.particles[U_INDEX, i] 
 function set_vorticity(pfield::ParticleField, i::Int, val) pfield.particles[VORTICITY_INDEX, i] .= val end
 function set_J(pfield::ParticleField, i::Int, val) pfield.particles[J_INDEX, i] .= val end
 function set_M(pfield::ParticleField, i::Int, val) pfield.particles[M_INDEX, i] .= val end
+function set_MU(pfield::ParticleField, i::Int, val) pfield.particles[MU_INDEX, i] .= val end
+function set_MQSTR(pfield::ParticleField, i::Int, val) pfield.particles[MQSTR_INDEX, i] .= val end
+function set_MQSGM(pfield::ParticleField, i::Int, val) pfield.particles[MQSGM_INDEX, i] = val end
+function set_MS(pfield::ParticleField, i::Int, val) pfield.particles[MS_INDEX, i] .= val end
+function set_MS1(pfield::ParticleField, i::Int, val) pfield.particles[MS1_INDEX, i] = val end
+function set_MS2(pfield::ParticleField, i::Int, val) pfield.particles[MS2_INDEX, i] = val end
+function set_MS3(pfield::ParticleField, i::Int, val) pfield.particles[MS3_INDEX, i] = val end
 function set_C(pfield::ParticleField, i::Int, val) pfield.particles[C_INDEX, i] .= val end
 function set_static(pfield::ParticleField, i::Int, val) pfield.particles[STATIC_INDEX, i] = val end
 function set_PSE(pfield::ParticleField, i::Int, val) pfield.particles[PSE_INDEX, i] .= val end
 function set_SFS(pfield::ParticleField, i::Int, val) pfield.particles[SFS_INDEX, i] .= val end
 function set_U_prev(pfield::ParticleField, i::Int, val) pfield.particles[U_PREV_INDEX, i] = val end
+function set_one_field(pfield::ParticleField, i::Int, FIELD_INDEX::Int, val) pfield.particles[FIELD_INDEX, i] = val end
+function set_all_fields(pfield::ParticleField, val) pfield.particles .= val end
 
 
 """
@@ -466,6 +503,7 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     # Updates time
     pfield.t += dt
     pfield.nt += 1
+    return nothing
 end
 
 

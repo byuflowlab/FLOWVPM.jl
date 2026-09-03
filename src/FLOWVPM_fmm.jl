@@ -24,7 +24,7 @@ function residual_rel(ρ_σ, ε)
 end
 
 function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
-    #return default_rho_over_sigma
+    #return default_rho_over_sigma # TESTING - avoids a solver that Mooncake.jl otherwise tries to differentiate over.
     if autotune_reg_error
         if ω < 10*eps()
             # ω = zero(ω)
@@ -120,7 +120,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
             dz = target_z - source_z
             r2 = dx*dx + dy*dy + dz*dz
 
-            if !iszero(r2)
+            if r2 > 0#!iszero(r2)
                 r = sqrt(r2)
 
                 # Regularizing function and deriv
@@ -131,7 +131,6 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                 crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
                 crss2 = -const4 * r3inv * ( dz*gamma_x - dx*gamma_z )
                 crss3 = -const4 * r3inv * ( dx*gamma_y - dy*gamma_x )
-
                 if VS
                     # U = ∑g_σ(x-xp) * K(x-xp) × Γp
                     Ux = g_sgm * crss1
@@ -179,3 +178,4 @@ function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, de
 end
 
 Base.eltype(::ParticleField{TF, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where TF = TF
+Base.eltype(::ParticleField{ReverseDiff.TrackedReal{V, D, O}, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any}) where {V, D, O} = ReverseDiff.TrackedReal{V, D, Nothing}

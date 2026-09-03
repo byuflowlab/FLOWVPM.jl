@@ -292,44 +292,29 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 
         # Low-storage RK step
         ## Velocity
-        M = get_M(p); G = get_Gamma(p); J = get_J(p); S = get_SFS(p); sigma = get_sigma(p)[]; X = get_X(p); U = get_U(p)
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            for i=1:3
-                add!(M[i], (a-1)*M[i] + dt*(U[i] + Uinf[i]))
-            end
-        else
-            for i=1:3
-                M[i] = a*M[i] + dt*(U[i] + Uinf[i])
-            end
-        end
+        MU = get_MU(p); MQSTR = get_MQSTR(p); MQSGM = get_MQSGM(p); MS = get_MS(p)
+        G = get_Gamma(p); J = get_J(p); S = get_SFS(p); sigma = get_sigma(p)[]; X = get_X(p); U = get_U(p)
+        set_MU(pfield, i, a*MU + dt*(U + Uinf))
         # Update position
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            for i=1:3
-                add!(X[i], b*M[i])
-            end
-        else
-            for i=1:3
-                X[i] += b*M[i]
-            end
-        end
+        set_X(pfield, i, X + b*MU)
 
         # Store stretching S under M[1:3]
         if pfield.transposed
             # Transposed scheme S = (Γ⋅∇')U
-            MM1 = J[1]*G[1]+J[2]*G[2]+J[3]*G[3]
-            MM2 = J[4]*G[1]+J[5]*G[2]+J[6]*G[3]
-            MM3 = J[7]*G[1]+J[8]*G[2]+J[9]*G[3]
+            set_MS1(pfield, i, J[1]*G[1]+J[2]*G[2]+J[3]*G[3])
+            set_MS2(pfield, i, J[4]*G[1]+J[5]*G[2]+J[6]*G[3])
+            set_MS3(pfield, i, J[7]*G[1]+J[8]*G[2]+J[9]*G[3])
         else
             # Classic scheme (Γ⋅∇)U
-            MM1 = J[1]*G[1]+J[4]*G[2]+J[7]*G[3]
-            MM2 = J[2]*G[1]+J[5]*G[2]+J[8]*G[3]
-            MM3 = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
+            set_MS1(pfield, i, J[1]*G[1]+J[4]*G[2]+J[7]*G[3])
+            set_MS2(pfield, i, J[2]*G[1]+J[5]*G[2]+J[8]*G[3])
+            set_MS3(pfield, i, J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
         end
 
         # Store Z under MM4 with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
         Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
         if Gnorm2 > zero(Gnorm2)
-            MM4 = (f+g)/(1+3*f) * (MM1*G[1] + MM2*G[2] + MM3*G[3])
+            MM4 = (f+g)/(1+3*f) * (get_MS1(p)[]*G[1] + get_MS2(p)[]*G[2] + get_MS3(p)[]*G[3])
             MM4 -= f/(1+3*f) * (C*S[1]*G[1] + C*S[2]*G[2] + C*S[3]*G[3]) * sigma^3/zeta0
             MM4 /= Gnorm2
         else
@@ -338,40 +323,16 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
 
         # Store qstr_i = a_i*qstr_{i-1} + ΔΓ,
         # with ΔΓ = Δt*( S - 3ZΓ - Cϵ )
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            add!(M[4], (a-1)*M[4] + dt*(MM1 - 3*MM4*G[1] - C*S[1]*sigma^3/zeta0))
-            add!(M[5], (a-1)*M[5] + dt*(MM2 - 3*MM4*G[2] - C*S[2]*sigma^3/zeta0))
-            add!(M[6], (a-1)*M[6] + dt*(MM3 - 3*MM4*G[3] - C*S[3]*sigma^3/zeta0))
-        else
-            M[4] = a*M[4] + dt*(MM1 - 3*MM4*G[1] - C*S[1]*sigma^3/zeta0)
-            M[5] = a*M[5] + dt*(MM2 - 3*MM4*G[2] - C*S[2]*sigma^3/zeta0)
-            M[6] = a*M[6] + dt*(MM3 - 3*MM4*G[3] - C*S[3]*sigma^3/zeta0)
-        end
+        set_MQSTR(pfield, i, a*MQSTR + dt*(MS - 3*MM4*G - C*S*sigma^3/zeta0))
 
         # Store qsgm_i = a_i*qsgm_{i-1} + Δσ, with Δσ = -Δt*σ*Z
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            add!(M[8], (a-1)*M[8] - dt*(sigma * MM4))
-        else
-            M[8] = a*M[8] - dt*(sigma * MM4)
-        end
+        set_MQSGM(pfield, i, a*MQSGM[] - dt*(sigma * MM4))
 
         # Update vectorial circulation
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            for i=1:3
-                add!(G[i], b*M[i+3])
-            end
-        else
-            for i=1:3
-                G[i] += b*M[i+3]
-            end
-        end
+        set_Gamma(pfield, i, G + b*MQSTR)
 
         # Update cross-sectional area
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            add!(sigma, b*M[8])
-        else
-            sigma += b*M[8]
-        end
+        set_sigma(pfield, i, sigma + b*MQSGM[])
 
     end
 

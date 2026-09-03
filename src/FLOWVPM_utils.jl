@@ -58,6 +58,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
     # ERROR CASES
     ## Check that viscous scheme and kernel are compatible
+    #=
     compatible_kernels = _kernel_compatibility(pfield.viscous)
 
     if !(pfield.kernel in compatible_kernels)
@@ -65,6 +66,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 " $(typeof(pfield.viscous).name); compatible kernels are"*
                 " $(compatible_kernels)")
     end
+    
 
     if save_path!=nothing
         # Create save path
@@ -78,34 +80,73 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         # Save settings
         save_settings(pfield, run_name; path=save_path)
     end
+    =#
 
     # Initialize verbose
-    (line1, line2, run_id, file_verbose,
+    #=(line1, line2, run_id, file_verbose,
         vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
                                                     dt, nsteps_save,
                                                     runtime_function,
-                                                    static_particles_function, v_lvl)
+                                                    static_particles_function, v_lvl)=#
 
     # RUN
-
     if reverse_ad_mode == "ImplicitAD"
 
         t = range(0, nsteps*dt, nsteps+1)
         p = (static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield)
-        #pfield.particles = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
+        
         output_states = ImplicitAD.odesolve(initialize, onestep!, t, xd, xci, p)
-        check_derivs(pfield.particles; label="pfield after passing derivatives back")
-        check_derivs(output_states[1:end-1]; label="states after passing derivatives back")
-        map_flat_states_to_pfield!(pfield, output_states)
-        check_derivs(pfield.particles; label="pfield before passing derivatives back")
-        check_derivs(output_states[1:end-1]; label="states before passing derivatives back")
+        #check_derivs(pfield.particles)
+        #check_derivs(output_states[:, end])
+        map_flat_states_to_pfield!(pfield, output_states[:, end])
+        #check_derivs(pfield.particles)
+        #check_derivs(output_states[:, end])
         finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
 
         return nothing
     end
+
+    if reverse_ad_mode == "ImplicitAD_compiled"
+
+        t = range(0, nsteps*dt, nsteps+1)
+        p = (static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield)
+        
+        #println("overall tape pointer: $(pointer_from_objref(ReverseDiff.tape(pfield)))")
+        println("length of overall tape: $(length(ReverseDiff.tape(pfield)))")
+        cache = ImplicitAD.explicit_unsteady_cache(initialize_compiled, onestep_compiled!, length(pfield.particles) + 1, length(xd), length(xci[:, 1]), deepcopy(p); compile=true)
+
+        #println("onestep pointer: $(pointer_from_objref(ReverseDiff.tape(cache[1])))")
+        #println("init pointer: $(pointer_from_objref(ReverseDiff.tape(cache[2])))")
+        #@show pointer_from_objref(ReverseDiff.tape(pfield))
+        #@show pointer_from_objref(ReverseDiff.tape(cache))
+
+        output_states = ImplicitAD.explicit_unsteady(initialize_compiled, onestep_compiled!, t, xd, xci, p; cache)
+        #check_derivs(pfield.particles)
+        #check_derivs(output_states[:, end])
+        map_flat_states_to_pfield!(pfield, output_states[:, end])
+        #check_derivs(pfield.particles)
+        #check_derivs(output_states[:, end])
+        finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
+
+        return nothing
+    end
+
+    if reverse_ad_mode == "compiled_2"
+
+        # build tape for time stepping
+        #@show pfield.particles[1].tape[1]
+        relax = false
+        #pfield.np = 1
+        cache = compile_tape((_pfield)->(nextstep(_pfield, dt; relax, custom_UJ); nothing), pfield)
+        #pfield.np = 0
+        
+        
+    end
+
     for i in 0:nsteps
         if i%verbose_nsteps==0
-            vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+            #vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+            println("Time step $i out of $nsteps\tParticles: $(get_np(pfield))")
         end
 
         # Relaxation step
@@ -117,21 +158,28 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
         if i!=0
             # Add static particles
-            #remove = static_particles_function(pfield, pfield.t, dt)
-
+            remove = static_particles_function(pfield, pfield.t, dt)
+            #@show ReverseDiff.value(sum(pfield.particles))
             # Step in time solving governing equations
-            #@show pfield.particles[5]
-            nextstep(pfield, dt; relax, custom_UJ)
-            #@show pfield.particles[5]
+            check_derivs(pfield.particles)
+            if reverse_ad_mode == "compiled_2"
+                run_compiled_function(pfield, cache)
+            else
+                nextstep(pfield, dt; relax, custom_UJ)
+            end
+            check_derivs(pfield.particles)
+            #@show ReverseDiff.value(sum(pfield.particles))
             # Remove static particles (assumes particles remained sorted)
-            #if remove===nothing || remove
-            #    for pi in get_np(pfield):-1:(org_np+1)
-            #        remove_particle(pfield, pi)
-            #    end
-            #end
+            if remove===nothing || remove
+                for pi in get_np(pfield):-1:(org_np+1)
+                    remove_particle(pfield, pi)
+                end
+            end
         end
 
         # Calls user-defined runtime function
+        breakflag = runtime_function(pfield, pfield.t, dt)
+        #=
         if xd === nothing && xci === nothing
             breakflag = runtime_function(pfield, pfield.t, dt;
             vprintln= (str)-> i%verbose_nsteps==0 ?
@@ -142,23 +190,25 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                 vprintln(str, v_lvl+2) : nothing,
             xd=xd, xci=xci)
         end
+        =#
         
         # Save particle field
-        if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat
-        overwrite_time = save_time ? nothing : pfield.nt
-        save(pfield, run_name; path=save_path, add_num=true,
-                overwrite_time=overwrite_time)
-        end
+        # Currently only saves when using AbstractFloat numbers (i.e., not when using AD).
+        # Supporting AD types requires custom save() implementations that convert the AD types to something that hdf5 can interpret.
+        #=@show eltype(pfield.particles) (eltype(pfield.particles) <: AbstractFloat)
+        if save_pfield && save_path!==nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
+            overwrite_time = save_time ? nothing : pfield.nt
+            save(pfield, run_name; path=save_path, add_num=true,
+                    overwrite_time=overwrite_time)
+        end=#
 
         # User-indicated end of simulation
         if breakflag
             break
         end
-
     end
     # Finalize verbose
-    finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
-
+    #finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
     return nothing
 end
 
@@ -623,20 +673,36 @@ end
 function initialize_verbose(verbose, save_path, run_name, pfield, dt,
                             nsteps_save,
                             runtime_function, static_particles_function, v_lvl)
-    line1 = "*"^(73-8*v_lvl)
-    line2 = "-"^(length(line1))
+    #line1 = "*"^(73-8*v_lvl)
+    #line2 = "-"^(length(line1))
+    line1 = ""
+    for i=1:73-8*v_lvl
+        line1 = line1*"*"
+    end
+    line2 = ""
+    for i=1:length(line1)
+        line2 = line2*"-"
+    end
     run_id = save_path!=nothing ? joinpath(save_path, run_name) : ""
 
     # Set up IO streams for verbose
     file_verbose = save_path != nothing ? joinpath(save_path, run_name*".log") : nothing
 
     function vprintln(str, v_lvl)
-        if verbose; println("\t"^v_lvl*str); end;
-        if file_verbose != nothing
-            f = open(file_verbose, "a")
-            println(f, "\t"^v_lvl*str)
-            close(f)
+        if verbose
+            for i=1:v_lvl
+                print("\t")
+            end
+            print(str)
+            print("\n")
         end
+        return nothing
+        #if verbose; println("\t"^v_lvl*str); end;
+        #if file_verbose != nothing
+            #f = open(file_verbose, "a")
+            #println(f, "\t"^v_lvl*str)
+            #close(f)
+        #end
     end
 
     # Initial verbose
@@ -673,4 +739,13 @@ function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
     vprintln("$time_end", v_lvl+1)
     vprintln(line1, v_lvl)
     vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
+end
+
+function vprintln(str, v_lvl::Int)
+    for i=1:v_lvl
+        print("\t")
+    end
+    print(str)
+    print("\n")
+    return nothing
 end

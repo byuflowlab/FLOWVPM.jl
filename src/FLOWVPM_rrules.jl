@@ -10,23 +10,19 @@
 
 using ChainRulesCore
 
-ReverseDiff.tape(pfield::ParticleField) = ReverseDiff.tape(pfield.particles)
-
 using ForwardDiff
 const c4 = 1/(4*pi)
 
 function fmm.direct!(target_buffer::AbstractArray{<:ReverseDiff.TrackedReal{V, D, O}}, target_index, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, source_system::ParticleField, source_buffer, source_index) where {PS,VS,GS,V,D,O}
-    
     target_buffer_val = ReverseDiff.value.(target_buffer)
     target_buffer_val_star = deepcopy(target_buffer_val) # since this is an in-place function, we need to save the overwritten input.
-    source_system_val = ReverseDiff.value(source_system) # TODO: just pass in the particle field directly, since the actual math is done with the buffers anyway.
+    #source_system_val = ReverseDiff.value(source_system) # TODO: just pass in the particle field directly, since the actual math is done with the buffers anyway.
     source_buffer_val = ReverseDiff.value.(source_buffer)
     tp = ReverseDiff.tape(source_system)
-    fmm.direct!(target_buffer_val, target_index, derivatives_switch, source_system_val, source_buffer_val, source_index)
+    fmm.direct!(target_buffer_val, target_index, derivatives_switch, source_system, source_buffer_val, source_index)
     for idx in CartesianIndices(target_buffer[:, target_index])
         target_buffer[idx].value = target_buffer_val[idx]
     end
-
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
                         fmm.direct!,
@@ -41,129 +37,128 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     
     target_buffer, target_index, derivatives_switch, source_system, source_buffer, source_index = instruction.input
     target_buffer_val_star, PS,VS,GS = instruction.cache
-    
+
     ReverseDiff.value!.(target_buffer, target_buffer_val_star) # map original value back
     
     T = eltype(ReverseDiff.value(target_buffer[1]))
-    Gamma = zeros(T,3)
-    Gamma_i_bar = zeros(T,3)
-    x_i = zeros(T,3)
-    x_i_bar = zeros(T,3)
-    x_j = zeros(T,3)
-    x_j_bar = zeros(T,3)
+    Γ = zeros(T,3)
+    Γbar = zeros(T,3) # Γbar_a^j
+    x_source = zeros(T,3)
+    #x_source_bar = zeros(T,3)
+    x_target = zeros(T,3)
+    #x_target_bar = zeros(T,3)
     dx = zeros(T,3)
-    crss = zeros(T,3)
-    sigma_i_bar = zero(T)
-    u_j_bar = zeros(T,3)
-    du_j_bar = zeros(T,3,3)
+    γ = zeros(T,3) # called crss in the orignal code
+    #σbar = zero(T) # σbar_j
+    Ubar = zeros(T,3) # Ubar_a^i
+    Jbar = zeros(T,3,3) # Jbar_ab^i
+    dxbar = zeros(T, 3)
+    γbar = zeros(T,3) # γbar_a^ij
 
     for i in source_index
 
         for a=1:3
-            Gamma[a] = source_buffer[a+4, i].value
+            Γ[a] = source_buffer[a+4, i].value
         end
-        Gamma_i_bar .= zero(T)
         for a=1:3
-            x_i[a] = source_buffer[a,i].value
+            x_source[a] = source_buffer[a,i].value
         end
-        x_i_bar .= zero(T)
-        sigma = source_buffer[8, i].value
-        sigma_i_bar = zero(T)
+        #x_source_bar .= zero(T)
+        σ = source_buffer[8, i].value
         for j in target_index
             # calculate r, dx, and check if particles actually interact
             for a=1:3
-                x_j[a] = target_buffer[a,j].value
+                x_target[a] = target_buffer[a,j].value
             end
-            x_j_bar .= zero(T)
+            #x_target_bar .= zero(T)
             for a=1:3
-                dx[a] = x_j[a] - x_i[a]
+                dx[a] = x_target[a] - x_source[a]
+                dxbar[a] = zero(T)
             end
+            Γbar .= zero(T)
+            σbar = zero(T)
             r2 = dx[1]*dx[1] + dx[2]*dx[2] + dx[3]*dx[3]
             if r2 > 0
                 r = sqrt(r2)
-                r3inv = 1/r^3
-                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-                ddg_sgmdr = ForwardDiff.derivative(source_system.kernel.dgdr,r/sigma) # derivative of g' at r/sigma
+                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/σ)
+                ddg_sgmdr = ForwardDiff.derivative(source_system.kernel.dgdr,r/σ) # derivative of g' at r/sigma
 
+                α = dg_sgmdr/(σ*r) - 3*g_sgm/r^2
+                β = -const4*g_sgm/r^3
                 for a=1:3
-                    crss[a] = -const4 * r3inv * ϵ(a,dx,Gamma)
+                    γ[a] = -const4/r^3 * ϵ(a,dx,Γ)
                 end
-                VS = true
-                GS = true
+                # reset containers
+                rbar = zero(T)
+                αbar = zero(T)
+                βbar = zero(T)
+                for a=1:3
+                    γbar[a] = zero(T)
+                end
                 if VS
-                    
                     for a=1:3
-                        u_j_bar[a] = target_buffer[a+4, j].deriv
+                        Ubar[a] = target_buffer[a+4, j].deriv
+                    end
+
+                    for a=1:3
+                        rbar += Ubar[a]*dg_sgmdr/σ*γ[a]
+                        σbar -= Ubar[a]*dg_sgmdr*r/σ^2*γ[a]
+                        γbar[a] += Ubar[a]*g_sgm
                     end
                     
-                    A = -const4*g_sgm/r^3
-                    B = const4*(dg_sgmdr/(r^4*sigma) - 3*g_sgm/r^5)
-                    C = const4*dg_sgmdr/(r2*sigma^2)
-                    for a=1:3
-                        for b=1:3
-                            for c=1:3
-                                for d=1:3
-                                    x_j_bar[a] -= B*dx[a]*ϵ(b,c,d)*dx[c]*Gamma[d]*u_j_bar[b]
-                                    x_i_bar[a] += B*dx[a]*ϵ(b,c,d)*dx[c]*Gamma[d]*u_j_bar[b]
-                                end
-                                x_j_bar[a] -= A*ϵ(a,b,c)*u_j_bar[b]*Gamma[c]
-                                x_i_bar[a] += A*ϵ(a,b,c)*u_j_bar[b]*Gamma[c]
-                                sigma_i_bar += C*ϵ(a,b,c)*dx[b]*Gamma[c]*u_j_bar[a]
-                                Gamma_i_bar[a] -= A*ϵ(a,b,c)*dx[b]*u_j_bar[c]
-                            end
-                        end
-                    end
                 end
                 if GS
-                    # calculate assorted coefficients that only depend on i and j
                     for a=1:3
                         for b=1:3
-                            du_j_bar[b,a] = target_buffer[7 + 3*(b-1) + a, j].deriv
-                        end
-                    end
-                    
-                    α = dg_sgmdr/(sigma*r) - 3*g_sgm/r^2
-                    β = -const4*g_sgm/r^3
-                    γ = (ddg_sgmdr/sigma^2 - 7*dg_sgmdr/(r*sigma) + 15*g_sgm/r^2)
-                    for a = 1:3
-                        for b=1:3
-                            sigma_temp = 0.0
-                            for c=1:3
-                                sigma_temp += const4*dg_sgmdr*ϵ(a,b,c)*Gamma[c]/r^2
-                                gamma_temp = -β*ϵ(a,b,c)*du_j_bar[b, c]
-                                xyz_temp = 0.0
-                                for d=1:3
-                                    xyz_temp += (dx[b]*ϵ(c,a,d) + dx[a]*ϵ(c,b,d))*Gamma[d]
-                                    gamma_temp += α*const4/r^3*ϵ(a,c,d)*dx[c]*dx[b]*du_j_bar[b, d]
-                                end
-                                xyz_temp *= -α*const4/r
-                                xyz_temp += γ*crss[c]*dx[b]*dx[a]
-                                xyz_temp *= du_j_bar[b, c]/r^2
-                                Gamma_i_bar[a] += gamma_temp
+                            Jbar[a,b] = target_buffer[7 + 3*(b-1) + a, j].deriv # may need to transpose this?
+                            αbar += Jbar[a, b] * γ[a] * dx[b]
+                            γbar[a] += Jbar[a, b] * α * dx[b]
+                            dxbar[b] += Jbar[a, b] * α * γ[a]
 
-                                x_j_bar[a] += xyz_temp
-                                x_i_bar[a] -= xyz_temp
+                            for c=1:3
+                                βbar += Jbar[a, b]*ϵ(a, b, c)*Γ[c]
+                                Γbar[c] += Jbar[a, b]*β*ϵ(a, b, c)
                             end
-                            sigma_temp += (-ddg_sgmdr/sigma + 2*dg_sgmdr/r)*crss[a]*dx[b]
-                            sigma_i_bar += du_j_bar[b, a]/sigma^2*sigma_temp
-                            x_j_bar[a] += du_j_bar[a, b]*α*crss[b]
-                            x_i_bar[a] -= du_j_bar[a, b]*α*crss[b]
                         end
                     end
                     
                 end
+
+                rbar += αbar*(ddg_sgmdr/(σ^2*r) - 4*dg_sgmdr/(σ*r^2) + 6*g_sgm/r^3)
+                σbar += αbar*(-ddg_sgmdr/σ^3 + 2*dg_sgmdr/(σ^2*r))
+
+                rbar += βbar*(-c4*dg_sgmdr/(σ*r^3) + 3*c4*g_sgm/(r^4))
+                σbar += βbar*c4*dg_sgmdr/(σ^2*r^2)
+                
+                for a=1:3
+                    for b=1:3
+                        for c=1:3
+                            rbar += 3*γbar[a]*c4*r^-4*ϵ(a, b, c)*dx[b]*Γ[c]
+                            dxbar[b] -= γbar[a]*c4*ϵ(a, b, c)*r^-3*Γ[c]
+                            Γbar[c] -= c4*γbar[a]*r^-3*ϵ(a, b, c)*dx[b]
+                        end
+                    end
+                end
+
+                for a=1:3
+                    dxbar[a] += rbar*dx[a]/r
+                end
+
             end
             for a=1:3
-                ReverseDiff._add_to_deriv!(target_buffer[a, j], x_j_bar[a])
+                ReverseDiff._add_to_deriv!(target_buffer[a, j], dxbar[a])
+                ReverseDiff._add_to_deriv!(source_buffer[a+4, i], Γbar[a])
+                ReverseDiff._add_to_deriv!(source_buffer[a, i], -dxbar[a])
             end
+            ReverseDiff._add_to_deriv!(source_buffer[8, i], σbar)
 
         end
         
-        for a=1:3
-            ReverseDiff._add_to_deriv!(source_buffer[a+4, i], Gamma_i_bar[a])
-            ReverseDiff._add_to_deriv!(source_buffer[a, i], x_i_bar[a])
-        end
-        ReverseDiff._add_to_deriv!(source_buffer[8, i], sigma_i_bar)
+        #for a=1:3
+            #ReverseDiff._add_to_deriv!(source_buffer[a+4, i], Γbar[a])
+            #ReverseDiff._add_to_deriv!(source_buffer[a, i], -dxbar[a])
+        #end
+        #ReverseDiff._add_to_deriv!(source_buffer[8, i], σbar)
 
     end
 
@@ -178,6 +173,27 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                 target_buffer[7 + 3*(b-1) + a, j].deriv = 0.0
             end
         end
+    end
+
+    return nothing
+
+end
+
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.direct!)})
+    
+    target_buffer, target_index, derivatives_switch, source_system, source_buffer, source_index = instruction.input
+    target_buffer_val_star, PS, VS, GS = instruction.cache
+    
+    target_buffer_val = ReverseDiff.value.(target_buffer)
+    source_buffer_val = ReverseDiff.value.(source_buffer)
+
+    for idx in CartesianIndices(target_buffer_val_star)
+        target_buffer_val_star[idx] = target_buffer_val[idx]
+    end
+
+    fmm.direct!(target_buffer_val, target_index, derivatives_switch, source_system, source_buffer_val, source_index)
+    for idx in CartesianIndices(target_buffer[:, target_index])
+        target_buffer[idx].value = target_buffer_val[idx]
     end
 
     return nothing
@@ -207,7 +223,7 @@ function fmm.source_system_to_buffer!(buffer::AbstractArray{<:ReverseDiff.Tracke
                         fmm.source_system_to_buffer!,
                         (buffer, i_buffer, system, i_body),
                         nothing,
-                        buffer_star)
+                        (buffer_star, Γ, ρ_σ))
     return nothing
 
 end
@@ -215,18 +231,18 @@ end
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.source_system_to_buffer!)})
 
     buffer, i_buffer, system, i_body = instruction.input
-    buffer_star = instruction.cache
+    buffer_star, Γ, ρ_σ = instruction.cache
 
     for idx in 1:8
         buffer[idx, i_buffer].value = buffer_star[idx]
     end
     
     σ = system.particles[SIGMA_INDEX, i_body].value
-    Γx = system.particles[GAMMA_INDEX[1], i_body].value
-    Γy = system.particles[GAMMA_INDEX[2], i_body].value
-    Γz = system.particles[GAMMA_INDEX[3], i_body].value
-    Γ = sqrt(Γx^2 + Γy^2 + Γz^2)
-    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
+    #Γx = system.particles[GAMMA_INDEX[1], i_body].value
+    #Γy = system.particles[GAMMA_INDEX[2], i_body].value
+    #Γz = system.particles[GAMMA_INDEX[3], i_body].value
+    #Γ = sqrt(Γx^2 + Γy^2 + Γz^2)
+    #ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     for i=1:3
         ReverseDiff._add_to_deriv!(system.particles[X_INDEX[i], i_body], buffer[i, i_buffer].deriv)
         ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[i], i_body], buffer[i+4, i_buffer].deriv)
@@ -237,9 +253,9 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     dρ_σ_dΓ = ForwardDiff.derivative(_Γ->(solve_ρ_over_σ(σ, _Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)), Γ)
 
     for j=1:3
-        ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[j], i_body], buffer[4, i_buffer].deriv * dρ_σ_dΓ * system.particles[GAMMA_INDEX[j], i_body].value / Γ)
+        ReverseDiff._add_to_deriv!(system.particles[GAMMA_INDEX[j], i_body], buffer[4, i_buffer].deriv * dρ_σ_dΓ * σ * system.particles[GAMMA_INDEX[j], i_body].value / Γ)
     end
-    ReverseDiff._add_to_deriv!(system.particles[SIGMA_INDEX, i_body], buffer[4, i_buffer].deriv * (dρ_σ_dσ + ρ_σ))
+    ReverseDiff._add_to_deriv!(system.particles[SIGMA_INDEX, i_body], buffer[4, i_buffer].deriv * (dρ_σ_dσ * σ + ρ_σ))
 
     T = eltype(buffer[1].deriv)
     
@@ -248,6 +264,33 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
         buffer[idx, i_buffer].deriv = zero(T)
     end
     
+    return nothing
+
+end
+
+# not rigorously tested, but hopefully works. todo: test.
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.source_system_to_buffer!)})
+
+    buffer, i_buffer, system, i_body = instruction.input
+
+    # store original buffer value, using existing cache
+    for idx in CartesianIndices(instruction.cache)
+        instruction.cache[idx] = ReverseDiff.value(buffer[idx])
+    end
+
+    σ = system.particles[SIGMA_INDEX, i_body].value
+    Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
+    Γ = sqrt(Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value)
+    ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
+    for i=1:3
+        buffer[i, i_buffer].value = system.particles[X_INDEX[i], i_body].value
+    end
+    buffer[4, i_buffer].value = ρ_σ * σ
+    for i=1:3
+        buffer[i+4, i_buffer].value = system.particles[GAMMA_INDEX[i], i_body].value
+    end
+    buffer[8, i_buffer].value = σ
+
     return nothing
 
 end
@@ -262,12 +305,28 @@ function fmm.get_position_pullback!(system::ParticleField, i, buffer)
 end
 
 check_derivs(x; label=nothing) = x
+check_derivs_trackedreal() = nothing
 check_derivs_trackedarray() = nothing
 check_derivs_array_of_trackedreals() = nothing
+
+function check_derivs(x::ReverseDiff.TrackedReal; label=nothing)
+    label === nothing ? println("ready to check derivs of TrackedReal") : println("ready to check derivs of TrackedReal $label")
+    tp = ReverseDiff.tape(x)
+
+    ReverseDiff.record!(tp,
+                        ReverseDiff.SpecialInstruction,
+                        check_derivs_trackedreal,
+                        (x,),
+                        x,
+                        label)
+    return x
+end
+
 function check_derivs(x::ReverseDiff.TrackedArray; label=nothing)
 
     label === nothing ? println("ready to check derivs of TrackedArray") : println("ready to check derivs of TrackedArray $label")
     tp = ReverseDiff.tape(x)
+    #println("tape ID: $(pointer(tp))")
 
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
@@ -283,6 +342,7 @@ function check_derivs(x::AbstractArray{<:ReverseDiff.TrackedReal}; label=nothing
 
     label === nothing ? println("ready to check derivs of array of TrackedReals") : println("ready to check derivs of array of TrackedReals $label")
     tp = ReverseDiff.tape(x)
+    #println("tape ID: $(pointer(tp))")
 
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
@@ -294,9 +354,19 @@ function check_derivs(x::AbstractArray{<:ReverseDiff.TrackedReal}; label=nothing
 
 end
 
+@noinline function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(check_derivs_trackedreal)})
+    label = instruction.cache
+    label === nothing ? println("derivative: $(ReverseDiff.deriv(instruction.input[1]))") : println("derivative of $label: $(ReverseDiff.deriv(instruction.input[1]))")
+    return nothing
+
+end
+
 @noinline function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(check_derivs_trackedarray)})
     label = instruction.cache
     label === nothing ? println("sum of derivatives: $(sum(ReverseDiff.deriv(instruction.input[1])))") : println("sum of derivatives of $label: $(sum(ReverseDiff.deriv(instruction.input[1])))")
+    
+    tp = ReverseDiff.tape(instruction.input[1])
+    #println("tape ID: $(pointer(tp))")
     return nothing
 
 end
@@ -304,10 +374,16 @@ end
 @noinline function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(check_derivs_array_of_trackedreals)})
     label = instruction.cache
     label === nothing ? println("sum of derivatives: $(sum(ReverseDiff.deriv.(instruction.input[1])))") : println("sum of derivatives of $label: $(sum(ReverseDiff.deriv.(instruction.input[1])))")
+    
+    tp = ReverseDiff.tape(instruction.input[1])
+    #println("tape ID: $(pointer(tp))")
     return nothing
 
 end
 
+@noinline function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(check_derivs_trackedreal)})
+    return nothing
+end
 @noinline function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(check_derivs_trackedarray)})
     return nothing
 end
@@ -316,8 +392,8 @@ end
 end
 
 check_deriv_allocation(x; label=nothing) = x
-check_deriv_allocation_trackedarray() = nothing # dummy function
-check_deriv_allocation_array_of_trackedreals() = x # dummy function
+check_deriv_allocation_trackedarray() = error() # dummy function
+check_deriv_allocation_array_of_trackedreals() = error() # dummy function
 function check_deriv_allocation(x::ReverseDiff.TrackedArray; label=nothing)
 
     ϵ = 1e-6
@@ -333,7 +409,7 @@ function check_deriv_allocation(x::ReverseDiff.TrackedArray; label=nothing)
     end
     s3 = sum(x.value)
     if abs(s-s3) > ϵ ; error("Initial sum of values $s is not equal to final sum of values $(s3)!"); end
-    #if abs(s2-s - length(x.value)) > ϵ; error("Perturbation check failed! Initial sum of values is $s, final sum is $s2, and the length of the array is $(length(x)). Difference: $(s2 - length(x.value))"); end
+    if abs(s2-s - length(x.value)) > ϵ; error("Perturbation check failed! Initial sum of values is $s, final sum is $s2, and the length of the array is $(length(x)). Difference: $(s2 - length(x.value))"); end
     label === nothing ? println("value of TrackedArray is properly allocated!") : println("value of TrackedArray $label is properly allocated!")
 
     tp = ReverseDiff.tape(x)
@@ -398,7 +474,7 @@ end
     ϵ = 1e-6
     tp = ReverseDiff.tape(x)
     s = sum(ReverseDiff.deriv.(x))
-    @show s
+    #@show s
     one_x_deriv = one(eltype(x[1].deriv))
     for xi in x
         xi.deriv += one_x_deriv
@@ -423,404 +499,69 @@ end
     return nothing
 end
 
-# automatically constructed pullback for adding particles seems to not work properly. probably because it's an in-place operation.
-function add_particle(pfield::ParticleField{ReverseDiff.TrackedReal{R, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, X, Gamma, sigma; vol=0, circulation=1, C=0, static=false) where {R, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}
-
-    # we still need the error checking
-    if get_np(pfield)==pfield.maxparticles
-        error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
-                            " has been reached")    
-    end
-    # Fetch the index of the next empty particle in the field
-    i_next = get_np(pfield)+1
-
-    # Add particle to the field
-    pfield.np += 1
-    
-    tp = ReverseDiff.tape(Gamma, X, sigma, pfield)
-
-    for i=1:3
-        pfield.particles[X_INDEX[i], i_next] = ReverseDiff.track(X[i].value, tp)
-        pfield.particles[GAMMA_INDEX[i], i_next] = ReverseDiff.track(ReverseDiff.value(Gamma[i]), tp)
-        if typeof(C) <: AbstractArray
-            pfield.particles[C_INDEX[i], i_next] = ReverseDiff.track(C[i], tp)
-        else
-            pfield.particles[C_INDEX[i], i_next] = ReverseDiff.track(C, tp)
-        end
-    end
-    pfield.particles[SIGMA_INDEX, i_next] = ReverseDiff.track(sigma, tp)
-    pfield.particles[VOL_INDEX, i_next] = ReverseDiff.track(vol, tp)
-    pfield.particles[CIRCULATION_INDEX, i_next] = ReverseDiff.track(circulation, tp)
-    pfield.particles[STATIC_INDEX, i_next] = ReverseDiff.track(static, tp)
-
-    T = eltype(pfield.particles[1].value)
-    for i in [U_INDEX..., VORTICITY_INDEX..., J_INDEX..., M_INDEX..., PSE_INDEX..., SFS_INDEX...]
-        pfield.particles[i, i_next] = ReverseDiff.track(zero(T), tp)
-    end
-
-    ReverseDiff.record!(tp,
-                        ReverseDiff.SpecialInstruction,
-                        add_particle,
-                        (pfield, X, Gamma, sigma, vol, circulation, C, static),
-                        pfield)
-    return nothing
-
-end
-
-function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(add_particle)})
-    
-    input = instruction.input
-    pfield, X, Gamma, sigma, vol, circulation, C, static = input
-    i_next = get_np(pfield)
-    ReverseDiff.istracked(X) && for i=1:3
-        ReverseDiff._add_to_deriv!(X[i], pfield.particles[X_INDEX[i], i_next].deriv)
-    end
-    ReverseDiff.istracked(Gamma) && for i=1:3
-        ReverseDiff._add_to_deriv!(Gamma[i], pfield.particles[GAMMA_INDEX[i], i_next].deriv)
-    end
-    ReverseDiff.istracked(sigma) && begin 
-        ReverseDiff._add_to_deriv!(sigma, ReverseDiff.deriv(pfield.particles[SIGMA_INDEX, i_next]))
-    end
-
-    ReverseDiff.istracked(vol) && begin
-        ReverseDiff._add_to_deriv!(vol, ReverseDiff.deriv(pfield.particles[VOL_INDEX, i_next]))
-    end 
-
-    ReverseDiff.istracked(circulation) && begin
-        ReverseDiff._add_to_deriv!(circulation, ReverseDiff.deriv(pfield.particles[CIRCULATION_INDEX, i_next]))
-    end
-
-    ReverseDiff.istracked(C) && begin
-        ReverseDiff._add_to_deriv!(C, ReverseDiff.deriv(pfield.particles[C_INDEX, i_next]))
-    end
-
-    ReverseDiff.istracked(static) && begin
-        ReverseDiff._add_to_deriv!(static, ReverseDiff.deriv(pfield.particles[STATIC_INDEX, i_next]))
-    end
-
-    ReverseDiff.unseed!(pfield.particles[:, i_next])
-    pfield.np -= 1
-
-    return nothing
-end
-
-function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(add_particle)})
-
-    input = instruction.input
-    pfield, X, Gamma, sigma, vol, circulation, C, static = input
-
-    if get_np(pfield)==pfield.maxparticles
-        error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
-                            " has been reached")    
-    end
-    # Fetch the index of the next empty particle in the field
-    i_next = get_np(pfield)+1
-
-    # Add particle to the field
-    pfield.np += 1
-
-    #set_static(pfield, i_next, Float64(static))
-    ReverseDiff.value!.(pfield.particles[i_next, X_INDEX], X)
-    ReverseDiff.value!.(pfield.particles[i_next, GAMMA_INDEX], Gamma)
-    ReverseDiff.value!(pfield.particles[i_next, SIGMA_INDEX], sigma)
-    ReverseDiff.value!(pfield.particles[i_next, VOL_INDEX], vol)
-    ReverseDiff.value!(pfield.particles[i_next, CIRCULATION_INDEX], circulation)
-    ReverseDiff.value!(pfield.particles[i_next, C_INDEX], C)
-    ReverseDiff.value!(pfield.particles[i_next, STATIC_INDEX], Float64(static))
-
-    return nothing
-
-end
-
-function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
-    return ParticleField{_V, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
-                        pfield.maxparticles,
-                        #view(ReverseDiff.value(pfield.particles)), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
-                        ReverseDiff.value.(pfield.particles),
-                        pfield.formulation,
-                        pfield.viscous,
-                        pfield.np,
-                        pfield.nt,
-                        pfield.t,
-                        pfield.kernel,
-                        pfield.UJ,
-                        pfield.Uinf,
-                        pfield.SFS,
-                        pfield.integration,
-                        pfield.transposed,
-                        pfield.relaxation,
-                        pfield.fmm,
-                        pfield.useGPU
-                        )
-end
-
-function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
-    return ParticleField{D, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
-                        pfield.maxparticles,
-                        #view(ReverseDiff.deriv.(pfield.particles), :), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
-                        ReverseDiff.deriv.(pfield.particles),
-                        pfield.formulation,
-                        pfield.viscous,
-                        pfield.np,
-                        pfield.nt,
-                        pfield.t,
-                        pfield.kernel,
-                        pfield.UJ,
-                        pfield.Uinf,
-                        pfield.SFS,
-                        pfield.integration,
-                        pfield.transposed,
-                        pfield.relaxation,
-                        pfield.fmm,
-                        pfield.useGPU
-                        )
-end
-
 # In-place function that breaks without an explicit rule
-function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer::ReverseDiff.TrackedArray, i_buffer)
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer::AbstractArray{<:ReverseDiff.TrackedReal}, i_buffer)
     
     tp = ReverseDiff.tape(target_system, target_buffer)
-    ustar = ReverseDiff.value.(target_system.particles[U_INDEX, i_target])
-    jstar = ReverseDiff.value.(target_system.particles[J_INDEX, i_target])
-    u = fmm.get_velocity(target_buffer.value, i_buffer)
+    #ustar = ReverseDiff.value.(target_system.particles[U_INDEX, i_target])
+    #jstar = ReverseDiff.value.(target_system.particles[J_INDEX, i_target])
+    u = fmm.get_gradient(target_buffer, i_buffer)
     for i=1:3
-        target_system.particles[U_INDEX[i], i_target].value += u[i]
+        target_system.particles[U_INDEX[i], i_target].value += u[i].value
+        #target_system.particles[U_INDEX[i], i_target] = ReverseDiff.track(target_system.particles[U_INDEX[i], i_target] + u[i], tp)
     end
-    j = fmm.get_velocity_gradient(target_buffer.value, i_buffer)
+    j = fmm.get_hessian(target_buffer, i_buffer)
     for i = 1:9
-        target_system.particles[J_INDEX[i], i_target].value += j[i]
+        target_system.particles[J_INDEX[i], i_target].value += j[i].value
+        #target_system.particles[J_INDEX[i], i_target] = ReverseDiff.track(target_system.particles[J_INDEX[i], i_target] + j[i], tp)
     end
     
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
                         fmm.buffer_to_target_system!,
                         (target_system, i_target, derivatives_switch, target_buffer, i_buffer),
-                        nothing,
-                        (ustar, jstar))
+                        nothing)
+                        #(ustar, jstar))
     return nothing
 end
 
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.buffer_to_target_system!)})
 
     target_system, i_target, derivatives_switch, target_buffer, i_buffer = instruction.input
-    ustar, jstar = instruction.cache
+    #ustar, jstar = instruction.cache
+    u = fmm.get_gradient(target_buffer, i_buffer)
+    j = fmm.get_hessian(target_buffer, i_buffer)
     for i=1:3
-        target_system.particles[U_INDEX[i], i_target].value = ustar[i]
-        target_buffer.deriv[i+4, i_buffer] += target_system.particles[U_INDEX[i], i_target].deriv
+        target_system.particles[U_INDEX[i], i_target].value -= u[i].value
+        #target_buffer[i+4, i_buffer].deriv += target_system.particles[U_INDEX[i], i_target].deriv
+        ReverseDiff._add_to_deriv!(target_buffer[i+4, i_buffer], target_system.particles[U_INDEX[i], i_target].deriv)
+        #target_system.particles[U_INDEX[i], i_target].deriv = 0.0
     end
     for i=1:9
-        target_system.particles[J_INDEX[i], i_target].value = jstar[i]
-        target_buffer.deriv[i+7, i_buffer] += target_system.particles[J_INDEX[i], i_target].deriv
+        target_system.particles[J_INDEX[i], i_target].value -= j[i].value
+        #target_buffer[i+7, i_buffer].deriv += target_system.particles[J_INDEX[i], i_target].deriv
+        ReverseDiff._add_to_deriv!(target_buffer[i+7, i_buffer], target_system.particles[J_INDEX[i], i_target].deriv)
+        #target_system.particles[J_INDEX[i], i_target].deriv = 0.0
     end
     return nothing
 
 end
 
-function onestep!(states, states_prev, t, t_prev, xd, xci, p)
-    
-    check_derivs(states; label="states at time $t")
-    check_derivs(states_prev; label="states_prev at time $t")
-    check_derivs(xd; label="xd at time $t")
-    check_derivs(xci; label="xci at time $t")
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.buffer_to_target_system!)})
 
-    static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield = p
-    
-    check_derivs(pfield.particles; label="pfield after passing derivatives back")
-    check_derivs(states_prev[1:end-1]; label="states after passing derivatives back")
-    map_flat_states_to_pfield!(pfield, states_prev)
-    check_derivs(pfield.particles; label="pfield before passing derivatives back")
-    check_derivs(states_prev[1:end-1]; label="states before passing derivatives back")
-    # no use for xci for now
-
-    i = pfield.nt
-    if i%verbose_nsteps==0
-        vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield))", v_lvl+1)
+    target_system, i_target, derivatives_switch, target_buffer, i_buffer = instruction.input
+    ustar, jstar = instruction.cache
+    ustar .= ReverseDiff.value.(target_system.particles[U_INDEX, i_target])
+    jstar .= ReverseDiff.value.(target_system.particles[J_INDEX, i_target])
+    u = fmm.get_gradient(target_buffer, i_buffer)
+    for i=1:3
+        target_system.particles[U_INDEX[i], i_target].value += u[i].value
+    end
+    j = fmm.get_hessian(target_buffer, i_buffer)
+    for i = 1:9
+        target_system.particles[J_INDEX[i], i_target].value += j[i].value
     end
 
-    # Relaxation step
-    relax = pfield.relaxation != relaxation_none &&
-            pfield.relaxation.nsteps_relax >= 1 &&
-            i>0 && (i%pfield.relaxation.nsteps_relax == 0)
-
-    org_np = get_np(pfield)
-
-    # Add static particles
-    remove = static_particles_function(pfield, pfield.t, dt)
-
-    # Step in time solving governing equations
-    #check_derivs(pfield.particles)
-    nextstep(pfield, dt; relax=relax, custom_UJ=custom_UJ)
-    #@show pfield.particles[1,1]
-    #check_derivs(pfield.particles)
-
-    # Remove static particles (assumes particles remained sorted)
-    if remove===nothing || remove
-        for pi in get_np(pfield):-1:(org_np+1)
-            remove_particle(pfield, pi)
-        end
-    end
-
-    # Calls user-defined runtime function
-    breakflag = runtime_function(pfield, t, dt;
-                vprintln= (str)-> i%verbose_nsteps==0 ?
-                    vprintln(str, v_lvl+2) : nothing, xd=xd, xci=xci)
-
-    # Save particle field
-    if save_pfield && save_path!=nothing && (i%nsteps_save==0 || i==nsteps || breakflag) && eltype(pfield) <: AbstractFloat
-        overwrite_time = save_time ? nothing : pfield.nt
-        save(pfield, run_name; path=save_path, add_num=true,
-                overwrite_time=overwrite_time)
-    end
-    check_derivs(pfield.particles; label="pfield after passing derivatives back")
-    check_derivs(states[1:end-1]; label="states after passing derivatives back")
-    map_pfield_to_flat_states!(states, pfield)
-    check_derivs(pfield.particles; label="pfield before passing derivatives back")
-    check_derivs(states[1:end-1]; label="states before passing derivatives back")
-    return nothing
-
-end
-
-function initialize(t0, xd, xc0, p)
-
-    static_particles_function, runtime_function, verbose_nsteps, v_lvl, save_pfield, save_path, nsteps_save, vprintln, nsteps, dt, custom_UJ, pfield_cache = p
-    pfield_cache.t = t0
-    i = 0
-    if i%verbose_nsteps==0
-        vprintln("Time step $i out of $nsteps\tParticles: $(get_np(pfield_cache))", v_lvl+1)
-    end
-
-    # Calls user-defined runtime function
-    breakflag = runtime_function(pfield_cache, t0, dt;
-                                 vprintln= (str)-> vprintln(str, v_lvl+2), xd=xd, xci=xc0)
-
-    # Save particle field
-    if save_pfield && save_path!==nothing && eltype(pfield_cache) <: AbstractFloat
-        overwrite_time = save_time ? nothing : pfield_cache.nt
-        save(pfield_cache, run_name; path=save_path, add_num=true,
-                overwrite_time=overwrite_time)
-    end
-    #return cat(reshape(pfield_cache.particles, length(pfield_cache.particles)), pfield_cache.np; dims=1)
-    states = zeros(eltype(pfield_cache), length(pfield_cache.particles) + 1)
-    tp = ReverseDiff.tape(pfield_cache.particles)
-    for idx in CartesianIndices(states)
-        states[idx] = ReverseDiff.track(0.0, tp)
-    end
-    check_derivs(pfield_cache.particles; label="pfield after passing derivatives back")
-    check_derivs(states[1:end-1]; label="states after passing derivatives back")
-    map_pfield_to_flat_states!(states, pfield_cache)
-    check_derivs(pfield_cache.particles; label="pfield before passing derivatives back")
-    check_derivs(states[1:end-1]; label="states before passing derivatives back")
-    return states
-
-end
-
-function map_flat_states_to_pfield!(pfield, states)
-
-    for i=1:pfield.np
-        for j=1:43
-            pfield[j,i] = states[j + (i-1)*43]
-        end
-    end
-    pfield.np = Int(states[end])
-    return nothing
-
-end
-
-function map_flat_states_to_pfield!(pfield, states::AbstractArray{<:ReverseDiff.TrackedReal})
-
-    #tp = ReverseDiff.tape(pfield)
-    tp = ReverseDiff.tape(states)
-    states_value = deepcopy(ReverseDiff.value.(states)) # not sure if I need this.
-    for i=1:pfield.np
-        for j=1:43
-            pfield.particles[j,i] = ReverseDiff.track(states[j + (i-1)*43], tp)
-        end
-    end
-    pfield.np = Int(ReverseDiff.value(states[end]))
-    ReverseDiff.record!(tp,
-                        ReverseDiff.SpecialInstruction,
-                        map_flat_states_to_pfield!,
-                        (pfield, states),
-                        nothing,
-                        states_value
-                        )
-
-    return nothing
-
-end
-
-function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(map_flat_states_to_pfield!)})
-
-    pfield, states = instruction.input
-    states_value = instruction.cache
-    for idx in CartesianIndices(states)
-        states[idx].value = states_value[idx] # not sure if needed.
-    end
-    
-    for i=1:pfield.np
-        for j=1:43
-            states[j + (i-1)*43].deriv = pfield.particles[j,i].deriv
-            pfield.particles[j,i].deriv = 0.0
-        end
-    end
-    pfield.np = Int(ReverseDiff.value(states[end]))
-    return nothing
-
-end
-
-function map_pfield_to_flat_states!(states, pfield)
-
-    for i=1:pfield.np
-        for j=1:43
-            states[j + (i-1)*43] = pfield[j,i]
-        end
-    end
-    states[end] = pfield.np
-    return nothing
-
-end
-
-function map_pfield_to_flat_states!(states::AbstractArray{<:ReverseDiff.TrackedReal}, pfield)
-
-    tp = ReverseDiff.tape(pfield)
-    pfield_value = deepcopy(ReverseDiff.value.(pfield.particles))
-    for i=1:pfield.np
-        for j=1:43
-            states[j + (i-1)*43] = ReverseDiff.track(pfield.particles[j,i].value,tp)
-        end
-    end
-    T = eltype(pfield.particles[1].value) # get the appropriate floating point type
-    states[end] = ReverseDiff.track(T(pfield.np), tp)
-
-    ReverseDiff.record!(tp,
-                        ReverseDiff.SpecialInstruction,
-                        map_pfield_to_flat_states!,
-                        (states, pfield),
-                        nothing,
-                        (pfield_value, pfield.np)
-                        )
-
-    return nothing
-
-end
-
-function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(map_pfield_to_flat_states!)})
-
-    states, pfield = instruction.input
-    pfield_value, np = instruction.cache
-
-    for idx in CartesianIndices(pfield.particles)
-        pfield.particles[idx].value = pfield_value[idx] # not sure if needed.
-    end
-    pfield.np = np
-    
-    for i=1:pfield.np
-        for j=1:43
-            pfield.particles[j,i].deriv = states[j + (i-1)*43].deriv
-            states[j + (i-1)*43].deriv = 0.0
-        end
-    end
-    states[end].value = np
     return nothing
 
 end
@@ -835,8 +576,7 @@ function add!(A::ReverseDiff.TrackedReal, B::ReverseDiff.TrackedReal)
                         ReverseDiff.SpecialInstruction,
                         add!_trackedreal,
                         (A, B),
-                        A,
-                        Astar)
+                        A)
 
     return A
 end
@@ -844,8 +584,16 @@ end
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(add!_trackedreal)})
 
     A, B = instruction.input
-    A.value = instruction.cache
+    A.value -= B.value
     B.deriv += A.deriv
+    return nothing
+
+end
+
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(add!_trackedreal)})
+
+    A, B = instruction.input
+    A.value += B.value
     return nothing
 
 end
@@ -868,3 +616,44 @@ function add!(A::AbstractArray{<:ReverseDiff.TrackedReal}, B::AbstractArray{<:Re
     return A
 end
 add!_mat() = error("dummy function")
+
+#=
+check_deriv_allocation(x;label=nothing) = x
+
+function check_deriv_allocation(x::AbstractArray{<:ReverseDiff.TrackedReal}; label=nothing)
+
+    s = sum(x)
+    for idx in x
+        x[idx].value += 1.0
+    end
+    s2 = sum(x)
+    if abs((s + length(x)) - s2) > 1e-12
+        error("Perturbed sum $s2 does not match original sum $s for array $(label === nothing ? nothing : label) of length $(length(x))")
+    end
+
+    record!(tp,
+            ReverseDiff.SpecialInstruction,
+            check_deriv_allocation,
+            (x,),
+            x)
+
+end
+
+=#
+
+function fmm.get_previous_influence_pullback!(system::ParticleField, i, buffer)
+    #=prev_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i)
+    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)=#
+
+    gx, gy, gz = get_U(system, i)
+    G = ReverseDiff.value(sqrt(gx*gx + gy*gy + gz*gz))
+    if G == 0.0
+        return nothing
+    end
+    ReverseDiff._add_to_deriv!(system.particles[U_INDEX[1],i], buffer[2].deriv*gx.value/G)
+    ReverseDiff._add_to_deriv!(system.particles[U_INDEX[2],i], buffer[2].deriv*gy.value/G)
+    ReverseDiff._add_to_deriv!(system.particles[U_INDEX[3],i], buffer[2].deriv*gz.value/G)
+    return nothing
+
+end
