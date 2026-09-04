@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ka_uj_ab
 #SBATCH --gpus=h200:1
+#SBATCH --qos=eng
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=01:00:00

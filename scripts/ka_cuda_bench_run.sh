@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=vpm_kabench
 #SBATCH --gpus=h200:1
+#SBATCH --qos=eng
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=64G
 #SBATCH --time=00:20:00

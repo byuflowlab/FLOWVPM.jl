@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=fp052gpu
 #SBATCH --gpus=h200:1
+#SBATCH --qos=eng
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=192G
 #SBATCH --time=08:00:00

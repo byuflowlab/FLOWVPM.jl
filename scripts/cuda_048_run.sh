@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=vpm048
 #SBATCH --gpus=h200:1
+#SBATCH --qos=eng
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=03:00:00
