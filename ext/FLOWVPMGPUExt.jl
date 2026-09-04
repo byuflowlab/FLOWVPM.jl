@@ -491,4 +491,172 @@ function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
 end
 
 
+
+#------- fused dynamic-SFS pointwise passes (task: AL production profile) -------#
+#
+# `_pseudo3level_{before,after}UJ_broadcast!` (src/FLOWVPM_subfilterscale_gpu.jl)
+# are chains of ~20 whole-field broadcasts, each sweeping a `1 x np` row VIEW of
+# the particle matrix. Two costs compound: one kernel launch per broadcast (~60
+# per RK3 step) and, because the matrix is column-major, every one of those
+# sweeps strides by `nfields` and is fully uncoalesced. Profiling a production
+# ActuatorLines step (rVPM + RK3 + DynamicSFS + CoreSpreading) put the after-UJ
+# procedure at 67% of the step -- more than twice the whole FMM.
+#
+# These are the same arithmetic as one kernel with one thread per particle: a
+# thread reads its own column (contiguous) and keeps the chain in registers.
+# The host loops in FLOWVPM_subfilterscale.jl remain the semantic reference and
+# the broadcast versions remain reachable through `invoke` for gating.
+#
+# The `any(isnan, C1r)` guard the broadcast path ends with is folded in as a
+# device flag: as an `any` over an `np`-length view it compiled a fresh kernel
+# for every distinct particle count (see FastMultipole's _device_row_extrema).
+
+# Escape hatch and gate handle: set false to fall back to the broadcast chain
+# in src/FLOWVPM_subfilterscale_gpu.jl (the reference these are checked against).
+const SFS_FUSED = Ref(true)
+
+const _SFS_NAN_FLAG = Dict{Any,Any}()
+_sfs_nan_flag(backend) = get!(() -> KA.zeros(backend, Int32, 1), _SFS_NAN_FLAG, typeof(backend))
+
+@inline function _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
+    return transposed ?
+        (j1*g1 + j2*g2 + j3*g3, j4*g1 + j5*g2 + j6*g3, j7*g1 + j8*g2 + j9*g3) :
+        (j1*g1 + j4*g2 + j7*g3, j2*g1 + j5*g2 + j8*g3, j3*g1 + j6*g2 + j9*g3)
+end
+
+# Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
+@kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
+        fac, rlxf, minC, maxC, zeta0, epsv, ::Val{FP},
+        ig, isig, ij, im, ic, isfs, istat) where {FP}
+    i = @index(Global)
+    @inbounds if i <= np
+        T = eltype(P)
+        act = P[istat, i] == zero(T)
+        g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
+        j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
+        j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
+        j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
+        s1 = P[isfs, i]; s2 = P[isfs+1, i]; s3 = P[isfs+2, i]
+        m1 = P[im, i];   m2 = P[im+1, i];  m3 = P[im+2, i]
+        m4 = P[im+3, i]; m5 = P[im+4, i];  m6 = P[im+5, i]
+
+        # subtract the domain-filter stretching / SFS from the test-filter values
+        d1, d2, d3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
+        if act
+            m1 -= d1; m2 -= d2; m3 -= d3
+            m4 -= s1; m5 -= s2; m6 -= s3
+        end
+
+        sig = P[isig, i]
+        c1r = P[ic, i]; c2r = P[ic+1, i]; c3r = P[ic+2, i]
+        nume_raw = (m1*g1 + m2*g2 + m3*g3) * fac
+        deno_raw = (m4*g1 + m5*g2 + m6*g3) * (sig*sig*sig / zeta0)
+        c3i = c3r == zero(T) ? (deno_raw == zero(T) ? epsv : deno_raw) : c3r
+        nume = rlxf * nume_raw + (one(T) - rlxf) * c2r
+        deno = rlxf * deno_raw + (one(T) - rlxf) * c3i
+
+        # clamping, in the host's branch order: `big` is tested with the OLD
+        # deno, deno is then updated, and nume re-tested against the NEW one
+        big = abs(nume / deno) > maxC
+        if big && abs(deno) < abs(c3i)
+            deno = sign(deno) * abs(c3i)
+        end
+        if big && abs(nume / deno) >= maxC
+            nume = sign(nume) * abs(deno) * maxC
+        elseif !big && abs(nume / deno) < minC
+            nume = sign(nume) * abs(deno) * minC
+        end
+
+        if act
+            c2r = nume; c3r = deno; c1r = c2r / c3r
+            FP && (c1r = abs(c1r))
+            P[ic, i] = c1r; P[ic+1, i] = c2r; P[ic+2, i] = c3r
+            isnan(c1r) && (nan_flag[1] = Int32(1))
+            for r in 0:8            # flush temporal memory (all M rows)
+                P[im+r, i] = zero(T)
+            end
+        end
+    end
+end
+
+# Port of the post-UJ half of `_pseudo3level_beforeUJ_broadcast!`: zero M for
+# active particles, store the test-filter stretching and E_str, restore sigma.
+@kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, alpha,
+        ig, isig, ij, im, isfs, istat)
+    i = @index(Global)
+    @inbounds if i <= np
+        T = eltype(P)
+        if P[istat, i] == zero(T)
+            g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
+            j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
+            j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
+            j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
+            d1, d2, d3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
+            for r in 0:8
+                P[im+r, i] = zero(T)
+            end
+            P[im,   i] = d1; P[im+1, i] = d2; P[im+2, i] = d3
+            P[im+3, i] = P[isfs, i]; P[im+4, i] = P[isfs+1, i]; P[im+5, i] = P[isfs+2, i]
+            P[isig, i] = P[isig, i] / alpha
+        end
+    end
+end
+
+# sigma *= alpha on active particles (the test-filter width), before the UJ call
+@kernel function ka_sfs_scale_sigma_kernel!(P, np, alpha, isig, istat)
+    i = @index(Global)
+    @inbounds if i <= np
+        T = eltype(P)
+        P[istat, i] == zero(T) && (P[isig, i] = P[isig, i] * alpha)
+    end
+end
+
+_sfs_wg(backend) = 256
+
+function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
+        alpha::Real, rlxf::Real, minC::Real, maxC::Real; force_positive::Bool=false)
+    SFS_FUSED[] || return invoke(FLOWVPM._pseudo3level_afterUJ_broadcast!,
+        Tuple{Any,Any,Real,Real,Real,Real}, pfield, SFS, alpha, rlxf, minC, maxC;
+        force_positive)
+    np = pfield.np
+    np == 0 && return nothing
+    R = eltype(pfield.particles)
+    backend = KA.get_backend(pfield.particles)
+    flag = _sfs_nan_flag(backend); fill!(flag, Int32(0))
+    wg = _sfs_wg(backend)
+    kern = ka_sfs_afterUJ_kernel!(backend, wg)
+    kern(pfield.particles, flag, np, pfield.transposed,
+         R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
+         R(pfield.kernel.zeta(zero(R))), R(eps()), Val(force_positive),
+         first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX, first(FLOWVPM.J_INDEX),
+         first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX),
+         FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
+    KA.synchronize(backend)
+    Array(flag)[1] == 0 || error("NaN in dynamicprocedure_pseudo3level_afterUJ " *
+        "(GPU fused path, np=$(np))")
+    return nothing
+end
+
+function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha::Real)
+    SFS_FUSED[] || return invoke(FLOWVPM._pseudo3level_beforeUJ_broadcast!,
+        Tuple{Any,Any,Real}, pfield, SFS, alpha)
+    np = pfield.np
+    np == 0 && return nothing
+    R = eltype(pfield.particles)
+    backend = KA.get_backend(pfield.particles)
+    wg = _sfs_wg(backend)
+    ndr = cld(np, wg) * wg
+    ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, R(alpha),
+        FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = ndr)
+    KA.synchronize(backend)
+    # UJ at the test filter width (device radix path; resets U/J and the SFS rows)
+    pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
+    ka_sfs_beforeUJ_store_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
+        R(alpha), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
+        first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX), first(FLOWVPM.SFS_INDEX),
+        FLOWVPM.STATIC_INDEX; ndrange = ndr)
+    KA.synchronize(backend)
+    return nothing
+end
+
 end # module
