@@ -312,7 +312,7 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     return nothing
 end
 
-function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof($_f)})
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(set_one_field)})
 
     pfield, i, FIELD_INDEX, val = instruction.input
     old_val = instruction.cache
