@@ -204,6 +204,11 @@ Base.@kwdef struct RadixFMMSettings
     m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
+    # :measure builds each admissible depth once and keeps the fastest
+    # (`_radix_measured_depth`); :cost uses the `_RADIX_COST_*` model, which
+    # mis-ranks depths where the near and far fields trade off. Device only;
+    # a host field always takes the model.
+    ell_select::Symbol = :measure
 end
 
 """
@@ -579,7 +584,8 @@ selection). Errors loudly when no depth `>= 2` is admissible.
 """
 function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
                               rho_t::Real, margin::Real;
-                              cost_field=nothing, cost_bounds=nothing)
+                              cost_field=nothing, cost_bounds=nothing,
+                              return_all::Bool=false)
     reach = margin * rho_t * sigma_max
     qs = sort!([Int(q) for q in fmm._SUPPORTED_RIGID_NEAR_RADII2 if q >= q_floor])
     isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
@@ -600,6 +606,7 @@ function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
         end
     end
     if !isempty(admissible)
+        return_all && return admissible
         # Legacy behaviour: deepest admissible. Correct for accuracy, but not
         # for speed -- see the cost-model block above.
         (cost_field === nothing || cost_bounds === nothing) && return first(admissible)
@@ -628,6 +635,73 @@ end
 # Cache construction and evaluation
 ################################################################################
 
+"""
+    _radix_measured_depth(pfield, settings) -> ell or nothing
+
+Pick the radix depth by MEASURING it: build a cache at each admissible
+`(ell, q)`, time one real evaluation, keep the depth that was fastest.
+
+The cost model this replaces is calibrated (`_RADIX_COST_*`) and mis-ranks
+depths in the band where the near field and the far field trade off -- at
+65536 bodies on Metal it chose ell=3 at 755 ms where ell=4 measures 371 ms,
+and refitting it is fragile because the fit must reproduce the selector's own
+candidate features, not a convenient proxy. Measuring needs no constants and
+is automatically right for the backend, precision and wake geometry in front
+of it.
+
+It is affordable because selection is RARE: the depth is chosen when the
+coupling is built and reused until the field outgrows it (a handful of times
+across a whole simulation), while a wrong choice is paid on every evaluation
+of the epoch. The probe costs one evaluation per candidate, typically two or
+three.
+
+Returns `nothing` when there is nothing to choose between, so the caller
+keeps its ordinary path.
+"""
+function _radix_measured_depth(pfield::ParticleField, settings::RadixFMMSettings,
+                               bounds, sigma_max, kernel_primary_reach)
+    L_geo = bounds[2] isa Real ? Float64(bounds[2]) : Float64(maximum(bounds[2]))
+    cands = try
+        _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
+            kernel_primary_reach, settings.accuracy_margin; return_all=true)
+    catch
+        return nothing
+    end
+    (cands isa AbstractVector && length(cands) > 1) || return nothing
+
+    # the probes ACCUMULATE into U/J (and read the vorticity rows), so the
+    # caller's partially-built state is saved and put back
+    np = pfield.np
+    saved = Array(view(pfield.particles, first(U_INDEX):last(J_INDEX), 1:np))
+    # a device-to-host copy is also the backend-agnostic way to be sure the
+    # timed evaluation actually finished before the clock is read
+    sync!() = Array(view(pfield.particles, 1:1, 1:min(np, 1)))
+
+    best_ell, best_t = nothing, Inf
+    for (ell, _) in cands
+        try
+            probe = _radix_settings_with_ell(settings, ell)
+            cache = _build_radix_fmm_cache(pfield, probe)
+            fmm.fmm!(pfield, cache; scalar_potential=false, gradient=true,
+                     hessian=true); sync!()           # warm: compile + first touch
+            t = time()
+            fmm.fmm!(pfield, cache; scalar_potential=false, gradient=true, hessian=true)
+            sync!()
+            dt = time() - t
+            dt < best_t && ((best_ell, best_t) = (ell, dt))
+        catch
+            # inadmissible in practice (capacity, watchdog, adequacy): skip it
+        end
+    end
+    copyto!(view(pfield.particles, first(U_INDEX):last(J_INDEX), 1:np), saved)
+    return best_ell
+end
+
+# `settings` with a fixed `ell` (a kwdef struct has no copy-with-override)
+_radix_settings_with_ell(settings::RadixFMMSettings, ell::Int) =
+    RadixFMMSettings(; (f === :ell ? (f => ell) : (f => getfield(settings, f))
+                        for f in fieldnames(RadixFMMSettings))...)
+
 function _build_radix_fmm_cache(pfield::ParticleField{R},
                                 settings::RadixFMMSettings) where R
     _validate_radix_fmm_settings(pfield)
@@ -655,13 +729,21 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     # width L/2^ell is identical — rectangularity only trims per-axis counts.
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
-    ell, q = settings.ell === nothing ?
-        _radix_auto_geometry(L_geo, sigma_max, pfield.np,
-            settings.near_radius2, kernel_primary_reach,
-            settings.accuracy_margin;
-            cost_field=(device && _radix_cost_select(pfield)) ? pfield : nothing,
-            cost_bounds=bounds) :
-        (settings.ell, settings.near_radius2)
+    # Depth selection. With `ell` fixed (a user setting, or the probe's own
+    # rebuild below) there is nothing to choose, which is also what stops
+    # `_radix_measured_depth` recursing.
+    measured = (settings.ell === nothing && device && settings.ell_select === :measure) ?
+        _radix_measured_depth(pfield, settings, bounds, sigma_max, kernel_primary_reach) :
+        nothing
+    ell, q = measured !== nothing ?
+        (measured, settings.near_radius2) :
+        (settings.ell === nothing ?
+            _radix_auto_geometry(L_geo, sigma_max, pfield.np,
+                settings.near_radius2, kernel_primary_reach,
+                settings.accuracy_margin;
+                cost_field=(device && _radix_cost_select(pfield)) ? pfield : nothing,
+                cost_bounds=bounds) :
+            (settings.ell, settings.near_radius2))
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
