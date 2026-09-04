@@ -178,19 +178,23 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         # stored its constant-effective rate Zeff in M[9]. Add the exact
         # diffusion contribution for y'=-2Zeff*y+2nu. This avoids the prior
         # full-step Lie split, while retaining its Z->0 CoreSpreading limit.
-        for i in 1:pfield.np
-            p = get_particle(pfield, i)
-            is_static(p) && continue
-            zdt = dt*get_M(p)[9]
-            diffusion = if abs(zdt) < 1e-8
-                2*scheme.nu*dt*(1 - zdt + (2/3)*zdt*zdt)
-            else
-                -scheme.nu*expm1(-2*zdt)/get_M(p)[9]
+        if pfield.particles isa Array
+            for i in 1:pfield.np
+                p = get_particle(pfield, i)
+                is_static(p) && continue
+                zdt = dt*get_M(p)[9]
+                diffusion = if abs(zdt) < 1e-8
+                    2*scheme.nu*dt*(1 - zdt + (2/3)*zdt*zdt)
+                else
+                    -scheme.nu*expm1(-2*zdt)/get_M(p)[9]
+                end
+                get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + diffusion)
+                # Attribute the diffusion part of the blended update to viscous
+                # spreading (the geometric contraction was attributed in _euler_exp)
+                pfield.splitting_state.dsigma2_visc[i] += diffusion
             end
-            get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + diffusion)
-            # Attribute the diffusion part of the blended update to viscous
-            # spreading (the geometric contraction was attributed in _euler_exp)
-            pfield.splitting_state.dsigma2_visc[i] += diffusion
+        else
+            _corespreading_eulerexp_broadcast!(pfield, scheme.nu, dt)
         end
 
         proceed = true
@@ -288,6 +292,32 @@ function _corespreading_euler_broadcast!(pfield, nu, dt)
     sigma = view(P, SIGMA_INDEX, :)
 
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ 2*nu*dt), sigma)
+
+    return nothing
+end
+
+"""
+GPU-compatible broadcast path for `CoreSpreading`'s euler_exp blended-diffusion
+update (`y' = -2*Zeff*y + 2*nu` with Zeff read from M[9], see the scalar
+branch in `viscousdiffusion`). Both `ifelse` branches are evaluated
+elementwise, so the `expm1` branch may produce NaN where M[9] == 0 — those
+lanes select the |z*dt| < 1e-8 series branch, which is finite. As on the
+other device paths, the `dsigma2_visc` attribution accumulator is NOT
+maintained (splitting is CPU-only).
+"""
+function _corespreading_eulerexp_broadcast!(pfield, nu, dt)
+    P = pfield.particles
+    Sc = pfield.scratch
+
+    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    M9 = view(P, M_INDEX[9], :)
+    sigma = view(P, SIGMA_INDEX, :)
+    zdt = view(Sc, 2, :); zdt .= dt .* M9
+    diffusion = view(Sc, 3, :)
+    diffusion .= ifelse.(abs.(zdt) .< 1e-8,
+                         (2*nu*dt) .* (1 .- zdt .+ (2/3) .* zdt .* zdt),
+                         (-nu) .* expm1.(-2 .* zdt) ./ M9)
+    sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ diffusion), sigma)
 
     return nothing
 end

@@ -439,6 +439,26 @@ function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:
         "euler_exp geometric update currently requires ReformulatedVPM f == 0; got f=$f"))
     zeta0::R = pfield.kernel.zeta(0)
 
+    # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
+    # GPU (CuArray, or any other non-Array backing store): broadcast-based
+    # implementation — same storage-type split as `_euler`.
+    if pfield.particles isa Array
+        _euler_exp_cpu!(pfield, dt, Uinf, g, zeta0, relax)
+    else
+        _euler_exp_broadcast!(pfield, dt, Uinf, g, zeta0)
+        if relax
+            relax_broadcast!(pfield.relaxation, pfield)
+        end
+    end
+
+    # Update the particle field: viscous diffusion
+    viscousdiffusion(pfield, dt)
+
+end
+
+"CPU path for `_euler_exp` (ReformulatedVPM, f == 0): original per-particle scalar loop, unchanged."
+function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax::Bool) where {R, R2}
+
     # Update the particle field: convection and stretching
     Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -507,9 +527,135 @@ function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:
         end
     end
 
-    # Update the particle field: viscous diffusion
-    viscousdiffusion(pfield, dt)
+    return nothing
+end
 
+# Substep control for the broadcast frozen-gradient action `exp(dt*L)*Γ`:
+# each substep applies a truncated Taylor expansion of order
+# `EXP_TAYLOR_ORDER` to the strength vector (matrix-free — matvecs only),
+# with the substep count chosen so the per-substep bound on `|dt*L|` stays
+# below `EXP_SUBSTEP_THETA`. At θ = 0.5 and order 8 the per-substep
+# truncation error is ≤ θ^9/9! ≈ 5e-9 relative, far inside the CPU-vs-GPU
+# parity tolerance. `EXP_MAX_SUBSTEPS` bounds the work on a corrupted field
+# (dt*‖L‖ in the thousands is already unphysical; the scalar path would
+# reach its DomainError guard on such a field anyway).
+const EXP_SUBSTEP_THETA = 0.5
+const EXP_TAYLOR_ORDER = 8
+const EXP_MAX_SUBSTEPS = 4096
+
+"""
+GPU-compatible path for `_euler_exp` (ReformulatedVPM, f == 0): broadcasts over
+row-slices with the preallocated scratch buffer; works unchanged for `CuArray`.
+
+The frozen-gradient action `q = exp(dt*L)*Γ` is evaluated matrix-free by
+substepped truncated-Taylor matvecs (see `EXP_SUBSTEP_THETA`), so no
+per-particle 3×3 matrix exponential is materialized. The scalar path's
+non-finite-ratio DomainError guard is enforced post-hoc via one masked
+reduction. As on the other device paths, the `dsigma2_*` splitting
+accumulators are NOT maintained (splitting is CPU-only).
+"""
+function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0) where {R, R2}
+    P = pfield.particles
+    Sc = pfield.scratch
+    np = pfield.np
+    np == 0 && return nothing
+
+    active = view(Sc, 11, :); active .= 1 .- view(P, STATIC_INDEX, :)
+
+    # Update position: X += dt*(U + Uinf), active particles only
+    X1, X2, X3 = view(P, X_INDEX[1], :), view(P, X_INDEX[2], :), view(P, X_INDEX[3], :)
+    U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)
+    X1 .+= (dt .* active) .* (U1 .+ Uinf[1])
+    X2 .+= (dt .* active) .* (U2 .+ Uinf[2])
+    X3 .+= (dt .* active) .* (U3 .+ Uinf[3])
+
+    J1,J2,J3,J4,J5,J6,J7,J8,J9 = (view(P, J_INDEX[k], :) for k in 1:9)
+    G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
+    C1 = view(P, C_INDEX[1], :)
+    SFS1, SFS2, SFS3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
+    sigma = view(P, SIGMA_INDEX, :)
+    M9 = view(P, M_INDEX[9], :)
+
+    # Field-wide substep count from an elementwise-sum bound on |dt*L|
+    # (over-estimates the norm by ≤ 3×, which only adds accuracy)
+    theta = view(Sc, 10, :)
+    theta .= abs(dt) .* (abs.(J1) .+ abs.(J2) .+ abs.(J3) .+ abs.(J4) .+
+                         abs.(J5) .+ abs.(J6) .+ abs.(J7) .+ abs.(J8) .+ abs.(J9))
+    theta_max = maximum(view(Sc, 10, 1:np))
+    isfinite(theta_max) || throw(DomainError(theta_max,
+        "non-finite velocity gradient in euler_exp broadcast path"))
+    theta_max <= EXP_SUBSTEP_THETA * EXP_MAX_SUBSTEPS || throw(DomainError(theta_max,
+        "dt*|L| bound $(theta_max) exceeds euler_exp broadcast substep budget"))
+    nsub = max(1, ceil(Int, theta_max / EXP_SUBSTEP_THETA))
+
+    # q = exp(dt*L)*Γ via nsub substeps of order-EXP_TAYLOR_ORDER Taylor matvecs
+    q1, q2, q3 = view(Sc, 1, :), view(Sc, 2, :), view(Sc, 3, :)
+    t1, t2, t3 = view(Sc, 4, :), view(Sc, 5, :), view(Sc, 6, :)
+    s1, s2, s3 = view(Sc, 7, :), view(Sc, 8, :), view(Sc, 9, :)
+    q1 .= G1; q2 .= G2; q3 .= G3
+    h = dt / nsub
+    for _ in 1:nsub
+        t1 .= q1; t2 .= q2; t3 .= q3
+        for k in 1:EXP_TAYLOR_ORDER
+            hk = h / k
+            if pfield.transposed
+                s1 .= hk .* (J1.*t1 .+ J2.*t2 .+ J3.*t3)
+                s2 .= hk .* (J4.*t1 .+ J5.*t2 .+ J6.*t3)
+                s3 .= hk .* (J7.*t1 .+ J8.*t2 .+ J9.*t3)
+            else
+                s1 .= hk .* (J1.*t1 .+ J4.*t2 .+ J7.*t3)
+                s2 .= hk .* (J2.*t1 .+ J5.*t2 .+ J8.*t3)
+                s3 .= hk .* (J3.*t1 .+ J6.*t2 .+ J9.*t3)
+            end
+            q1 .+= s1; q2 .+= s2; q3 .+= s3
+            t1, s1 = s1, t1; t2, s2 = s2, t2; t3, s3 = s3, t3
+        end
+    end
+
+    # theta and the t/s rows are dead from here on — reuse their rows
+    # (rebound to explicit row numbers: the swap loop above may leave the
+    # t/s bindings pointing at either row set)
+    Gnorm2 = theta
+    Gnorm2 .= G1.^2 .+ G2.^2 .+ G3.^2
+    ratio = view(Sc, 4, :)
+    ratio .= sqrt.(q1.^2 .+ q2.^2 .+ q3.^2) ./ sqrt.(Gnorm2)  # NaN where Gnorm2 == 0 (masked below)
+
+    # Post-hoc DomainError guard, mirroring the scalar path: every active
+    # particle with Γ ≠ 0 must have a finite, positive strength ratio
+    bad = view(Sc, 5, :)
+    bad .= ifelse.((active .> 0) .& (Gnorm2 .> 0) .&
+                   .!(isfinite.(ratio) .& (ratio .> 0)), one(R), zero(R))
+    maximum(view(Sc, 5, 1:np)) > 0 && throw(DomainError(NaN,
+        "non-finite frozen-gradient strength ratio in euler_exp"))
+
+    # Homogeneous rVPM geometry: Γ = q*r^(-3g), σ *= r^(-g)
+    scale = view(Sc, 6, :)
+    scale .= ratio .^ (-3*g)
+    G1 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q1 .* scale, G1)
+    G2 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q2 .* scale, G2)
+    G3 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q3 .* scale, G3)
+    sigma .= ifelse.((active .> 0) .& (Gnorm2 .> 0), sigma .* ratio .^ (-g), sigma)
+    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
+    # maintained on this device-backed path — splitting is CPU-only.
+
+    # M[9]: constant-effective contraction rate Zeff = g*log(r)/dt for the
+    # euler_exp/CoreSpreading composition (see the scalar path)
+    if dt == zero(dt)
+        M9 .= ifelse.(active .> 0, zero(R), M9)
+    else
+        M9 .= ifelse.(active .> 0,
+                      ifelse.(Gnorm2 .> 0, g .* log.(ratio) ./ dt, zero(R)),
+                      M9)
+    end
+
+    # SFS Lie split with the UPDATED sigma (matches scalar-path ordering)
+    sigma3 = scale  # scale row dead after the Γ update
+    sigma3 .= sigma .^ 3
+    G1 .-= (dt .* active) .* C1 .* SFS1 .* sigma3 ./ zeta0
+    G2 .-= (dt .* active) .* C1 .* SFS2 .* sigma3 ./ zeta0
+    G3 .-= (dt .* active) .* C1 .* SFS3 .* sigma3 ./ zeta0
+
+    return nothing
 end
 
 

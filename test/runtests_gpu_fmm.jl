@@ -237,6 +237,113 @@ end
 end
 
 # =========================================================================
+# 026 Phase 1b: euler_exp — CPU scalar loop vs broadcast equivalence
+# =========================================================================
+# `_euler_exp` forks on storage type like `_euler` (Matrix keeps the scalar
+# exp(dt*L) loop; device stores take `_euler_exp_broadcast!`, which evaluates
+# the frozen-gradient action by substepped Taylor matvecs). Assert the two
+# implementations agree on a Matrix field for both stretching conventions,
+# in the mild (1-substep) and stiff (multi-substep) regimes, plus the
+# dt == 0 and DomainError-guard edges, and the CoreSpreading euler_exp
+# blended-diffusion broadcast twin. Needs neither radix nor CUDA.
+@testset "euler_exp: loop vs broadcast equivalence (026-1b)" begin
+    function expfield(n; transposed=true, jscale=1.0, seed=26100)
+        rng = MersenneTwister(seed + n + (transposed ? 0 : 1))
+        pf = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct, transposed=transposed)
+        for i in 1:n
+            vpm_fmm.add_particle(pf, randn(rng, 3), randn(rng, 3),
+                                 0.05 + 0.1*rand(rng))
+        end
+        P = pf.particles
+        P[vpm_fmm.U_INDEX, 1:n] .= randn(rng, 3, n)
+        P[vpm_fmm.J_INDEX, 1:n] .= jscale .* randn(rng, 9, n)
+        P[vpm_fmm.C_INDEX[1], 1:n] .= rand(rng, n)
+        P[vpm_fmm.SFS_INDEX, 1:n] .= randn(rng, 3, n)
+        # one zero-strength particle (Gnorm2 == 0 branch) and two statics
+        P[vpm_fmm.GAMMA_INDEX, 2] .= 0.0
+        P[vpm_fmm.STATIC_INDEX, 3] = 1.0
+        P[vpm_fmm.STATIC_INDEX, n] = 1.0
+        return pf
+    end
+
+    dt = 0.01
+    Uinf = [0.3, -0.2, 0.1]
+    for transposed in (true, false), jscale in (1.0, 300.0)
+        # jscale=300 → dt*Σ|J| ~ O(10) → exercises the multi-substep path
+        n = 40
+        pf_cpu = expfield(n; transposed, jscale)
+        pf_bc  = expfield(n; transposed, jscale)
+        g, zeta0 = pf_cpu.formulation.g, pf_cpu.kernel.zeta(0)
+        vpm_fmm._euler_exp_cpu!(pf_cpu, dt, Uinf, g, zeta0, false)
+        vpm_fmm._euler_exp_broadcast!(pf_bc, dt, Uinf, g, zeta0)
+        for idx in (vpm_fmm.X_INDEX, vpm_fmm.GAMMA_INDEX,
+                    vpm_fmm.SIGMA_INDEX, vpm_fmm.M_INDEX[9])
+            @test isapprox(pf_bc.particles[idx, 1:n],
+                           pf_cpu.particles[idx, 1:n]; rtol=1e-8, atol=1e-12)
+        end
+        # statics untouched on both paths
+        @test pf_bc.particles[:, 3] == pf_cpu.particles[:, 3]
+    end
+
+    # dt == 0: M[9] zeroed for active particles, state otherwise unchanged
+    let n = 20
+        pf_cpu = expfield(n)
+        pf_bc  = expfield(n)
+        g, zeta0 = pf_cpu.formulation.g, pf_cpu.kernel.zeta(0)
+        vpm_fmm._euler_exp_cpu!(pf_cpu, 0.0, Uinf, g, zeta0, false)
+        vpm_fmm._euler_exp_broadcast!(pf_bc, 0.0, Uinf, g, zeta0)
+        @test all(pf_bc.particles[vpm_fmm.M_INDEX[9], 1:2] .== 0.0)
+        @test isapprox(pf_bc.particles[1:42, 1:n],
+                       pf_cpu.particles[1:42, 1:n]; rtol=1e-12, atol=0.0)
+    end
+
+    # corrupted field: both paths refuse with a DomainError (the scalar path
+    # from a non-finite ratio, the broadcast path from its theta/budget guard)
+    let n = 10
+        pf_cpu = expfield(n)
+        pf_bc  = expfield(n)
+        g, zeta0 = pf_cpu.formulation.g, pf_cpu.kernel.zeta(0)
+        pf_cpu.particles[vpm_fmm.J_INDEX[1], 1] = 1e300
+        pf_bc.particles[vpm_fmm.J_INDEX[1], 1] = 1e300
+        # the scalar loop's DomainError arrives wrapped by Threads.@threads
+        cpu_err = try
+            vpm_fmm._euler_exp_cpu!(pf_cpu, dt, Uinf, g, zeta0, false)
+            nothing
+        catch e
+            e
+        end
+        @test cpu_err !== nothing
+        @test_throws DomainError vpm_fmm._euler_exp_broadcast!(pf_bc, dt, Uinf, g, zeta0)
+    end
+
+    # CoreSpreading euler_exp blended diffusion: broadcast twin vs the scalar
+    # branch's formula, including the M[9] == 0 series lanes
+    let n = 30
+        rng = MersenneTwister(26161)
+        pf = expfield(n)
+        nu = 1.5e-5
+        P = pf.particles
+        P[vpm_fmm.M_INDEX[9], 1:n] .= 5.0 .* randn(rng, n)
+        P[vpm_fmm.M_INDEX[9], 1] = 0.0      # exact-zero Zeff (series lane)
+        P[vpm_fmm.M_INDEX[9], 2] = 1e-12    # tiny Zeff (series lane)
+        ref = copy(P)
+        for i in 1:n
+            ref[vpm_fmm.STATIC_INDEX, i] > 0 && continue
+            zeff = ref[vpm_fmm.M_INDEX[9], i]
+            zdt = dt*zeff
+            diffusion = abs(zdt) < 1e-8 ?
+                2*nu*dt*(1 - zdt + (2/3)*zdt*zdt) :
+                -nu*expm1(-2*zdt)/zeff
+            ref[vpm_fmm.SIGMA_INDEX, i] =
+                sqrt(ref[vpm_fmm.SIGMA_INDEX, i]^2 + diffusion)
+        end
+        vpm_fmm._corespreading_eulerexp_broadcast!(pf, nu, dt)
+        @test isapprox(P[vpm_fmm.SIGMA_INDEX, 1:n],
+                       ref[vpm_fmm.SIGMA_INDEX, 1:n]; rtol=1e-12)
+    end
+end
+
+# =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================
 if !FLOWVPM._FMM_HAS_RADIX
@@ -537,8 +644,11 @@ end
     vpm_fmm.UJ_fmm_gpu!(pfield)
     @test FLOWVPM._radix_fmm_couplings[pfield] === st1
 
-    # user-fixed ell is a promise: no auto rebuild — the runtime adequacy
-    # gate reports instead of a silent geometry change
+    # user-fixed ell is a promise: no auto rebuild of the depth — since
+    # 052f (FastMultipole d938ba68) the runtime adequacy gate no longer
+    # throws; inadequate geometry demotes to the all-direct zero-M2L cache
+    # with a warning (ell kept, near set widened to the full grid), so the
+    # geometry change is reported, not silent, and the run stays correct.
     pfield2 = fmm034_pfield(n)
     for i in 1:n
         vpm_fmm.add_particle(pfield2, Xs[i], Gs[i], sigma0)
@@ -548,8 +658,7 @@ end
     st2 = FLOWVPM._radix_fmm_couplings[pfield2]
     lim2 = FLOWVPM._radix_sigma_limit(st2.cache, st2.settings)
     vpm_fmm.get_sigma(pfield2, 1) .= 1.5 * lim2
-    @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield2)
-    @test FLOWVPM._radix_fmm_couplings[pfield2] === st2
+    @test_logs (:warn, r"all-direct zero-M2L") match_mode=:any vpm_fmm.UJ_fmm_gpu!(pfield2)
 end
 
 @testset "radix FMM coupling: rectangular bounds (task 037, host path)" begin
