@@ -430,18 +430,20 @@ apply here, not just one:
      `Vector` isn't a valid GPU kernel argument. Converting it to a `Tuple`
      first (an immutable, stack-allocated bitstype) fixes this.
 """
-_add_particle_gpu_bcast_val(v::AbstractArray) = Tuple(v)
-_add_particle_gpu_bcast_val(v) = v
+# values are converted to the field's precision on the host first: a Float64
+# value inside a Float32 device broadcast is a compile error on Metal
+_add_particle_gpu_bcast_val(v::AbstractArray, ::Type{R}) where R = Tuple(R.(v))
+_add_particle_gpu_bcast_val(v, ::Type{R}) where R = R(v)
 
 function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma,
                                                     vol, circulation, C, static)
     R = eltype(pfield.particles)
-    view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X)
-    view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma)
-    view(pfield.particles, SIGMA_INDEX:SIGMA_INDEX, i) .= sigma
-    view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= vol
-    view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= circulation
-    view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C)
+    view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X, R)
+    view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma, R)
+    view(pfield.particles, SIGMA_INDEX:SIGMA_INDEX, i) .= R(sigma)
+    view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= R(vol)
+    view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= R(circulation)
+    view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C, R)
     view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= R(static)
     return nothing
 end

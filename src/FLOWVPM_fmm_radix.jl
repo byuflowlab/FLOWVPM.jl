@@ -394,12 +394,13 @@ function _validate_radix_fmm_settings(pfield::ParticleField)
     return nothing
 end
 
-# min/max of one particle-matrix row over the live prefix; a device reduction
-# for CuArray-backed fields (six scalars cross to the host, never body arrays)
-function _radix_row_extrema(pfield::ParticleField, row::Int)
-    v = view(pfield.particles, row, 1:pfield.np)
-    return minimum(v), maximum(v)
-end
+# min/max of one particle-matrix row over the live prefix. FastMultipole's
+# helper is a plain view reduction on the host and a FIXED-geometry kernel on a
+# device field: a GPUArrays reduction over an np-length view compiles a fresh
+# kernel for every distinct np (~140 ms each on Metal), and np changes every
+# step of a shedding solver.
+_radix_row_extrema(pfield::ParticleField, row::Int) =
+    fmm._device_row_extrema(pfield.particles, row, pfield.np)
 
 _radix_sigma_max(pfield::ParticleField) = _radix_row_extrema(pfield, SIGMA_INDEX)[2]
 
@@ -833,11 +834,24 @@ cache's fixed box. With derived bounds the coupling recenters once
 (`fmm.recenter!`, derived padded bounds, no reallocation) and retries; with
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
-function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false)
+function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
+        extra_targets::Tuple=(), extra_sources::Tuple=(), self_induce::Bool=true)
     st = _radix_fmm_coupling!(pfield)
+    # extra targets (probes, ring nodes) and extra sources (bound segments,
+    # ring filaments) ride the same call as direct rectangular evaluations
+    # (FastMultipole src/radix_extra_systems.jl); the particles keep their
+    # hessian, the extra targets take velocity only.
+    #
+    # `self_induce=false` drops the particles from the source tuple: the
+    # lifecycle is skipped and the call delivers the extra sources alone, which
+    # is the "body on wake" direction of a coupled solve (the self-induction
+    # was evaluated earlier in the step, over a field that has since changed).
+    targets = (pfield, extra_targets...)
+    sources = self_induce ? (pfield, extra_sources...) : extra_sources
+    hessian = (self_induce, ntuple(_ -> false, length(extra_targets))...)
     try
-        fmm.fmm!(pfield, st.cache;
-            scalar_potential=false, gradient=true, hessian=true, sfs)
+        fmm.fmm!(targets, sources, st.cache;
+            scalar_potential=false, gradient=true, hessian, sfs)
     catch err
         (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
         # out-of-box (or other geometry) rejection: recenter and retry once;
@@ -847,15 +861,15 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false)
         st.settings.rectangular &&
             (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
         fmm.recenter!(st.cache, pfield; bounds)
-        fmm.fmm!(pfield, st.cache;
-            scalar_potential=false, gradient=true, hessian=true, sfs)
+        fmm.fmm!(targets, sources, st.cache;
+            scalar_potential=false, gradient=true, hessian, sfs)
     end
     return nothing
 end
 
 """
     UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=false, rbf=false,
-                verbose=false)
+                verbose=false, extra_targets=(), extra_sources=())
 
 GPU/radix counterpart of `UJ_fmm` for a `CuArray`-backed `ParticleField`
 (also runnable on a `Matrix`-backed field through FastMultipole's
@@ -870,12 +884,14 @@ rather than silently dropping physics.
 """
 function UJ_fmm_gpu!(pfield::ParticleField;
         reset::Bool=true, reset_sfs::Bool=false, sfs::Bool=false,
-        rbf::Bool=false, verbose::Bool=false, optargs...)
+        rbf::Bool=false, verbose::Bool=false,
+        extra_targets::Tuple=(), extra_sources::Tuple=(),
+        self_induce::Bool=true, optargs...)
     rbf && error("rbf/zeta evaluation is not supported on the radix/GPU FMM " *
         "path (use UJ_direct/zeta_direct for CuArray-backed fields)")
     reset && _reset_particles(pfield)
     reset_sfs && _reset_particles_sfs(pfield)
-    _radix_fmm_evaluate!(pfield; sfs)
+    _radix_fmm_evaluate!(pfield; sfs, extra_targets, extra_sources, self_induce)
     return nothing
 end
 
