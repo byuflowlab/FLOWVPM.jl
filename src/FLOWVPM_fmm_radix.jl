@@ -217,6 +217,22 @@ Base.@kwdef struct RadixFMMSettings
     # faults, sizes the depth from an occupancy heuristic in np and so
     # extrapolates. Device only; a host field always takes the model.
     ell_select::Symbol = :cost
+    # Growth in `np` that makes the cache reconsider its depth. The depth is
+    # otherwise held for the whole epoch, and the per-cell near-field work
+    # grows faster than `np` does (the box grows too as a wake convects), so a
+    # long epoch is expensive: on the NREL 5MW production run one epoch ran
+    # 779 steps from 215k to 687k particles with the step going 1.8 s -> 89.3 s.
+    rebuild_growth::Float64 = 2.0
+    # Rebuild as soon as `rebuild_growth` is crossed, instead of also asking
+    # the `_RADIX_COST_*` model whether IT would now choose a different depth.
+    # That question is why the epoch above never ended: the model is biased
+    # toward shallow trees, so it kept returning the depth already in use and
+    # never triggered a rebuild -- the same biased model both picks the depth
+    # and decides whether to revisit it. With `true` the growth threshold alone
+    # decides and the configured `ell_select` re-chooses, which also removes
+    # `:measure`'s weakness (it times the present instant, which is only the
+    # wrong instant when the epoch is long).
+    rebuild_always::Bool = false
 end
 
 """
@@ -804,8 +820,9 @@ geometry exists at the grown shape the existing cache is kept.
 function _radix_depth_outgrown!(pfield::ParticleField, st)
     st.settings.ell === nothing || return false
     np = pfield.np
-    np > 2 * st.np_checked[] || return false
+    np > st.settings.rebuild_growth * st.np_checked[] || return false
     st.np_checked[] = np
+    st.settings.rebuild_always && return true
     # Under the legacy deepest-admissible rule a deeper choice was impossible
     # until the occupancy cap itself passed the cached depth, so the cap was a
     # sound early-out. Cost-based selection can also move the depth DOWN (a
