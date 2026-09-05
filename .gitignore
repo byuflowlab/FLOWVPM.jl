@@ -12,3 +12,9 @@ jobscript.sh
 runcase.jl
 *.log
 *.case
+
+# local tooling/system
+.DS_Store
+.CondaPkg/
+profile.pb.gz
+CLAUDE.local.md
