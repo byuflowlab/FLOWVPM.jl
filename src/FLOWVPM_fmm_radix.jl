@@ -692,6 +692,10 @@ function _radix_measured_depth(pfield::ParticleField, settings::RadixFMMSettings
         catch
             # inadmissible in practice (capacity, watchdog, adequacy): skip it
         end
+        # each candidate cache is sized to `max_n_bodies`, not to the live
+        # count, so three of them at a production capacity is three times the
+        # device footprint of the one we keep. Reclaim before the next build.
+        GC.gc()
     end
     copyto!(view(pfield.particles, first(U_INDEX):last(J_INDEX), 1:np), saved)
     return best_ell
