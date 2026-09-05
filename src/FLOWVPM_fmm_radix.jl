@@ -204,11 +204,19 @@ Base.@kwdef struct RadixFMMSettings
     m2l_strategy::Symbol = :dense
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
-    # :measure builds each admissible depth once and keeps the fastest
-    # (`_radix_measured_depth`); :cost uses the `_RADIX_COST_*` model, which
-    # mis-ranks depths where the near and far fields trade off. Device only;
-    # a host field always takes the model.
-    ell_select::Symbol = :measure
+    # :cost uses the `_RADIX_COST_*` model. :measure builds each admissible
+    # depth once and keeps the fastest (`_radix_measured_depth`).
+    #
+    # DEFAULT IS :cost. `:measure` wins on a FIXED particle count (2x at 65536
+    # bodies on Metal) and loses badly on a GROWING one: the depth is held
+    # until the count doubles (`_radix_depth_outgrown!`), so a choice timed at
+    # the start of an epoch is carried while the per-cell near-field work
+    # quadruples. Measured on the NREL 5MW production run it was ~3x slower at
+    # matched particle counts than the cost model, with the per-step time
+    # climbing 6x across an epoch before each rebuild. The model, whatever its
+    # faults, sizes the depth from an occupancy heuristic in np and so
+    # extrapolates. Device only; a host field always takes the model.
+    ell_select::Symbol = :cost
 end
 
 """
