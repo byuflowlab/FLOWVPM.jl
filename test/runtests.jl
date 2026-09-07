@@ -19,6 +19,7 @@ include("runtests_vorticity_storage.jl")
 include("runtests_relaxation_filter.jl")
 include("runtests_expint.jl")
 include("runtests_dsigma2_accumulators.jl")
+include("runtests_resolution_split.jl")
 
 # Also run the GPU direct-sum kernel tests, if a functional CUDA-capable GPU
 # is available. CUDA is an optional (weak) dependency of FLOWVPM -- it must

@@ -252,6 +252,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     track_H_chi::Bool                           # If true, accumulate H_chi each accepted step
     H_chi_axis::Symbol                          # :strength, :streamline, :strain1, or :max
     H_chi_clip_positive::Bool                   # If true, clip to max(0, λ_χ) before integrating
+    resolution_split::Union{Nothing, ResolutionSplitState{R}}  # Per-particle state for split_particles!(_, ::ResolutionSplitOpts); nothing ⇒ feature off (all hooks no-op)
 end
 
 """
@@ -311,7 +312,8 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                             SplittingWorkspace{R}(),
                                             FilamentEdgeGraph{R}(maxparticles),
                                             FilamentEdgeWorkspace{R}(maxparticles),
-                                            false, :strength, true)
+                                            false, :strength, true,
+                                            nothing)
 end
 
 """
@@ -377,6 +379,10 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     st.cooldown_counter[i_next] = 0
     st.dsigma2_visc[i_next] = zero(R)
     st.dsigma2_rvpm[i_next] = zero(R)
+
+    # Initialize per-particle resolution-split state for this slot (when enabled)
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_init_slot!(rs, i_next, R(sigma))
 
     # Initialize filament edge graph adjacency for this slot. Empty
     # (degree 0, all slots zero); edges are wired later by add_edge!.
@@ -657,6 +663,7 @@ function remove_particle(pfield::ParticleField, i::Int)
 
     np = get_np(pfield)
     st = pfield.splitting_state
+    rs = pfield.resolution_split
     g = pfield.filament_edge_graph
     R = eltype(pfield.particles)
 
@@ -682,6 +689,8 @@ function remove_particle(pfield::ParticleField, i::Int)
         st.cooldown_counter[i] = st.cooldown_counter[np]
         st.dsigma2_visc[i] = st.dsigma2_visc[np]
         st.dsigma2_rvpm[i] = st.dsigma2_rvpm[np]
+        # Mirror swap-with-last in the resolution-split side-buffers
+        rs === nothing || _rsplit_swap!(rs, i, np)
         # Phase B: mirror swap-with-last in the edge-graph adjacency. The
         # neighbors of the moved particle still point at slot np; Phase C
         # below rewrites them to i.
@@ -721,6 +730,7 @@ function remove_particle(pfield::ParticleField, i::Int)
     st.cooldown_counter[np] = 0
     st.dsigma2_visc[np] = zero(R)
     st.dsigma2_rvpm[np] = zero(R)
+    rs === nothing || _rsplit_zero!(rs, np)
     @inbounds for k in 1:2
         g.up_neighbor[k, np]   = 0
         g.down_neighbor[k, np] = 0

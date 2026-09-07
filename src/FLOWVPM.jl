@@ -46,6 +46,7 @@ export ParticleField,
        SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX,
        add_particle, remove_particle, merge_particles!, run_vpm!,
        split_particles!, SplitOptions, SplitDirection,
+       ResolutionSplitOpts, ResolutionSplitState, enable_resolution_split!,
        STRENGTH, STREAMLINE, STRAIN1,
        SplitTrigger, AllTrigger, AnyTrigger, HoldTrigger,
        GammaMagTrigger, ZTrigger, StretchTrigger,
@@ -82,6 +83,9 @@ const sqr2 = sqrt(2)
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
+                    # resolution_split must precede particlefield: ParticleField
+                    # carries a ResolutionSplitState field (see file header)
+                    "resolution_split",
                     "particlefield", "fmm",
                     "fmm_radix",
                     "merging", "splitting",

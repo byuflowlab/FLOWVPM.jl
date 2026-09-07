@@ -152,6 +152,7 @@ iscorespreading(scheme::ViscousScheme
 function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
     proceed = false
+    rs = pfield.resolution_split
 
     # ------------------ EULER SCHEME ------------------------------------------
     if pfield.integration == euler
@@ -164,6 +165,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
                 # Attribute the exact viscous Δσ² = 2ν·dt
                 pfield.splitting_state.dsigma2_visc[i] += 2*scheme.nu*dt
+                rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, 2*scheme.nu*dt, 0)
             end
         else
             _corespreading_euler_broadcast!(pfield, scheme.nu, dt)
@@ -192,6 +194,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 # Attribute the diffusion part of the blended update to viscous
                 # spreading (the geometric contraction was attributed in _euler_exp)
                 pfield.splitting_state.dsigma2_visc[i] += diffusion
+                rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, diffusion, 0)
             end
         else
             _corespreading_eulerexp_broadcast!(pfield, scheme.nu, dt)
@@ -213,6 +216,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
                 # Attribute the applied per-stage σ² increment to viscous spreading
                 pfield.splitting_state.dsigma2_visc[i] += aux2*get_M(p)[7]
+                rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, aux2*get_M(p)[7], 0)
             end
         else
             _corespreading_rk3_broadcast!(pfield, scheme.nu, dt, aux1, aux2)
