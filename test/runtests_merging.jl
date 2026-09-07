@@ -43,9 +43,41 @@ end
 
         removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
 
-        @test removed == 2
-        p = merged_particle(pfield)
-        @test p[FLOWVPM.SIGMA_INDEX][] ≈ cbrt(1.0^3 + 2.0^3 + 3.0^3)
+        @test removed == 1
+        @test FLOWVPM.get_np(pfield) == 2
+        @test sum(FLOWVPM.get_sigma(pfield, i)[]^3 for i in 1:2) ≈ 1.0^3 + 2.0^3 + 3.0^3
+    end
+
+    @testset "Transitive chains form only one pair per call" begin
+        pfield = FLOWVPM.ParticleField(4)
+        for x in (0.0, 0.1, 0.2)
+            FLOWVPM.add_particle(pfield, (x, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        end
+
+        removed = FLOWVPM.merge_particles!(
+            pfield; r_merge=0.11, r_hash=1.0, sigma_relative=false,
+        )
+
+        @test removed == 1
+        @test FLOWVPM.get_np(pfield) == 2
+        @test sort([FLOWVPM.get_X(pfield, i)[1] for i in 1:2]) ≈ [0.05, 0.2]
+    end
+
+    @testset "Seed chooses nearest available partner" begin
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        FLOWVPM.add_particle(pfield, (0.08, 0.0, 0.0), (10.0, 0.0, 0.0), 1.0)
+        FLOWVPM.add_particle(pfield, (0.02, 0.0, 0.0), (100.0, 0.0, 0.0), 1.0)
+
+        removed = FLOWVPM.merge_particles!(
+            pfield; r_merge=0.1, r_hash=1.0, sigma_relative=false,
+        )
+
+        @test removed == 1
+        @test FLOWVPM.get_np(pfield) == 2
+        @test FLOWVPM.get_Gamma(pfield, 1) ≈ [101.0, 0.0, 0.0]
+        @test FLOWVPM.get_X(pfield, 1) ≈ [2.0 / 101.0, 0.0, 0.0]
+        @test FLOWVPM.get_Gamma(pfield, 2) ≈ [10.0, 0.0, 0.0]
     end
 
     @testset "Static particles are skipped" begin
@@ -135,6 +167,38 @@ end
         @test vol_total ≈ 18.0
     end
 
+    @testset "Callback runs once per pair before removals" begin
+        pfield = FLOWVPM.ParticleField(4)
+        for x in (0.0, 0.1, 10.0, 10.1)
+            FLOWVPM.add_particle(pfield, (x, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        end
+
+        seen = Tuple{Int, Int, Float64}[]
+        callback = function (representative)
+            push!(seen, (
+                representative,
+                FLOWVPM.get_np(pfield),
+                FLOWVPM.get_Gamma(pfield, representative)[1],
+            ))
+            return nothing
+        end
+
+        removed = FLOWVPM.merge_particles!(
+            pfield;
+            r_merge=0.2,
+            r_hash=20.0,
+            sigma_relative=false,
+            on_representative=callback,
+        )
+
+        @test removed == 2
+        @test sort(first.(seen)) == [1, 3]
+        @test length(seen) == 2
+        @test all(entry[2] == 4 for entry in seen)
+        @test all(entry[3] ≈ 2.0 for entry in seen)
+        @test FLOWVPM.get_np(pfield) == 2
+    end
+
     @testset "run_vpm! integration" begin
         pfield = FLOWVPM.ParticleField(4; UJ=FLOWVPM.UJ_direct)
         FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
@@ -207,8 +271,8 @@ end
         @info "Merged random cube velocity relative differences" minimum=minimum(relative_differences) maximum=maximum(relative_differences) mean=mean(relative_differences) std=std(relative_differences)
 
         @test removed == nsource - FLOWVPM.get_np(source)
-        @test FLOWVPM.get_np(source) < nsource ÷ 2
-        @test FLOWVPM.get_np(source) > 1
+        @test 0 < removed <= nsource ÷ 2
+        @test FLOWVPM.get_np(source) >= cld(nsource, 2)
         @test all(coordinate_span .> 0.85)
         @test maximum(relative_differences) < 0.03
     end

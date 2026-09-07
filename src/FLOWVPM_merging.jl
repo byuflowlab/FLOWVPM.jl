@@ -344,7 +344,7 @@ function _accumulate_and_finalize_root!(
     return nothing
 end
 
-function _merge_clusters_aggressive!(
+function _finalize_merge_clusters!(
     pfield::ParticleField,
     ws::MergingWorkspace;
     on_representative::Union{Nothing,Function}=nothing,
@@ -404,8 +404,8 @@ function _merge_clusters_aggressive!(
         candidates_by_root[counts[root]] = i
     end
 
-    # Pass 3: for each root with count > 1, accumulate per-cluster sums on the
-    # stack and finalize the representative.
+    # Pass 3: for each paired root, accumulate its two members and finalize
+    # the representative.
     to_remove = ws.to_remove
     empty!(to_remove)
     sizehint!(to_remove, n_candidates)
@@ -513,19 +513,31 @@ function merge_particles!(
         parent[i] = i
     end
 
+    # Reuse root_count as an assignment marker while selecting disjoint pairs.
+    # _finalize_merge_clusters! clears and rebuilds it before grouping roots.
+    paired = ws.root_count
+    resize!(paired, np); fill!(paired, 0)
+
     for c in 1:n_cells
         range_start = offsets[c] + 1
         range_stop = offsets[c + 1]
 
         for a in range_start:range_stop
             ia = sorted_indices[a]
+            paired[ia] != 0 && continue
+
             xi = pfield.particles[1, ia]
             yi = pfield.particles[2, ia]
             zi = pfield.particles[3, ia]
             sigma_i = pfield.particles[SIGMA_INDEX, ia]
 
+            nearest = 0
+            nearest_dist2 = zero(sigma_i)
+
             for b in (a + 1):range_stop
                 ib = sorted_indices[b]
+                paired[ib] != 0 && continue
+
                 sigma_j = pfield.particles[SIGMA_INDEX, ib]
                 sigma_min = min(sigma_i, sigma_j)
                 sigma_max = max(sigma_i, sigma_j)
@@ -552,12 +564,24 @@ function merge_particles!(
                 dz = pfield.particles[3, ib] - zi
                 dist2 = dx * dx + dy * dy + dz * dz
                 r_pair = sigma_relative ? r_merge * sigma_min : r_merge
-                dist2 < r_pair * r_pair && _uf_union!(parent, rank, ia, ib)
+                dist2 < r_pair * r_pair || continue
+
+                if nearest == 0 || dist2 < nearest_dist2 ||
+                        (dist2 == nearest_dist2 && ib < nearest)
+                    nearest = ib
+                    nearest_dist2 = dist2
+                end
+            end
+
+            if nearest != 0
+                _uf_union!(parent, rank, ia, nearest)
+                paired[ia] = 1
+                paired[nearest] = 1
             end
         end
     end
 
-    n_removed = _merge_clusters_aggressive!(pfield, ws; on_representative=on_representative)
+    n_removed = _finalize_merge_clusters!(pfield, ws; on_representative=on_representative)
 
     if verbose && n_removed > 0
         println("Merged $(length(candidate_indices)) candidate particles into $(length(candidate_indices) - n_removed) particles")

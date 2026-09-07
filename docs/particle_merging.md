@@ -6,12 +6,13 @@ page.
 
 ## Operation
 
-`merge_particles!` replaces connected clusters of nearby candidate particles
-with one representative particle. A particle is a candidate unless it is static
-and `skip_static=true`, which is the default.
+`merge_particles!` replaces disjoint pairs of nearby candidate particles with
+one representative particle per pair. A particle is a candidate unless it is
+static and `skip_static=true`, which is the default.
 
-The implementation first builds an undirected graph over candidate particles.
-An edge is added only for a pair that passes all merge gates:
+Within each occupied hash cell, candidates are visited in ascending particle
+index. Each unpaired candidate acts as a seed and selects the closest available
+particle that passes all merge gates:
 
 - The pair is considered by the cell-list search. In the current code this
   means both particles are in the same Cartesian hash cell.
@@ -29,11 +30,20 @@ An edge is added only for a pair that passes all merge gates:
   $$\lVert\mathbf{x}_i - \mathbf{x}_j\rVert < r_m \min(\sigma_i, \sigma_j)$$
 
   when `sigma_relative=true`.
+- When `gamma_align_cos > -1`, the optional circulation-alignment gate rejects
+  pairs whose nonzero $\boldsymbol{\Gamma}$ vectors have cosine similarity
+  below `gamma_align_cos`. If either vector has zero magnitude, the alignment
+  gate does not reject the pair.
 
-The connected components of this graph are the merge clusters. Single-particle
-components are left unchanged. Each multi-particle cluster is accumulated once,
-written into the minimum-index member of the cluster, and all other members are
-removed.
+Distance ties are resolved by choosing the lower particle index. Once selected,
+both particles are unavailable to later seeds in the same call. Pair selection
+finishes before any particle data are changed, so every gate uses the original
+state. Each pair is accumulated once, written into its lower-index member, and
+the other member is removed. Unpaired particles are unchanged.
+
+Consequently, each candidate can merge with at most one other particle and a
+call removes at most `floor(number_of_candidates / 2)` particles. A merged
+representative may merge again during a later call.
 
 ## Merged Quantities
 
@@ -463,19 +473,19 @@ The high-level flow is:
 2. Choose the cell size. If `r_hash < 0`, the hash radius defaults to
    `r_merge`. With `sigma_relative=true`, the cell size is
    `effective_r_hash * mean_sigma`; otherwise it is `effective_r_hash`.
-3. Build a uniform Cartesian cell list over the candidate bounding box. The
-   implementation keys each candidate into a cell and uses counts plus prefix
-   sums to fill `sorted_indices`. This is a counting-sort-style layout, not a
-   radix sort.
-4. Initialize union-find state over raw particle indices.
-5. For each populated cell, test all pairs within that cell. Pairs that satisfy
-   the sigma-ratio gate and distance gate are joined with union-find. The
-   union-find uses path compression and union by rank.
-6. Group candidates by final root using another counting-sort-style pass. This
-   produces CSR-like contiguous ranges of candidates for each root.
-7. For each root with more than one member, accumulate the merged quantities
-   once, finalize them into the minimum-index representative, and queue every
-   other member for removal.
+3. Build a sparse Cartesian cell list over the candidate bounding box. Packed
+   cell keys are sorted so only occupied cells are materialized, with ascending
+   particle-index order inside each cell.
+4. Initialize union-find state and an assignment marker over raw particle
+   indices.
+5. For each populated cell, visit unpaired seeds in order and scan the remaining
+   unpaired candidates. Select the closest candidate passing the sigma-ratio,
+   alignment, and distance gates, breaking distance ties by index.
+6. Join only each selected pair with union-find, then group candidates by final
+   root using a counting-sort-style pass. Roots therefore contain at most two
+   particles.
+7. Accumulate each paired root once, finalize it into the minimum-index
+   representative, and queue the other member for removal.
 8. Sort removals in descending index order and remove those particles. Removing
    from largest to smallest keeps queued indices valid while the particle array
    is compacted.
@@ -486,23 +496,25 @@ pairs can be discovered by the implementation.
 
 ## Cost
 
-Let $N$ be the current number of particles, $C_h = N_x N_y N_z$ be the number of
+Let $N$ be the current number of particles, $C_h$ be the number of occupied
 Cartesian hash cells, $P$ be the number of same-cell pair checks, and $R$ be the
 number of particles removed.
 
-The integer workspace is $O(N + C_h)$: candidate lists and union-find arrays scale
-with particle count, while offsets and counts scale with the cell grid. There
-is no persistent floating workspace for merging beyond the per-cluster
-accumulators used while finalizing one cluster.
+The integer workspace is $O(N)$: candidate lists, occupied-cell metadata,
+assignment markers, and union-find arrays all scale with particle count. There
+is no persistent floating workspace for merging beyond the per-pair
+accumulators used while finalizing one pair.
 
 The time cost is
 
-$$O\!\left(N + C_h + P \alpha(N) + R \log R\right)$$
+$$O\!\left(N \log N + P + N \alpha(N) + R \log R\right)$$
 
-where $\alpha(N)$ is the inverse Ackermann factor from union-find. In typical
-use, bounded cell occupancy makes $P = O(N)$, so the routine is near-linear in
-the number of particles plus cells. The worst case is quadratic if many
-candidates fall in one cell, because all same-cell pairs are checked.
+The $N \log N$ term comes from sorting packed cell keys and particle indices,
+and $\alpha(N)$ is the inverse Ackermann factor from union-find grouping. Since
+$C_h \le N$, occupied-cell traversal is covered by the linear and sorting
+terms. With bounded cell occupancy, $P = O(N)$ and sorting dominates
+asymptotically. The worst case is quadratic if many candidates fall in one
+cell, because all same-cell pairs may be checked.
 
 `MergingWorkspace` owns the hot-loop integer buffers:
 
@@ -526,7 +538,9 @@ The tests in `test/runtests_merging.jl` exercise the main invariants:
 - sigma-weighted representative circulation;
 - exclusion of static particles by default;
 - sigma-ratio rejection;
-- descending removals after multiple independent clusters.
+- prevention of transitive merge chains;
+- closest-partner selection and the one-pair-per-call bound;
+- descending removals after multiple independent pairs.
 
 Those tests are the best executable reference for the intended behavior of the
 current formulas.
@@ -535,7 +549,7 @@ current formulas.
 
 | Symbol | Meaning / code name |
 | --- | --- |
-| $\mathcal{C}$ | One connected merge cluster, represented by a root range in `candidates_by_root` |
+| $\mathcal{C}$ | One selected merge pair, represented by a root range in `candidates_by_root` |
 | $i, j$ | Raw particle indices such as `ia`, `ib`, or `i` |
 | $n_\mathcal{C}$ | `n_members` |
 | $\mathbf{x}_i$ | Particle position from `X_INDEX`; local scalars `pos_x`, `pos_y`, `pos_z` |
@@ -587,8 +601,7 @@ current formulas.
 | $r_m$ | `r_merge` |
 | $\rho_{\max}$ | `max_sigma_ratio` |
 | $N$ | `np`, the current particle count |
-| $N_x, N_y, N_z$ | `Nx`, `Ny`, `Nz` |
-| $C_h$ | `n_cells` |
+| $C_h$ | `n_cells`, the number of occupied hash cells |
 | $P$ | Number of same-cell pair checks in the nested cell loop |
 | $R$ | `length(to_remove)` or returned `n_removed` |
 | $\alpha(N)$ | Inverse Ackermann factor from union-find operations |
