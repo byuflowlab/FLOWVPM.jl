@@ -263,3 +263,198 @@ coherence never refuses a split.
     gn > 0 && return (G[1]/gn, G[2]/gn, G[3]/gn)
     return (one(gn), zero(gn), zero(gn))  # Γ = 0 degenerate: fixed arbitrary axis
 end
+################################################################################
+# ORIENTATION DRAWS (fully random per Ryan 2026-09-05 — no lineage/seed state;
+# NOT reproducible across warm starts, accepted for now. REVISIT if bitwise
+# A/B across restarts becomes needed.)
+################################################################################
+"""
+    _random_rotation() -> SMatrix{3,3,Float64}
+
+Uniform random rotation on SO(3) via the Shoemake quaternion construction
+from three `rand()` draws. Called from the serial split pass — the default
+task-local RNG is safe.
+"""
+function _random_rotation()
+    u1, u2, u3 = rand(), rand(), rand()
+    s1 = sqrt(1 - u1); s2 = sqrt(u1)
+    a1 = 2pi*u2; a2 = 2pi*u3
+    qw = s1*sin(a1); qx = s1*cos(a1); qy = s2*sin(a2); qz = s2*cos(a2)
+    return SMatrix{3,3,Float64}(
+        1 - 2*(qy*qy + qz*qz), 2*(qx*qy + qz*qw),     2*(qx*qz - qy*qw),
+        2*(qx*qy - qz*qw),     1 - 2*(qx*qx + qz*qz), 2*(qy*qz + qx*qw),
+        2*(qx*qz + qy*qw),     2*(qy*qz - qx*qw),     1 - 2*(qx*qx + qy*qy))
+end
+
+"Uniform in-plane angle ψ ∈ [0, 2π) for the tri3 kernel's triangle orientation."
+_inplane_angle() = 2pi*rand()
+
+################################################################################
+# SHARED CHILD EMISSION
+################################################################################
+"""
+    _rsplit_emit_child!(pfield, rs, slot, x, y, z, gx, gy, gz, sigma_c, circ,
+                        is_stat)
+
+Emit one split child. `slot > 0` overwrites that existing column in place
+(child 1 reuses the parent's slot); `slot == 0` appends via `add_particle`
+(caller guarantees headroom). Either way the child gets:
+
+* `vol = (4/3)π σ_c³` — W5 σ³-consistent hygiene rule, NOT `vol_p/m`. This
+  intentionally breaks merge inversion (merging's `σ = cbrt(Σσ³)` no longer
+  reproduces the parent) and, for the pair2 kernel's `σ_c = σ_p`, doubles the
+  σ-implied total volume — accepted, `vol` feeds no dynamics.
+* zeroed U, vorticity, J, PSE, M, C, SFS, U_prev — maintenance runs
+  post-convection and UJ re-evaluates next step; zeroing M also clears
+  euler_exp's M[9] Zeff stash, which is correct for a fresh child.
+* fresh ResolutionSplitState (`sigma_0 = σ_c`, accumulators zero) and, for
+  the in-place slot, an equally fresh legacy `SplittingState` slot (append
+  slots get that from `add_particle`) so lockstep bookkeeping stays coherent
+  even though the two split policies must never be active together.
+"""
+function _rsplit_emit_child!(pfield, rs::ResolutionSplitState, slot::Int,
+                             x, y, z, gx, gy, gz, sigma_c, circ, is_stat::Bool)
+    R = eltype(pfield.particles)
+    vol_c = R(4)/R(3) * pi * sigma_c^3
+    if slot == 0
+        add_particle(pfield, (x, y, z), (gx, gy, gz), sigma_c;
+                     vol=vol_c, circulation=circ, C=zero(R), static=is_stat)
+        # add_particle's rs hook already set sigma_0 = sigma_c and zeroed the
+        # accumulators; nothing more to do.
+    else
+        set_X(pfield, slot, (x, y, z))
+        set_Gamma(pfield, slot, (gx, gy, gz))
+        set_sigma(pfield, slot, sigma_c)
+        set_vol(pfield, slot, vol_c)
+        set_circulation(pfield, slot, circ)
+        zeroR = zero(R)
+        set_U(pfield, slot, zeroR)
+        set_vorticity(pfield, slot, zeroR)
+        set_J(pfield, slot, zeroR)
+        set_PSE(pfield, slot, zeroR)
+        set_M(pfield, slot, zeroR)
+        set_C(pfield, slot, zeroR)
+        set_SFS(pfield, slot, zeroR)
+        set_U_prev(pfield, slot, zeroR)
+        set_static(pfield, slot, Float64(is_stat))
+        _rsplit_reset_slot!(rs, slot, sigma_c)
+        # keep the (inactive) legacy SplittingState slot equally fresh
+        st = pfield.splitting_state
+        st.sigma_0[slot] = R(sigma_c)
+        st.H_chi[slot] = zeroR
+        st.hold_counter[slot] = 0
+        st.cooldown_counter[slot] = 0
+        st.dsigma2_visc[slot] = zeroR
+        st.dsigma2_rvpm[slot] = zeroR
+    end
+    return nothing
+end
+
+"Snapshot the parent quantities a kernel needs before child 1 overwrites slot i."
+@inline function _rsplit_parent(pfield, i::Int)
+    X = get_X(pfield, i); G = get_Gamma(pfield, i)
+    return (X[1], X[2], X[3], G[1], G[2], G[3], get_sigma(pfield, i)[],
+            get_circulation(pfield, i)[], get_static(pfield, i))
+end
+
+################################################################################
+# KERNELS
+################################################################################
+"""
+    _split_viscous_tetra4!(pfield, rs, i, offset_ratio)
+
+Viscous mechanism (spec §3a): isotropic 4-child split of particle `i` on the
+vertices of a randomly oriented regular tetrahedron centered on the parent.
+`σ_c = σ_p·4^(-1/3)` (volume rule = merge inverse), vertex radius
+`a = offset_ratio·σ_p` (default 1.3503 = per-axis second-moment match,
+spec §3a; edge = a·√(8/3)), all children `Γ_p/4 ∥ Γ_p`. Child 1 overwrites
+slot `i`; 3 children appended (caller guarantees headroom).
+"""
+function _split_viscous_tetra4!(pfield, rs::ResolutionSplitState, i::Int,
+                                offset_ratio)
+    x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
+    sigma_c = sigma_p * 4.0^(-1/3)
+    a = offset_ratio * sigma_p
+    Q = _random_rotation()
+    cgx, cgy, cgz = gx/4, gy/4, gz/4
+    # canonical unit tetrahedron vertices: (±1,±1,±1)-family / √3
+    s3 = sqrt(3)
+    for (k, v) in enumerate(((1, 1, 1), (1, -1, -1), (-1, 1, -1), (-1, -1, 1)))
+        d = Q * SVector{3,Float64}(v[1]/s3, v[2]/s3, v[3]/s3)
+        _rsplit_emit_child!(pfield, rs, k == 1 ? i : 0,
+                            x0 + a*d[1], y0 + a*d[2], z0 + a*d[3],
+                            cgx, cgy, cgz, sigma_c, circ, is_stat)
+    end
+    return nothing
+end
+
+"""
+    _split_compress_tri3!(pfield, rs, i, ex, ey, ez, offset_ratio)
+
+Stretch mechanism, COMPRESSION regime (negative stretch: the tube shortens
+and fattens — re-discretize the cross-section; doc §3b geometry): 3 children
+on the vertices of an equilateral triangle in the plane with unit normal
+`(ex,ey,ez)` (averaged stretch axis or Γ̂ fallback), centered on the parent,
+random in-plane orientation. `σ_c = σ_p/√3` (W5 mass-per-length rule),
+ring radius `a = offset_ratio·σ_p` ⇒ triangle side `a√3`, i.e.
+`spacing/σ_c = 3·offset_ratio` (default 0.6 → spacing 1.8 σ_c; the
+moment-match value 1.155 is available by knob [D2]). Children `Γ_p/3 ∥ Γ_p`
+— parallel to the parent Γ, NOT forced along the axis. Child 1 overwrites
+slot `i`; 2 appended.
+"""
+function _split_compress_tri3!(pfield, rs::ResolutionSplitState, i::Int,
+                               ex, ey, ez, offset_ratio)
+    x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
+    sigma_c = sigma_p / sqrt(3)
+    a = offset_ratio * sigma_p
+    cgx, cgy, cgz = gx/3, gy/3, gz/3
+    # stable in-plane basis: cross the normal with its least-aligned
+    # coordinate axis, then complete the right-handed triad
+    ax_, ay_, az_ = abs(ex), abs(ey), abs(ez)
+    ux, uy, uz = ax_ <= ay_ && ax_ <= az_ ? (1.0, 0.0, 0.0) :
+                 (ay_ <= az_ ? (0.0, 1.0, 0.0) : (0.0, 0.0, 1.0))
+    t1x = ey*uz - ez*uy; t1y = ez*ux - ex*uz; t1z = ex*uy - ey*ux
+    t1n = sqrt(t1x*t1x + t1y*t1y + t1z*t1z)
+    t1x /= t1n; t1y /= t1n; t1z /= t1n
+    t2x = ey*t1z - ez*t1y; t2y = ez*t1x - ex*t1z; t2z = ex*t1y - ey*t1x
+    psi0 = _inplane_angle()
+    for k in 0:2
+        psi = psi0 + k*2pi/3
+        c, s = cos(psi), sin(psi)
+        dx = a*(c*t1x + s*t2x); dy = a*(c*t1y + s*t2y); dz = a*(c*t1z + s*t2z)
+        _rsplit_emit_child!(pfield, rs, k == 0 ? i : 0,
+                            x0 + dx, y0 + dy, z0 + dz,
+                            cgx, cgy, cgz, sigma_c, circ, is_stat)
+    end
+    return nothing
+end
+
+"""
+    _split_elongate_pair2!(pfield, rs, i, ex, ey, ez, offset_ratio)
+
+Stretch mechanism, ELONGATION regime (positive stretch: the tube lengthens
+and thins — the cross-section is fine, re-discretize the LENGTH; Ryan
+2026-09-07 third ruling, superseding doc §3b's routing of shrink events to
+the triangle): 2 children on the line through the parent along `(ex,ey,ez)`
+(averaged stretch axis or Γ̂ fallback) at `±b`, `b = offset_ratio·σ_p`
+(default 0.5 ⇒ spacing 1.0 σ_p — children stay well-overlapped), each child
+`Γ_p/2 ∥ Γ_p`, and **`σ_c = σ_p`** — core radius unchanged, each child
+represents half the segment length. Total Γ, centroid, linear impulse exact;
+angular impulse exact by the ± symmetry. Floor consistency: children inherit
+`sigma_0 = σ_c = σ_p` (≤ floor at a floor event) so the floor trigger's
+`sigma_0 > floor` guard self-disarms for them (exposure resets to 0 and must
+re-accumulate). No random draw — the axis is state, the offsets symmetric.
+"""
+function _split_elongate_pair2!(pfield, rs::ResolutionSplitState, i::Int,
+                                ex, ey, ez, offset_ratio)
+    x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
+    b = offset_ratio * sigma_p
+    cgx, cgy, cgz = gx/2, gy/2, gz/2
+    _rsplit_emit_child!(pfield, rs, i,
+                        x0 - b*ex, y0 - b*ey, z0 - b*ez,
+                        cgx, cgy, cgz, sigma_p, circ, is_stat)
+    _rsplit_emit_child!(pfield, rs, 0,
+                        x0 + b*ex, y0 + b*ey, z0 + b*ez,
+                        cgx, cgy, cgz, sigma_p, circ, is_stat)
+    return nothing
+end
