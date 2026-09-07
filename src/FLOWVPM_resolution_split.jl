@@ -458,3 +458,112 @@ function _split_elongate_pair2!(pfield, rs::ResolutionSplitState, i::Int,
                         cgx, cgy, cgz, sigma_p, circ, is_stat)
     return nothing
 end
+
+################################################################################
+# TRIGGER CHECK + ROUTING + MAIN PASS
+################################################################################
+"""
+    _rsplit_check(opts, rs, pfield, i) -> :none | :grow | :shrink
+
+Flat trigger check (no trees, no severity — nothing ranks candidates):
+
+* grow:   `σ > sigma_max` OR `σ/σ₀ > sigma_growth_ratio_max`
+* shrink: `exposure > log_stretch_max` OR floor pin
+  (`σ ≤ sigma_floor·(1+1e-6) && sigma_0 > sigma_floor`)
+
+Every threshold is NaN-disabled (NaN comparisons are false). Grow wins when
+both sides fire. The floor never *gates* splitting — the pin is a shrink
+TRIGGER, and its `sigma_0 > floor` guard is the anti-refire mechanism:
+children born at/below the floor (pair2's `σ_c = σ_p` included) permanently
+disarm it for their lineage, leaving the exposure trigger to cover them.
+"""
+@inline function _rsplit_check(opts::ResolutionSplitOpts, rs::ResolutionSplitState,
+                               pfield, i::Int)
+    sig = get_sigma(pfield, i)[]
+    s0 = rs.sigma_0[i]
+    if sig > opts.sigma_max || (s0 > 0 && sig/s0 > opts.sigma_growth_ratio_max)
+        return :grow
+    end
+    rs.exposure[i] > opts.log_stretch_max && return :shrink
+    if sig <= opts.sigma_floor*(1 + 1e-6) && s0 > opts.sigma_floor
+        return :shrink
+    end
+    return :none
+end
+
+"""
+    split_particles!(pfield, opts::ResolutionSplitOpts; verbose=false, dt=nothing)
+
+Resolution-preserving splitting pass (BRAINSTORM 026 Phase 2). Fully
+independent of `split_particles!(pfield, ::SplitOptions)` — the two split
+policies must NOT both be active on one field (each assumes it owns the
+per-particle split bookkeeping).
+
+One serial loop over the pre-pass particles (`1:np0`), no scratch, no
+ranking: appending is safe while iterating because children land either in
+slot `i` (already visited) or in slots `> np0` (never visited this call).
+Routing: shrink events (elongation) → pair2; grow events → tetra4 when
+viscous Δσ² attribution dominates (`dvisc ≥ drvpm`), tri3 otherwise. A
+routed-but-disabled mechanism skips and counts — never reroutes (W6 keeps
+the viscous mechanism gated by evidence). The only hard guard is
+maxparticles headroom (a correctness requirement, not a feature).
+
+`dt` is accepted for the caller's policy seam but unused — all state
+accumulation happens inline in the integrator, not here.
+
+Returns `(; n_split_viscous, n_split_compress, n_split_elongate,
+n_skipped_capacity, n_skipped_mech_disabled)`.
+"""
+function split_particles!(pfield, opts::ResolutionSplitOpts;
+                          verbose::Bool=false, dt=nothing)
+    rs = enable_resolution_split!(pfield)
+    n_split_viscous = 0; n_split_compress = 0; n_split_elongate = 0
+    n_skipped_capacity = 0; n_skipped_mech_disabled = 0
+    np0 = get_np(pfield)
+    maxp = pfield.maxparticles
+    for i in 1:np0
+        side = _rsplit_check(opts, rs, pfield, i)
+        side === :none && continue
+        if side === :shrink
+            if !opts.enable_stretch_split
+                n_skipped_mech_disabled += 1; continue
+            end
+            if get_np(pfield) + 1 > maxp
+                n_skipped_capacity += 1; break
+            end
+            ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
+            _split_elongate_pair2!(pfield, rs, i, ex, ey, ez,
+                                   opts.elongate_offset_ratio)
+            n_split_elongate += 1
+        elseif rs.dvisc[i] >= rs.drvpm[i]
+            if !opts.enable_viscous_split
+                n_skipped_mech_disabled += 1; continue
+            end
+            if get_np(pfield) + 3 > maxp
+                n_skipped_capacity += 1; break
+            end
+            _split_viscous_tetra4!(pfield, rs, i, opts.viscous_offset_ratio)
+            n_split_viscous += 1
+        else
+            if !opts.enable_stretch_split
+                n_skipped_mech_disabled += 1; continue
+            end
+            if get_np(pfield) + 2 > maxp
+                n_skipped_capacity += 1; break
+            end
+            ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
+            _split_compress_tri3!(pfield, rs, i, ex, ey, ez,
+                                  opts.compress_offset_ratio)
+            n_split_compress += 1
+        end
+    end
+    if verbose && (n_split_viscous + n_split_compress + n_split_elongate +
+                   n_skipped_capacity + n_skipped_mech_disabled) > 0
+        println("split_particles! (resolution): viscous=$(n_split_viscous)"*
+                " compress=$(n_split_compress) elongate=$(n_split_elongate)"*
+                " | skipped: capacity=$(n_skipped_capacity)"*
+                " mech_disabled=$(n_skipped_mech_disabled)")
+    end
+    return (; n_split_viscous, n_split_compress, n_split_elongate,
+              n_skipped_capacity, n_skipped_mech_disabled)
+end

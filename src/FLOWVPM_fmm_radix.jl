@@ -698,8 +698,34 @@ function _radix_fmm_coupling!(pfield::ParticleField)
         st = (; cache, settings, np_checked=Ref(pfield.np),
                 sigma_limit=_radix_sigma_limit(cache, settings))
         _radix_fmm_couplings[pfield] = st
+        _radix_log_sigma_adequacy(pfield, st)
     end
     return st
+end
+
+"""
+    _radix_log_sigma_adequacy(pfield, st)
+
+026 §5 splitting support: at every radix (re)build, log how much of the new
+geometry's σ adequacy limit the live field already consumes, and `@warn`
+above 90% — merge/growth-produced `sigma_max` creep toward the limit is the
+FMM radix cliff the resolution-split σ cap exists to prevent (arm
+`ResolutionSplitOpts.sigma_max` below the adequacy limit).
+"""
+function _radix_log_sigma_adequacy(pfield, st)
+    lim = st.sigma_limit
+    (isfinite(lim) && lim > 0) || return nothing
+    ratio = Float64(_radix_sigma_max(pfield)) / lim
+    @info "radix FMM build: sigma_max/adequacy_limit = $(round(ratio, digits=3))"*
+          " (limit $(round(lim, sigdigits=4)))"
+    if ratio > 0.9
+        @warn "radix FMM sigma adequacy nearly exhausted (ratio "*
+              "$(round(ratio, digits=3)) > 0.9). Consider arming the "*
+              "resolution-split sigma cap (ResolutionSplitOpts.sigma_max) "*
+              "below the adequacy limit $(round(lim, sigdigits=4)) so "*
+              "oversize particles split before the geometry is outgrown."
+    end
+    return nothing
 end
 
 """

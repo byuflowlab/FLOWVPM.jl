@@ -470,4 +470,150 @@ end
     end
 end
 
+
+# --------------------------------------------------------------------------
+# 8.1 test 8 — trigger check + router + anti-refire + skip counters + merge
+# --------------------------------------------------------------------------
+@testset "t8: triggers, routing, anti-refire, counters" begin
+    Random.seed!(260908)
+    NTzero = (; n_split_viscous=0, n_split_compress=0, n_split_elongate=0,
+                n_skipped_capacity=0, n_skipped_mech_disabled=0)
+
+    @testset "no armed trigger => no-op" begin
+        pf = one_parent_field()
+        @test vpmrs.split_particles!(pf, vpmrs.ResolutionSplitOpts()) == NTzero
+        @test pf.np == 1
+    end
+
+    @testset "grow abs cap, viscous-dominated => tetra4" begin
+        pf = one_parent_field(; sigma=0.05)
+        rs = pf.resolution_split
+        rs.dvisc[1] = 2e-3; rs.drvpm[1] = 1e-3
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_viscous == 1 && pf.np == 4
+        # anti-refire: children born at sigma_c < cap, fresh sigma_0
+        @test vpmrs.split_particles!(pf, opts) == NTzero
+        @test pf.np == 4
+    end
+
+    @testset "grow ratio, rVPM-dominated => tri3" begin
+        pf = one_parent_field(; sigma=0.05)
+        rs = pf.resolution_split
+        rs.sigma_0[1] = 0.02              # ratio 2.5
+        rs.dvisc[1] = 1e-4; rs.drvpm[1] = 5e-4
+        opts = vpmrs.ResolutionSplitOpts(; sigma_growth_ratio_max=2.0,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_compress == 1 && pf.np == 3
+        # ratio restarts at 1 on children (fresh sigma_0 = sigma_c)
+        @test vpmrs.split_particles!(pf, opts) == NTzero
+    end
+
+    @testset "exposure trigger => pair2 (shrink)" begin
+        pf = one_parent_field(; sigma=0.05)
+        rs = pf.resolution_split
+        rs.exposure[1] = 1.5
+        opts = vpmrs.ResolutionSplitOpts(; log_stretch_max=1.0,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_elongate == 1 && pf.np == 2
+        # exposure resets to 0 on children => must re-accumulate
+        @test all(iszero, rs.exposure[1:2])
+        @test vpmrs.split_particles!(pf, opts) == NTzero
+    end
+
+    @testset "floor pin => pair2; sigma_0 guard blocks child refire" begin
+        floorv = 0.05
+        pf = one_parent_field(; sigma=floorv)   # sigma pinned exactly on floor
+        rs = pf.resolution_split
+        rs.sigma_0[1] = 0.08                    # born above the floor
+        opts = vpmrs.ResolutionSplitOpts(; sigma_floor=floorv,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_elongate == 1 && pf.np == 2
+        # pair2 children keep sigma_c = sigma_p = floor and inherit
+        # sigma_0 = floor => the guard (sigma_0 > floor) permanently
+        # disarms the floor trigger for the lineage
+        @test all(rs.sigma_0[i] == floorv for i in 1:2)
+        @test vpmrs.split_particles!(pf, opts) == NTzero
+        @test pf.np == 2
+    end
+
+    @testset "grow wins when both sides fire" begin
+        pf = one_parent_field(; sigma=0.05)
+        rs = pf.resolution_split
+        rs.exposure[1] = 5.0                    # shrink armed and firing
+        rs.dvisc[1] = 1.0                       # viscous-dominated grow
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04, log_stretch_max=1.0,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_viscous == 1 && c.n_split_elongate == 0 && pf.np == 4
+    end
+
+    @testset "routed-but-disabled mechanism: skip + count, never reroute" begin
+        # viscous-dominated grow event with viscous mechanism OFF
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 1.0
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_skipped_mech_disabled == 1 && pf.np == 1
+        @test c.n_split_compress == 0          # not rerouted to tri3
+        # shrink event with the stretch mechanism OFF
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.exposure[1] = 5.0
+        opts = vpmrs.ResolutionSplitOpts(; log_stretch_max=1.0,
+                                         enable_viscous_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_skipped_mech_disabled == 1 && pf.np == 1
+    end
+
+    @testset "capacity skip counter" begin
+        pf = one_parent_field(; sigma=0.05, maxp=3)  # tetra4 needs +3 slots
+        pf.resolution_split.dvisc[1] = 1.0
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+                                         enable_viscous_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_skipped_capacity == 1 && c.n_split_viscous == 0 && pf.np == 1
+    end
+
+    @testset "multi-particle pass: mixed routing in one loop" begin
+        pf = rsplit_field(; np=0, maxp=50)
+        # particles 1-2 sit above the 0.04 cap (grow); particle 3 stays below
+        # it so only its exposure (shrink) fires — grow would win otherwise
+        for (k, sig) in enumerate((0.05, 0.05, 0.03))
+            vpmrs.add_particle(pf, (0.5k, 0.0, 0.0), (0.0, 0.0, 1.0), sig)
+        end
+        rs = vpmrs.enable_resolution_split!(pf)
+        rs.dvisc[1] = 1.0                       # grow viscous => tetra4
+        rs.drvpm[2] = 1.0                       # grow rVPM => tri3 (dvisc < drvpm)
+        rs.exposure[3] = 5.0                    # shrink => pair2
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04, log_stretch_max=1.0,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_viscous == 1 && c.n_split_compress == 1 &&
+              c.n_split_elongate == 1
+        @test pf.np == 4 + 3 + 2                # tetra4 + tri3 + pair2 children
+        @test vpmrs.split_particles!(pf, opts) == NTzero   # all fresh
+    end
+
+    @testset "on_representative closure resets merged slot" begin
+        # mimics the FLOWPanel merge-policy seam (Stage 3.4): the closure is
+        # the ONLY merge coupling — FLOWVPM_merging.jl itself is untouched
+        pf = one_parent_field()
+        rs = pf.resolution_split
+        stamp_slot!(rs, 1, 4.0)
+        on_rep = i -> vpmrs._rsplit_reset_slot!(rs, i, 0.077)
+        on_rep(1)
+        @test rs.sigma_0[1] == 0.077
+        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+    end
+end
+
 end # outer testset
