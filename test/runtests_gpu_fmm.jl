@@ -285,6 +285,48 @@ end
         @test pf_bc.particles[:, 3] == pf_cpu.particles[:, 3]
     end
 
+    # sigma_guard parity (018 Ladder C, 2026-09-08): the guard clamps the
+    # geometric gain ratio, so CPU and broadcast must agree with it active,
+    # and the clamped step must conserve |Gamma|*sigma^2 per particle.
+    for transposed in (true, false), jscale in (1.0, 300.0)
+        n = 40
+        pf_cpu = expfield(n; transposed, jscale)
+        pf_bc  = expfield(n; transposed, jscale)
+        pf_ref = expfield(n; transposed, jscale)
+        g, zeta0 = pf_cpu.formulation.g, pf_cpu.kernel.zeta(0)
+        sig0 = copy(pf_ref.particles[vpm_fmm.SIGMA_INDEX, 1:n])
+        gam0 = copy(pf_ref.particles[vpm_fmm.GAMMA_INDEX, 1:n])
+        guard = (dtz_cap=0.5, floor=0.04, ceil=0.20)
+        cap, sfl, sce = vpm_fmm._sigma_guard_params(Float64, guard)
+        vpm_fmm._euler_exp_cpu!(pf_cpu, dt, Uinf, g, zeta0, false, cap, sfl, sce)
+        vpm_fmm._euler_exp_broadcast!(pf_bc, dt, Uinf, g, zeta0, cap, sfl, sce)
+        for idx in (vpm_fmm.X_INDEX, vpm_fmm.GAMMA_INDEX,
+                    vpm_fmm.SIGMA_INDEX, vpm_fmm.M_INDEX[9])
+            @test isapprox(pf_bc.particles[idx, 1:n],
+                           pf_cpu.particles[idx, 1:n]; rtol=1e-8, atol=1e-12)
+        end
+        # sigma respects the bounds on every active, non-degenerate particle
+        for i in 1:n
+            (pf_cpu.particles[vpm_fmm.STATIC_INDEX, i] != 0) && continue
+            (sum(abs2, gam0[:, i]) == 0) && continue
+            @test pf_cpu.particles[vpm_fmm.SIGMA_INDEX, i] >= 0.04 - 1e-12
+            @test pf_cpu.particles[vpm_fmm.SIGMA_INDEX, i] <= 0.20 + 1e-12
+        end
+        # the guarded geometric step preserves |Gamma|*sigma^2 (the SFS Lie
+        # split afterwards is additive, so compare before it dominates:
+        # jscale=1.0 keeps the split small relative to the geometry)
+        if jscale == 1.0
+            for i in 1:n
+                (pf_cpu.particles[vpm_fmm.STATIC_INDEX, i] != 0) && continue
+                (sum(abs2, gam0[:, i]) == 0) && continue
+                inv0 = sqrt(sum(abs2, gam0[:, i])) * sig0[i]^2
+                inv1 = sqrt(sum(abs2, pf_cpu.particles[vpm_fmm.GAMMA_INDEX, i])) *
+                       pf_cpu.particles[vpm_fmm.SIGMA_INDEX, i]^2
+                @test isapprox(inv1, inv0; rtol=5e-2)
+            end
+        end
+    end
+
     # dt == 0: M[9] zeroed for active particles, state otherwise unchanged
     let n = 20
         pf_cpu = expfield(n)

@@ -120,3 +120,85 @@ end
     end
 
 end
+
+# ---------------------------------------------------------------------------
+# sigma_guard on the euler_exp path (018 Ladder C sigma-collapse mode,
+# 2026-09-08). The geometric step ties |Gamma| and sigma together through
+# |Gamma|*sigma^2 = const, so the guard clamps the gain ratio rather than
+# sigma post-hoc.
+# ---------------------------------------------------------------------------
+@testset "euler_exp sigma_guard" begin
+    g = 1/5
+    dt = 1.0
+
+    # An empty guard must reproduce the unguarded step bit-exactly.
+    @testset "empty guard is bit-exact" begin
+        for dtZ in (0.5, 2.0, -1.5)
+            J = zeros(9); J[1] = 5dtZ
+            a = expint_field(; J); FLOWVPM._euler_exp(a, dt)
+            b = expint_field(; J); FLOWVPM._euler_exp(b, dt; sigma_guard=NamedTuple())
+            pa, pb = FLOWVPM.get_particle(a, 1), FLOWVPM.get_particle(b, 1)
+            @test FLOWVPM.get_sigma(pa)[] === FLOWVPM.get_sigma(pb)[]
+            @test all(FLOWVPM.get_Gamma(pa) .=== FLOWVPM.get_Gamma(pb))
+        end
+    end
+
+    # floor: aligned strain (dtZ > 0) collapses sigma; the floor must stop it
+    # exactly at the bound, and |Gamma|*sigma^2 must be conserved.
+    @testset "floor stops the collapse and conserves |G|*sigma^2" begin
+        sigma0 = 0.1
+        floor_val = 0.05
+        J = zeros(9); J[1] = 5*3.0            # unguarded: sigma -> 0.1*e^-3
+        pf = expint_field(; sigma=sigma0, J)
+        FLOWVPM._euler_exp(pf, dt; sigma_guard=(floor=floor_val,))
+        p = FLOWVPM.get_particle(pf, 1)
+        @test FLOWVPM.get_sigma(p)[] ≈ floor_val rtol=1e-12
+        @test norm(FLOWVPM.get_Gamma(p))*FLOWVPM.get_sigma(p)[]^2 ≈
+              1.0*sigma0^2 rtol=1e-12
+        # the applied rate M[9] must reflect the clamped gain, not the raw one
+        @test FLOWVPM.get_M(p)[9] ≈ g*log((sigma0/floor_val)^(1/g))/dt rtol=1e-12
+    end
+
+    # ceil: anti-stretching (dtZ < 0) grows sigma; the ceiling must stop it.
+    @testset "ceil stops the growth" begin
+        sigma0 = 0.1
+        ceil_val = 0.15
+        J = zeros(9); J[1] = -5*3.0           # unguarded: sigma -> 0.1*e^3
+        pf = expint_field(; sigma=sigma0, J)
+        FLOWVPM._euler_exp(pf, dt; sigma_guard=(ceil=ceil_val,))
+        p = FLOWVPM.get_particle(pf, 1)
+        @test FLOWVPM.get_sigma(p)[] ≈ ceil_val rtol=1e-12
+        @test norm(FLOWVPM.get_Gamma(p))*FLOWVPM.get_sigma(p)[]^2 ≈
+              1.0*sigma0^2 rtol=1e-12
+    end
+
+    # dtz_cap: bounds the per-step contraction dt*Z = g*log(r) directly.
+    @testset "dtz_cap bounds the per-step contraction" begin
+        sigma0 = 0.1
+        cap = 0.5
+        J = zeros(9); J[1] = 5*10.0          # unguarded dt*Z = 10
+        pf = expint_field(; sigma=sigma0, J)
+        FLOWVPM._euler_exp(pf, dt; sigma_guard=(dtz_cap=cap,))
+        p = FLOWVPM.get_particle(pf, 1)
+        @test FLOWVPM.get_sigma(p)[] ≈ sigma0*exp(-cap) rtol=1e-12
+        @test FLOWVPM.get_M(p)[9] ≈ cap/dt rtol=1e-12
+    end
+
+    # a guard whose bounds are not binding must leave the step untouched
+    @testset "non-binding guard is a no-op" begin
+        J = zeros(9); J[1] = 5*0.1
+        a = expint_field(; J); FLOWVPM._euler_exp(a, dt)
+        b = expint_field(; J)
+        FLOWVPM._euler_exp(b, dt; sigma_guard=(floor=1e-8, ceil=1e8, dtz_cap=100.0))
+        pa, pb = FLOWVPM.get_particle(a, 1), FLOWVPM.get_particle(b, 1)
+        @test FLOWVPM.get_sigma(pa)[] ≈ FLOWVPM.get_sigma(pb)[] rtol=1e-13
+        @test collect(FLOWVPM.get_Gamma(pa)) ≈ collect(FLOWVPM.get_Gamma(pb)) rtol=1e-13
+    end
+
+    # unknown keys must still throw
+    @testset "unknown guard key throws" begin
+        J = zeros(9); J[1] = 1.0
+        pf = expint_field(; J)
+        @test_throws ArgumentError FLOWVPM._euler_exp(pf, dt; sigma_guard=(bogus=1.0,))
+    end
+end

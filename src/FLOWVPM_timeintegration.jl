@@ -30,8 +30,24 @@ percentile stayed healthy). Recognized keys:
 An empty `sigma_guard` (the default) reproduces the unguarded update
 bit-exactly. Unknown keys throw, so alternative guard laws added later
 must be named here. Guards apply to the standard reformulated `euler`
-paths only (scalar + broadcast); `rungekutta3` and `euler_exp` sigma
-updates are unguarded and reject a non-empty `sigma_guard`.
+paths (scalar + broadcast) and to `euler_exp` (scalar + broadcast);
+`rungekutta3` sigma updates are unguarded and reject a non-empty
+`sigma_guard`.
+
+On the `euler_exp` geometric step the guard is applied to the strength
+ratio `r = |exp(dt*L)*G| / |G|` rather than to sigma after the fact,
+because that step ties the two together exactly: `|G| ~ r^(2g)` and
+`sigma ~ r^(-g)`, so `|G|*sigma^2` is invariant.  Clamping sigma alone
+would leave the circulation amplification unguarded — the observed
+018 Ladder C failure mode (sigma collapse with `|G|` growing as
+`sigma^-2` until `dt*|L|` overran the substep budget, 2026-09-08).
+Clamping `r` bounds both together and keeps the invariant, at the cost
+of deliberately removing the excess gain of that step.  In terms of `r`
+the bounds read
+
+- `ceil`  => `r >= (sigma/ceil)^(1/g)`
+- `floor` => `r <= (sigma/floor)^(1/g)`
+- `dtz_cap` => `r <= exp(dtz_cap/g)`, since `dt*Z = g*log(r)` here.
 """
 function _sigma_guard_params(::Type{R}, sigma_guard::NamedTuple) where R
     for k in keys(sigma_guard)
@@ -420,7 +436,8 @@ explicit first-order Lie split.  `CoreSpreading` uses the step's effective
 constant `Z = g*log(r)/dt` to integrate strain and diffusion together; other
 viscous schemes retain their existing post-step update.
 """
-function euler_exp(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
+function euler_exp(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing,
+                   sigma_guard::NamedTuple=NamedTuple())
 
     # Evaluate UJ, SFS, and C
     pfield.SFS(pfield, BeforeUJ())
@@ -430,7 +447,7 @@ function euler_exp(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothi
         custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
     end
 
-    _euler_exp(pfield, dt; relax)
+    _euler_exp(pfield, dt; relax, sigma_guard)
 
     return nothing
 end
@@ -440,7 +457,8 @@ Steps the field forward in time by dt with the exponential (exact-in-Z) local
 update using the VPM reformulation. See `euler_exp` and `_euler`.
 """
 function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                               dt::Real; relax::Bool=false) where {R, V, R2}
+                               dt::Real; relax::Bool=false,
+                               sigma_guard::NamedTuple=NamedTuple()) where {R, V, R2}
 
     pfield.SFS(pfield, AfterUJ())
 
@@ -451,14 +469,15 @@ function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:
     f == zero(f) || throw(ArgumentError(
         "euler_exp geometric update currently requires ReformulatedVPM f == 0; got f=$f"))
     zeta0::R = pfield.kernel.zeta(0)
+    cap, sfloor, sceil = _sigma_guard_params(R, sigma_guard)
 
     # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
     # GPU (CuArray, or any other non-Array backing store): broadcast-based
     # implementation — same storage-type split as `_euler`.
     if pfield.particles isa Array
-        _euler_exp_cpu!(pfield, dt, Uinf, g, zeta0, relax)
+        _euler_exp_cpu!(pfield, dt, Uinf, g, zeta0, relax, cap, sfloor, sceil)
     else
-        _euler_exp_broadcast!(pfield, dt, Uinf, g, zeta0)
+        _euler_exp_broadcast!(pfield, dt, Uinf, g, zeta0, cap, sfloor, sceil)
         if relax
             relax_broadcast!(pfield.relaxation, pfield)
         end
@@ -469,8 +488,29 @@ function _euler_exp(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:
 
 end
 
+"""
+    _exp_ratio_bounds(sigma, g, cap, sfloor, sceil)
+
+Per-particle bounds on the `euler_exp` strength ratio `r` that enforce the
+`sigma_guard` clamps through the exact relation `sigma_new = sigma*r^(-g)`.
+Returns `(lo, hi)`; with an empty guard this is `(0, Inf)` and the caller
+takes its unguarded branch.  See `_sigma_guard_params`.
+"""
+@inline function _exp_ratio_bounds(sigma::R, g, cap, sfloor, sceil) where R
+    inv_g = one(R) / g
+    lo = (isfinite(sceil) && sceil > 0) ? (sigma / sceil)^inv_g : zero(R)
+    hi = R(Inf)
+    if isfinite(sfloor) && sfloor > 0
+        hi = min(hi, (sigma / sfloor)^inv_g)
+    end
+    isfinite(cap) && (hi = min(hi, exp(cap * inv_g)))
+    return lo, max(lo, hi)
+end
+
 "CPU path for `_euler_exp` (ReformulatedVPM, f == 0): original per-particle scalar loop, unchanged."
-function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax::Bool) where {R, R2}
+function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax::Bool,
+                         cap=R(Inf), sfloor=R(-Inf), sceil=R(Inf)) where {R, R2}
+    guarded = isfinite(cap) || (isfinite(sfloor) && sfloor > 0) || isfinite(sceil)
 
     rs = pfield.resolution_split
 
@@ -515,12 +555,20 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             ratio = sqrt(q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) / sqrt(Gnorm2)
             isfinite(ratio) && ratio > zero(ratio) || throw(DomainError(ratio,
                 "non-finite frozen-gradient strength ratio in euler_exp"))
-            gamma_scale = ratio^(-3*g)
+            # Guard: clamp the geometric gain, keeping |G|*sigma^2 exact.
+            # rc == ratio when unguarded, and the branch keeps that path
+            # bit-identical to the pre-guard code.
+            sig_before = get_sigma(p)[]
+            rc = ratio
+            if guarded
+                lo, hi = _exp_ratio_bounds(sig_before, g, cap, sfloor, sceil)
+                rc = clamp(ratio, lo, hi)
+            end
+            gamma_scale = rc == ratio ? ratio^(-3*g) : rc^(1 - 3*g) / ratio
             G[1] = q[1]*gamma_scale
             G[2] = q[2]*gamma_scale
             G[3] = q[3]*gamma_scale
-            sig_before = get_sigma(p)[]
-            get_sigma(p)[] *= ratio^(-g)
+            get_sigma(p)[] *= rc^(-g)
             # Attribute the applied Δσ² of the geometric contraction to rVPM
             # compression (the blended diffusion part is attributed in
             # viscousdiffusion's euler_exp branch).
@@ -531,7 +579,7 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             # M[9] is private scratch for the euler_exp/CoreSpreading
             # composition. It stores the constant rate with the same total
             # contraction over this step: sigma(dt)/sigma(0)=exp(-dt*Zeff).
-            get_M(p)[9] = dt == zero(dt) ? zero(R) : g*log(ratio)/dt
+            get_M(p)[9] = dt == zero(dt) ? zero(R) : g*log(rc)/dt
         else
             get_M(p)[9] = zero(R)
         end
@@ -578,7 +626,9 @@ non-finite-ratio DomainError guard is enforced post-hoc via one masked
 reduction. As on the other device paths, the `dsigma2_*` splitting
 accumulators are NOT maintained (splitting is CPU-only).
 """
-function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0) where {R, R2}
+function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
+                              cap=R(Inf), sfloor=R(-Inf), sceil=R(Inf)) where {R, R2}
+    guarded = isfinite(cap) || (isfinite(sfloor) && sfloor > 0) || isfinite(sceil)
     P = pfield.particles
     Sc = pfield.scratch
     np = pfield.np
@@ -652,13 +702,28 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0)
     maximum(view(Sc, 5, 1:np)) > 0 && throw(DomainError(NaN,
         "non-finite frozen-gradient strength ratio in euler_exp"))
 
-    # Homogeneous rVPM geometry: Γ = q*r^(-3g), σ *= r^(-g)
+    # Homogeneous rVPM geometry: Γ = q*r^(-3g), σ *= r^(-g).
+    # Guarded: clamp the gain r elementwise first (row 5 is dead after the
+    # DomainError reduction above) and use the clamped rc throughout, which
+    # keeps |Γ|*σ² exact. The unguarded branch is bit-identical to the
+    # pre-guard code — see `_sigma_guard_params`.
     scale = view(Sc, 6, :)
-    scale .= ratio .^ (-3*g)
+    rc = view(Sc, 5, :)
+    if guarded
+        inv_g = one(R) / g
+        rc .= ratio
+        isfinite(sceil) && sceil > 0 && (rc .= max.(rc, (sigma ./ sceil) .^ inv_g))
+        isfinite(sfloor) && sfloor > 0 && (rc .= min.(rc, (sigma ./ sfloor) .^ inv_g))
+        isfinite(cap) && (rc .= min.(rc, exp(cap * inv_g)))
+        scale .= rc .^ (1 - 3*g) ./ ratio
+    else
+        rc .= ratio
+        scale .= ratio .^ (-3*g)
+    end
     G1 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q1 .* scale, G1)
     G2 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q2 .* scale, G2)
     G3 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q3 .* scale, G3)
-    sigma .= ifelse.((active .> 0) .& (Gnorm2 .> 0), sigma .* ratio .^ (-g), sigma)
+    sigma .= ifelse.((active .> 0) .& (Gnorm2 .> 0), sigma .* rc .^ (-g), sigma)
     # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
     # maintained on this device-backed path — splitting is CPU-only.
     # Same for the resolution-split accumulators (ResolutionSplitState).
@@ -669,7 +734,7 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0)
         M9 .= ifelse.(active .> 0, zero(R), M9)
     else
         M9 .= ifelse.(active .> 0,
-                      ifelse.(Gnorm2 .> 0, g .* log.(ratio) ./ dt, zero(R)),
+                      ifelse.(Gnorm2 .> 0, g .* log.(rc) ./ dt, zero(R)),
                       M9)
     end
 
