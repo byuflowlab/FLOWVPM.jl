@@ -392,7 +392,14 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
         _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C, static)
     end
 
-    # Initialize per-particle splitting state for this slot
+    _init_particle_slot!(pfield, i_next, sigma)
+
+    return nothing
+end
+
+# Per-slot host state every new particle starts from: splitting state and an
+# empty filament edge graph entry (edges are wired later by add_edge!).
+function _init_particle_slot!(pfield::ParticleField, i_next::Int, sigma)
     R = eltype(pfield.particles)
     st = pfield.splitting_state
     st.sigma_0[i_next] = R(sigma)
@@ -400,8 +407,6 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     st.hold_counter[i_next] = 0
     st.cooldown_counter[i_next] = 0
 
-    # Initialize filament edge graph adjacency for this slot. Empty
-    # (degree 0, all slots zero); edges are wired later by add_edge!.
     g = pfield.filament_edge_graph
     g.up_neighbor[1, i_next] = 0; g.up_neighbor[2, i_next] = 0
     g.down_neighbor[1, i_next] = 0; g.down_neighbor[2, i_next] = 0
@@ -409,7 +414,39 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     g.down_score[1, i_next] = zero(R); g.down_score[2, i_next] = zero(R)
     g.degree[i_next] = UInt8(0)
     g.filament_id[i_next] = 0
+    return nothing
+end
 
+"""
+  `add_particles!(pfield::ParticleField, block::AbstractMatrix)`
+
+Append `size(block, 2)` particles at once. `block` is a host matrix with one
+full particle column per particle (`nfields` rows, laid out exactly like
+`pfield.particles`); rows a fresh particle does not carry (velocity, Jacobian,
+...) must be zero. One `copyto!` moves the whole block, so on a device-resident
+field this replaces the seven per-field broadcasts `add_particle` issues per
+particle with a single transfer per call.
+"""
+function add_particles!(pfield::ParticleField, block::AbstractMatrix)
+    k = size(block, 2)
+    k == 0 && return nothing
+    size(block, 1) == nfields ||
+        error("particle block must have $(nfields) rows, got $(size(block, 1))")
+    np = get_np(pfield)
+    if np + k > pfield.maxparticles
+        error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
+              " would be exceeded by adding $(k) to $(np)")
+    end
+    R = eltype(pfield.particles)
+    # A plain host Matrix and a linear range: that is the signature GPUArrays
+    # turns into one host->device transfer; a reshaped view falls back to
+    # scalar indexing and errors on a device field.
+    src = Matrix{R}(block)
+    copyto!(pfield.particles, np*nfields + 1, src, 1, k*nfields)
+    pfield.np += k
+    @inbounds for j in 1:k
+        _init_particle_slot!(pfield, np + j, block[SIGMA_INDEX, j])
+    end
     return nothing
 end
 
