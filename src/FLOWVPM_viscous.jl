@@ -164,7 +164,6 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 is_static(p) && continue
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + 2*scheme.nu*dt)
                 # Attribute the exact viscous Δσ² = 2ν·dt
-                pfield.splitting_state.dsigma2_visc[i] += 2*scheme.nu*dt
                 rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, 2*scheme.nu*dt, 0)
             end
         else
@@ -193,7 +192,6 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + diffusion)
                 # Attribute the diffusion part of the blended update to viscous
                 # spreading (the geometric contraction was attributed in _euler_exp)
-                pfield.splitting_state.dsigma2_visc[i] += diffusion
                 rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, diffusion, 0)
             end
         else
@@ -215,7 +213,6 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                 get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
                 get_sigma(p)[] = sqrt(get_sigma(p)[]^2 + aux2*get_M(p)[7])
                 # Attribute the applied per-stage σ² increment to viscous spreading
-                pfield.splitting_state.dsigma2_visc[i] += aux2*get_M(p)[7]
                 rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, aux2*get_M(p)[7], 0)
             end
         else
@@ -275,13 +272,6 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
             # Reset core growth timer
             scheme.t_sgm = 0
-
-            # The σ ← sgm0 reset + RBF re-projection intentionally erases the
-            # physical σ history, so carried-over Δσ² attribution would
-            # misroute future splits — clear both accumulators.
-            st = pfield.splitting_state
-            fill!(view(st.dsigma2_visc, 1:pfield.np), 0)
-            fill!(view(st.dsigma2_rvpm, 1:pfield.np), 0)
         end
 
     end
@@ -306,7 +296,7 @@ update (`y' = -2*Zeff*y + 2*nu` with Zeff read from M[9], see the scalar
 branch in `viscousdiffusion`). Both `ifelse` branches are evaluated
 elementwise, so the `expm1` branch may produce NaN where M[9] == 0 — those
 lanes select the |z*dt| < 1e-8 series branch, which is finite. As on the
-other device paths, the `dsigma2_visc` attribution accumulator is NOT
+other device paths, the resolution-split Δσ² attribution mirror is NOT
 maintained (splitting is CPU-only).
 """
 function _corespreading_eulerexp_broadcast!(pfield, nu, dt)

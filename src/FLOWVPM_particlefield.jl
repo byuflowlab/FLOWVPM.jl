@@ -91,42 +91,6 @@ MergingWorkspace() = MergingWorkspace(
 )
 
 ################################################################################
-# SPLITTING STATE AND WORKSPACE
-################################################################################
-# Per-particle persistent state for splitting. All vectors are sized to
-# maxparticles and indexed in lockstep with `pfield.particles` columns.
-# add_particle initializes the new slot; remove_particle's swap-with-last
-# semantics copy entries `i ← np` so that data tracks the particle that
-# now occupies slot `i`.
-mutable struct SplittingState{R}
-    sigma_0::Vector{R}              # reference smoothing radius at creation
-    H_chi::Vector{R}                # accumulated overlap-loss exposure
-    hold_counter::Vector{Int}       # consecutive steps trigger has held
-    cooldown_counter::Vector{Int}   # remaining steps a child cannot re-split
-    dsigma2_visc::Vector{R}         # accumulated Δσ² from viscous spreading
-    dsigma2_rvpm::Vector{R}         # accumulated Δσ² from rVPM compression (≤0 typically)
-end
-
-SplittingState{R}(maxparticles::Int) where {R} = SplittingState{R}(
-    zeros(R, maxparticles),
-    zeros(R, maxparticles),
-    zeros(Int, maxparticles),
-    zeros(Int, maxparticles),
-    zeros(R, maxparticles),
-    zeros(R, maxparticles),
-)
-
-# Scratch buffers reused across calls to `split_particles!` to avoid heap
-# allocations in the simulation hot loop.
-mutable struct SplittingWorkspace{R}
-    candidate_indices::Vector{Int}
-    severity::Vector{R}
-    order::Vector{Int}
-end
-
-SplittingWorkspace{R}() where {R} = SplittingWorkspace{R}(Int[], R[], Int[])
-
-################################################################################
 # FILAMENT EDGE GRAPH (hybrid filament-edge refinement, Phase 2)
 ################################################################################
 # Bounded directed edge graph: each particle has ≤2 upstream and ≤2 downstream
@@ -245,14 +209,9 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     fmm::FMM                                    # Fast-multipole settings
     useGPU::Int                                 # run on GPU if >0, CPU if 0
     merging_workspace::MergingWorkspace         # Scratch buffers for merge_particles!
-    splitting_state::SplittingState{R}          # Per-particle state for split_particles!
-    splitting_workspace::SplittingWorkspace{R}  # Scratch buffers for split_particles!
     filament_edge_graph::FilamentEdgeGraph{R}            # Bounded 2-in/2-out edge graph
     filament_edge_workspace::FilamentEdgeWorkspace{R}    # Scratch for inference/validation
-    track_H_chi::Bool                           # If true, accumulate H_chi each accepted step
-    H_chi_axis::Symbol                          # :strength, :streamline, :strain1, or :max
-    H_chi_clip_positive::Bool                   # If true, clip to max(0, λ_χ) before integrating
-    resolution_split::Union{Nothing, ResolutionSplitState{R}}  # Per-particle state for split_particles!(_, ::ResolutionSplitOpts); nothing ⇒ feature off (all hooks no-op)
+    resolution_split::Union{Nothing, ResolutionSplitState{R}}  # Per-particle state for split_particles!; nothing ⇒ feature off (all hooks no-op)
 end
 
 """
@@ -308,11 +267,8 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
                                             kernel, UJ, Uinf, SFS, integration,
                                             transposed, relaxation, fmm, useGPU,
                                             MergingWorkspace(),
-                                            SplittingState{R}(maxparticles),
-                                            SplittingWorkspace{R}(),
                                             FilamentEdgeGraph{R}(maxparticles),
                                             FilamentEdgeWorkspace{R}(maxparticles),
-                                            false, :strength, true,
                                             nothing)
 end
 
@@ -370,17 +326,8 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
         _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C, static)
     end
 
-    # Initialize per-particle splitting state for this slot
-    R = eltype(pfield.particles)
-    st = pfield.splitting_state
-    st.sigma_0[i_next] = R(sigma)
-    st.H_chi[i_next] = zero(R)
-    st.hold_counter[i_next] = 0
-    st.cooldown_counter[i_next] = 0
-    st.dsigma2_visc[i_next] = zero(R)
-    st.dsigma2_rvpm[i_next] = zero(R)
-
     # Initialize per-particle resolution-split state for this slot (when enabled)
+    R = eltype(pfield.particles)
     rs = pfield.resolution_split
     rs === nothing || _rsplit_init_slot!(rs, i_next, R(sigma))
 
@@ -662,7 +609,6 @@ function remove_particle(pfield::ParticleField, i::Int)
     end
 
     np = get_np(pfield)
-    st = pfield.splitting_state
     rs = pfield.resolution_split
     g = pfield.filament_edge_graph
     R = eltype(pfield.particles)
@@ -682,13 +628,6 @@ function remove_particle(pfield::ParticleField, i::Int)
     if i != np
         # Overwrite target particle with last particle in the field
         get_particle(pfield, i) .= get_particle(pfield, np)
-        # Mirror swap-with-last in the splitting side-buffers
-        st.sigma_0[i] = st.sigma_0[np]
-        st.H_chi[i] = st.H_chi[np]
-        st.hold_counter[i] = st.hold_counter[np]
-        st.cooldown_counter[i] = st.cooldown_counter[np]
-        st.dsigma2_visc[i] = st.dsigma2_visc[np]
-        st.dsigma2_rvpm[i] = st.dsigma2_rvpm[np]
         # Mirror swap-with-last in the resolution-split side-buffers
         rs === nothing || _rsplit_swap!(rs, i, np)
         # Phase B: mirror swap-with-last in the edge-graph adjacency. The
@@ -724,12 +663,6 @@ function remove_particle(pfield::ParticleField, i::Int)
 
     # Remove last particle in the field
     _reset_particle(pfield, np)
-    st.sigma_0[np] = zero(R)
-    st.H_chi[np] = zero(R)
-    st.hold_counter[np] = 0
-    st.cooldown_counter[np] = 0
-    st.dsigma2_visc[np] = zero(R)
-    st.dsigma2_rvpm[np] = zero(R)
     rs === nothing || _rsplit_zero!(rs, np)
     @inbounds for k in 1:2
         g.up_neighbor[k, np]   = 0
@@ -783,10 +716,6 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
             _update_U_prev_broadcast!(pfield)
         end
     end
-
-    # Accumulate H_chi exposure for split triggers (no-op unless
-    # pfield.track_H_chi is set by a SeparationTrigger)
-    accumulate_H_chi!(pfield, dt)
 
     # Updates time
     pfield.t += dt

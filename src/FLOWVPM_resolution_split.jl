@@ -2,10 +2,10 @@
 # DESCRIPTION
     Resolution-preserving particle splitting (BRAINSTORM 026, Phase 2).
 
-    Fully independent of the experimental splitting machinery in
-    `FLOWVPM_splitting.jl` (`SplittingState`/`SplitOptions`/`SplitTrigger`) per
-    Ryan's ruling 2026-09-07: no shared structs, no trigger trees. Entry point
-    is a new method `split_particles!(pfield, ::ResolutionSplitOpts)`.
+    THE particle-splitting system of FLOWVPM (the legacy experimental
+    splitting path was removed in its favor, Ryan authorization 2026-09-08).
+    Entry point is `split_particles!(pfield, ::ResolutionSplitOpts)`; wire
+    into a time march via `run_vpm!`'s `split_every`/`split_opts` kwargs.
 
     Two mechanisms (both OFF by default):
     * Viscous (Mechanism A, spec §3a): isotropic growth from core spreading —
@@ -227,10 +227,10 @@ end
 """
     _rsplit_accumulate_dsigma2!(rs, i, dv, dr)
 
-Mirror-write the applied Δσ² attribution for particle `i`: `dv` from viscous
-spreading, `dr` from rVPM compression. Colocated with the landed
-`SplittingState.dsigma2_visc/rvpm` writes (which stay untouched); routes
-grow-side split events to the dominant mechanism.
+Accumulate the applied Δσ² attribution for particle `i`: `dv` from viscous
+spreading, `dr` from rVPM compression — written inline at each site where the
+integrator/viscous scheme applies a σ update. Routes grow-side split events to
+the dominant mechanism.
 """
 @inline function _rsplit_accumulate_dsigma2!(rs::ResolutionSplitState, i::Int, dv, dr)
     rs.dvisc[i] += dv
@@ -307,10 +307,7 @@ Emit one split child. `slot > 0` overwrites that existing column in place
 * zeroed U, vorticity, J, PSE, M, C, SFS, U_prev — maintenance runs
   post-convection and UJ re-evaluates next step; zeroing M also clears
   euler_exp's M[9] Zeff stash, which is correct for a fresh child.
-* fresh ResolutionSplitState (`sigma_0 = σ_c`, accumulators zero) and, for
-  the in-place slot, an equally fresh legacy `SplittingState` slot (append
-  slots get that from `add_particle`) so lockstep bookkeeping stays coherent
-  even though the two split policies must never be active together.
+* fresh ResolutionSplitState (`sigma_0 = σ_c`, accumulators zero).
 """
 function _rsplit_emit_child!(pfield, rs::ResolutionSplitState, slot::Int,
                              x, y, z, gx, gy, gz, sigma_c, circ, is_stat::Bool)
@@ -338,14 +335,6 @@ function _rsplit_emit_child!(pfield, rs::ResolutionSplitState, slot::Int,
         set_U_prev(pfield, slot, zeroR)
         set_static(pfield, slot, Float64(is_stat))
         _rsplit_reset_slot!(rs, slot, sigma_c)
-        # keep the (inactive) legacy SplittingState slot equally fresh
-        st = pfield.splitting_state
-        st.sigma_0[slot] = R(sigma_c)
-        st.H_chi[slot] = zeroR
-        st.hold_counter[slot] = 0
-        st.cooldown_counter[slot] = 0
-        st.dsigma2_visc[slot] = zeroR
-        st.dsigma2_rvpm[slot] = zeroR
     end
     return nothing
 end
@@ -495,7 +484,7 @@ end
     split_particles!(pfield, opts::ResolutionSplitOpts; verbose=false, dt=nothing)
 
 Resolution-preserving splitting pass (BRAINSTORM 026 Phase 2). This is THE
-particle-splitting system of FLOWVPM (the legacy `SplitOptions` experimental
+particle-splitting system of FLOWVPM (the legacy experimental splitting
 path was removed in its favor, Ryan authorization 2026-09-08). Use standalone,
 or wire into a time march via `run_vpm!`'s `split_every`/`split_opts` kwargs
 (applied after merging; merged representatives get a fresh state slot).

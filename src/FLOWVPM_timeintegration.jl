@@ -159,10 +159,9 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 end
 
 "CPU path for `_euler` (ClassicVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
-# NOTE: resolution-split accumulation (stretch axis/exposure) is NOT maintained
-# on the ClassicVPM path — there is no isolated S stash here and the
-# reformulated scheme is the production path (same precedent as the dsigma2_*
-# SplittingState accumulators, which this path also skips).
+# NOTE: resolution-split accumulation (stretch axis/exposure and the Δσ²
+# attribution mirrors) is NOT maintained on the ClassicVPM path — there is no
+# isolated S stash here and the reformulated scheme is the production path.
 function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
     Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -286,7 +285,6 @@ end
 function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0;
                                   sigma_guard::NamedTuple=NamedTuple()) where {R, R2}
     cap, sfloor, sceil = _sigma_guard_params(R, sigma_guard)
-    st = pfield.splitting_state
     rs = pfield.resolution_split
     for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -345,7 +343,6 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         clamped_sig = clamp(new_sig, sfloor, sceil)
         get_sigma(p)[] = clamped_sig
         # Attribute the *applied* Δσ² (post guard/clamp) to rVPM compression
-        st.dsigma2_rvpm[i] += clamped_sig*clamped_sig - sig*sig
         rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
                                             clamped_sig*clamped_sig - sig*sig)
     end
@@ -408,10 +405,10 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
                                                 clamp.(sig_new, sfloor, sceil),
                                                 sig_new)
 
-    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
-    # maintained on this device-backed path — splitting is CPU-only. If GPU
-    # splitting ever lands, move the accumulators to persistent device rows.
-    # Same for the resolution-split accumulators (ResolutionSplitState).
+    # NOTE: the resolution-split accumulators (ResolutionSplitState, incl. the
+    # Δσ² attribution mirrors) are NOT maintained on this device-backed path —
+    # splitting is CPU-only. If GPU splitting ever lands, move the
+    # accumulators to persistent device rows.
 
     return nothing
 end
@@ -572,8 +569,6 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             # Attribute the applied Δσ² of the geometric contraction to rVPM
             # compression (the blended diffusion part is attributed in
             # viscousdiffusion's euler_exp branch).
-            pfield.splitting_state.dsigma2_rvpm[i] +=
-                get_sigma(p)[]^2 - sig_before^2
             rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
                                             get_sigma(p)[]^2 - sig_before^2)
             # M[9] is private scratch for the euler_exp/CoreSpreading
@@ -623,8 +618,8 @@ The frozen-gradient action `q = exp(dt*L)*Γ` is evaluated matrix-free by
 substepped truncated-Taylor matvecs (see `EXP_SUBSTEP_THETA`), so no
 per-particle 3×3 matrix exponential is materialized. The scalar path's
 non-finite-ratio DomainError guard is enforced post-hoc via one masked
-reduction. As on the other device paths, the `dsigma2_*` splitting
-accumulators are NOT maintained (splitting is CPU-only).
+reduction. As on the other device paths, the resolution-split accumulators
+are NOT maintained (splitting is CPU-only).
 """
 function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
                               cap=R(Inf), sfloor=R(-Inf), sceil=R(Inf)) where {R, R2}
@@ -724,9 +719,8 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
     G2 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q2 .* scale, G2)
     G3 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q3 .* scale, G3)
     sigma .= ifelse.((active .> 0) .& (Gnorm2 .> 0), sigma .* rc .^ (-g), sigma)
-    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
+    # NOTE: the resolution-split accumulators (ResolutionSplitState) are NOT
     # maintained on this device-backed path — splitting is CPU-only.
-    # Same for the resolution-split accumulators (ResolutionSplitState).
 
     # M[9]: constant-effective contraction rate Zeff = g*log(r)/dt for the
     # euler_exp/CoreSpreading composition (see the scalar path)
@@ -1115,8 +1109,6 @@ function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:Ref
         get_sigma(p)[] += b*M[8]
         # Attribute the applied per-stage Δσ² to rVPM compression (stages are
         # never rolled back, so per-stage accumulation ≡ per-accepted-step)
-        pfield.splitting_state.dsigma2_rvpm[i] +=
-            get_sigma(p)[]^2 - sig_before^2
         rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
                                             get_sigma(p)[]^2 - sig_before^2)
     end
@@ -1209,9 +1201,8 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     G3 .+= active .* b .* M6_new
 
     sigma_v .+= active .* b .* M8_new
-    # NOTE: dsigma2_rvpm attribution accumulators (SplittingState) are NOT
+    # NOTE: the resolution-split accumulators (ResolutionSplitState) are NOT
     # maintained on this device-backed path — splitting is CPU-only.
-    # Same for the resolution-split accumulators (ResolutionSplitState).
 
     # Static particles keep their previous M storage (frozen), others get the new RK stage value
     M1 .= ifelse.(isactive, M1_new, M1)

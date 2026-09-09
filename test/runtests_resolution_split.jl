@@ -37,6 +37,22 @@ slot_values(rs, i) = (rs.sigma_0[i], rs.axis[1, i], rs.axis[2, i],
                       rs.axis[3, i], rs.weight[i], rs.exposure[i],
                       rs.dvisc[i], rs.drvpm[i])
 
+sigma2_of(pf, i) = vpmrs.get_sigma(pf, i)[]^2
+
+# Δσ² attribution invariant (ported from the 026 W2 dsigma2 suite): for any
+# sequence of accepted steps with no split/merge/RBF-reset,
+#     σ²(t) − σ²(t₀) ≈ dvisc + drvpm    (per particle)
+# with each side accumulated at its source (viscous scheme vs rVPM
+# compression), including guard/clamp interventions (applied delta, not the
+# formula).
+function assert_delta_sigma2_conservation(pf, sigma2_0; rtol=1e-12)
+    rs = pf.resolution_split
+    for i in 1:pf.np
+        @test sigma2_of(pf, i) - sigma2_0[i] ≈
+              rs.dvisc[i] + rs.drvpm[i] rtol=rtol atol=1e-15
+    end
+end
+
 @testset "resolution split (026 Phase 2)" begin
 
 # --------------------------------------------------------------------------
@@ -161,33 +177,35 @@ end
     end
 
     @testset "integrator wiring: euler / euler_exp / rk3 final stage" begin
-        # euler: one step accumulates axis+weight and mirrors dsigma2
+        # euler: one step accumulates axis+weight and the dσ² attribution
         pf = rsplit_field()
         rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
         for _ in 1:3
             vpmrs._euler(pf, 1e-2)
         end
-        st = pf.splitting_state
         for i in 1:pf.np
             @test rs.weight[i] > 0
             @test rs.dvisc[i] == 0   # Inviscid
-            @test rs.drvpm[i] ≈ st.dsigma2_rvpm[i] rtol = 1e-12
         end
+        assert_delta_sigma2_conservation(pf, s0)
 
         # euler_exp: same wiring through the frozen-gradient path
         pf = rsplit_field(; integration=vpmrs.euler_exp)
         rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
         for _ in 1:3
             vpmrs._euler_exp(pf, 1e-2)
         end
         for i in 1:pf.np
             @test rs.weight[i] > 0
-            @test rs.drvpm[i] ≈ pf.splitting_state.dsigma2_rvpm[i] rtol = 1e-12
         end
+        assert_delta_sigma2_conservation(pf, s0)
 
         # rk3: S sampled ONLY on the final stage (b == 8/15)
         pf = rsplit_field(; integration=vpmrs.rungekutta3)
         rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
         f = pf.formulation.f; g = pf.formulation.g
         zeta0 = pf.kernel.zeta(0.0)
         Uinf = zeros(3)
@@ -200,9 +218,7 @@ end
         vpmrs.update_particle_states_cpu_reformulated!(
             pf, -153/128, 8/15, 1e-2, Uinf, f, g, zeta0)
         @test all(>(0), rs.weight[1:pf.np])            # final stage samples
-        for i in 1:pf.np
-            @test rs.drvpm[i] ≈ pf.splitting_state.dsigma2_rvpm[i] rtol = 1e-12
-        end
+        assert_delta_sigma2_conservation(pf, s0)
     end
 end
 
@@ -613,6 +629,117 @@ end
         on_rep(1)
         @test rs.sigma_0[1] == 0.077
         @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+    end
+end
+
+# --------------------------------------------------------------------------
+# Δσ² attribution (ported from the 026 W2 dsigma2-accumulator suite, which
+# tested the removed legacy accumulators — same invariants on the mirrors)
+# --------------------------------------------------------------------------
+@testset "Δσ² attribution mirrors (ported 026 W2)" begin
+
+    @testset "euler + Inviscid: all Δσ² is rVPM" begin
+        pf = rsplit_field()
+        rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        for _ in 1:5
+            vpmrs._euler(pf, 1e-2)
+        end
+        @test all(iszero, rs.dvisc[1:pf.np])
+        @test any(!iszero, rs.drvpm[1:pf.np])
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "euler + sigma_guard clamp: applied delta attributed" begin
+        pf = rsplit_field()
+        vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        # Tight ceil forces the clamp to engage; the accumulator must record
+        # the applied (clamped) delta, keeping the invariant exact.
+        guard = (; floor=0.05, ceil=0.105)
+        for _ in 1:5
+            vpmrs._euler(pf, 1e-2; sigma_guard=guard)
+        end
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "euler + CoreSpreading: viscous side is exactly 2ν·dt per step" begin
+        nu = 1e-3
+        pf = rsplit_field(; viscous=vpmrs.CoreSpreading(nu, 0.1,
+                                        vpmrs.zeta_direct; beta=1e6))
+        rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        nsteps, dt = 4, 1e-2
+        for _ in 1:nsteps
+            vpmrs._euler(pf, dt)
+        end
+        for i in 1:pf.np
+            @test rs.dvisc[i] ≈ nsteps * 2 * nu * dt rtol=1e-12
+        end
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "euler_exp + Inviscid: geometric contraction attributed to rVPM" begin
+        pf = rsplit_field(; integration=vpmrs.euler_exp)
+        rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        for _ in 1:5
+            vpmrs._euler_exp(pf, 1e-2)
+        end
+        @test all(iszero, rs.dvisc[1:pf.np])
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "euler_exp + CoreSpreading: blended split conserves" begin
+        nu = 1e-3
+        pf = rsplit_field(; integration=vpmrs.euler_exp,
+                            viscous=vpmrs.CoreSpreading(nu, 0.1,
+                                        vpmrs.zeta_direct; beta=1e6))
+        rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        for _ in 1:4
+            vpmrs._euler_exp(pf, 1e-2)
+        end
+        @test all(>(0), rs.dvisc[1:pf.np])
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "rk3 stages: per-stage applied Δσ² conserves" begin
+        pf = rsplit_field(; integration=vpmrs.rungekutta3)
+        rs = vpmrs.enable_resolution_split!(pf)
+        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
+        f = pf.formulation.f; g = pf.formulation.g
+        zeta0 = pf.kernel.zeta(0.0)
+        Uinf = zeros(3)
+        # One full RK3 step: fresh field ⇒ M already zero (matches
+        # _reset_M_storage! precondition).
+        for (a, b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
+            vpmrs.update_particle_states_cpu_reformulated!(
+                pf, a, b, 1e-2, Uinf, f, g, zeta0)
+        end
+        @test any(!iszero, rs.drvpm[1:pf.np])
+        assert_delta_sigma2_conservation(pf, s0)
+    end
+
+    @testset "lockstep: add/remove bookkeeping of dvisc/drvpm" begin
+        pf = rsplit_field(; np=4)
+        rs = vpmrs.enable_resolution_split!(pf)
+        for i in 1:4
+            rs.dvisc[i] = 10.0 + i
+            rs.drvpm[i] = -(20.0 + i)
+        end
+
+        # remove_particle: swap-with-last copies, vacated tail slot zeroed
+        vpmrs.remove_particle(pf, 2)
+        @test rs.dvisc[2] == 14.0
+        @test rs.drvpm[2] == -24.0
+        @test rs.dvisc[4] == 0.0
+        @test rs.drvpm[4] == 0.0
+
+        # add_particle: fresh slot zero-initialized
+        vpmrs.add_particle(pf, (9.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0.2)
+        @test rs.dvisc[pf.np] == 0.0
+        @test rs.drvpm[pf.np] == 0.0
     end
 end
 
