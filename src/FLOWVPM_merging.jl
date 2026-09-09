@@ -192,6 +192,12 @@ function _finalize_merged_particle!(
     st.dsigma2_visc[representative] = zeroR
     st.dsigma2_rvpm[representative] = zeroR
 
+    # Same principle for the resolution-split state (026, D-A 2026-09-08): the
+    # merged particle is a new entity — reset its slot with reference radius
+    # equal to the merged σ. No-op (one branch) when splitting is not enabled.
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_reset_slot!(rs, representative, sigma)
+
     return nothing
 end
 

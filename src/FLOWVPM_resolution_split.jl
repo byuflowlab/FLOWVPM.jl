@@ -494,10 +494,11 @@ end
 """
     split_particles!(pfield, opts::ResolutionSplitOpts; verbose=false, dt=nothing)
 
-Resolution-preserving splitting pass (BRAINSTORM 026 Phase 2). Fully
-independent of `split_particles!(pfield, ::SplitOptions)` — the two split
-policies must NOT both be active on one field (each assumes it owns the
-per-particle split bookkeeping).
+Resolution-preserving splitting pass (BRAINSTORM 026 Phase 2). This is THE
+particle-splitting system of FLOWVPM (the legacy `SplitOptions` experimental
+path was removed in its favor, Ryan authorization 2026-09-08). Use standalone,
+or wire into a time march via `run_vpm!`'s `split_every`/`split_opts` kwargs
+(applied after merging; merged representatives get a fresh state slot).
 
 One serial loop over the pre-pass particles (`1:np0`), no scratch, no
 ranking: appending is safe while iterating because children land either in

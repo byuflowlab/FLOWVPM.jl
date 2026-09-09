@@ -31,6 +31,18 @@ Solves `nsteps` of the particle field with a time step of `dt`.
 * `merge_every::Int`    : Merge particles every this many time steps. Disabled
                             when set to 0.
 * `merge_kwargs::NamedTuple` : Keyword arguments passed to `merge_particles!`.
+* `split_every::Int`    : Run the resolution-preserving splitting pass
+                            (`split_particles!`) every this many time steps.
+                            Disabled when set to 0. Requires `split_opts`.
+                            Applied AFTER merging on steps where both fire
+                            (merge → split order, W3); merged representatives
+                            get a fresh `ResolutionSplitState` slot, so they
+                            are never split on the same step they were born.
+* `split_opts::Union{Nothing, ResolutionSplitOpts}` : Trigger/mechanism options
+                            for `split_particles!`. Required when
+                            `split_every > 0`; accumulation state is attached
+                            (`enable_resolution_split!`) before the first step
+                            so triggers integrate from step 1 at any cadence.
 * `save_path::String`   : Give it a string for saving VTKs of the particle
                             field. Creates the given path.
 * `run_name::String`    : Name of output files.
@@ -47,6 +59,8 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
                       static_particles_function::Function=static_particles_default,
                       merge_every::Int=0,
                       merge_kwargs::NamedTuple=(;),
+                      split_every::Int=0,
+                      split_opts::Union{Nothing, ResolutionSplitOpts}=nothing,
                       custom_UJ=nothing,
                       # OUTPUT OPTIONS
                       save_path::Union{Nothing, String}=nothing,
@@ -66,6 +80,16 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         error("Kernel $(pfield.kernel) is not compatible with viscous scheme"*
                 " $(typeof(pfield.viscous).name); compatible kernels are"*
                 " $(compatible_kernels)")
+    end
+
+    if split_every > 0 && split_opts === nothing
+        error("split_every=$(split_every) requires split_opts::ResolutionSplitOpts")
+    end
+
+    # Attach accumulation state up front so triggers integrate from step 1
+    # regardless of the split cadence
+    if split_every > 0
+        enable_resolution_split!(pfield)
     end
 
     if save_path!=nothing
@@ -119,6 +143,10 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
 
             if merge_every > 0 && i > 0 && i % merge_every == 0
                 merge_particles!(pfield; merge_kwargs...)
+            end
+
+            if split_every > 0 && i > 0 && i % split_every == 0
+                split_particles!(pfield, split_opts)
             end
         end
 

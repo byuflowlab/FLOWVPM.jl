@@ -616,4 +616,75 @@ end
     end
 end
 
+# --------------------------------------------------------------------------
+# Session 3 — run_vpm! wiring (split_every/split_opts) + native merge reset
+# --------------------------------------------------------------------------
+@testset "s3: run_vpm! wiring and native merge reset (D-A)" begin
+
+    @testset "split_every requires split_opts" begin
+        pf = rsplit_field()
+        @test_throws ErrorException vpmrs.run_vpm!(pf, 1e-2, 1; split_every=1,
+                                                   verbose=false)
+    end
+
+    @testset "split_every=0 (default) leaves the feature off" begin
+        pf = rsplit_field()
+        vpmrs.run_vpm!(pf, 1e-2, 2; verbose=false)
+        @test pf.resolution_split === nothing
+    end
+
+    @testset "state attached before step 1 at any cadence" begin
+        pf = rsplit_field()
+        opts = vpmrs.ResolutionSplitOpts()      # all triggers NaN-disabled
+        vpmrs.run_vpm!(pf, 1e-2, 0; split_every=5, split_opts=opts,
+                       verbose=false)
+        @test pf.resolution_split isa vpmrs.ResolutionSplitState
+    end
+
+    @testset "split pass fires on cadence" begin
+        pf = rsplit_field(; np=2, maxp=30)
+        # absolute cap far below current σ => both particles grow-trigger
+        # (route tetra4 or tri3 depending on the accumulated Δσ² attribution,
+        # so both mechanisms are enabled)
+        opts = vpmrs.ResolutionSplitOpts(; sigma_max=1e-6,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        vpmrs.run_vpm!(pf, 1e-2, 2; split_every=2, split_opts=opts,
+                       verbose=false)
+        @test 6 <= pf.np <= 8                   # one pass at i=2: 2 parents ->
+                                                # 3 (tri3) or 4 (tetra4) each
+        for i in 1:pf.np                        # children born fresh
+            @test pf.resolution_split.sigma_0[i] == vpmrs.get_sigma(pf, i)[]
+        end
+        # off-cadence: no pass fires within nsteps
+        pf2 = rsplit_field(; np=2, maxp=30)
+        vpmrs.run_vpm!(pf2, 1e-2, 2; split_every=3, split_opts=opts,
+                       verbose=false)
+        @test pf2.np == 2
+    end
+
+    @testset "merge_particles! natively resets the representative slot" begin
+        pf = rsplit_field(; np=0, maxp=10)
+        vpmrs.add_particle(pf, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+        vpmrs.add_particle(pf, (0.01, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+        rs = vpmrs.enable_resolution_split!(pf)
+        stamp_slot!(rs, 1, 3.0)
+        stamp_slot!(rs, 2, 4.0)
+        vpmrs.merge_particles!(pf; r_merge=5.0)
+        @test pf.np == 1
+        # sigma_0 := merged σ, accumulators zeroed (merged particle = new entity)
+        @test rs.sigma_0[1] == vpmrs.get_sigma(pf, 1)[]
+        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+    end
+
+    @testset "merge with resolution_split === nothing is a no-op branch" begin
+        pf = rsplit_field(; np=0, maxp=10)
+        vpmrs.add_particle(pf, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+        vpmrs.add_particle(pf, (0.01, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+        vpmrs.merge_particles!(pf; r_merge=5.0)
+        @test pf.np == 1
+        @test pf.resolution_split === nothing
+    end
+end
+
 end # outer testset
