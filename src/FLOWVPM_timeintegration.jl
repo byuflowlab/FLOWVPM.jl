@@ -159,7 +159,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 end
 
 "CPU path for `_euler` (ClassicVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
-# NOTE: resolution-split accumulation (stretch axis/exposure and the Δσ²
+# NOTE: resolution-split accumulation (stretch axis and the Δσ²
 # attribution mirrors) is NOT maintained on the ClassicVPM path — there is no
 # isolated S stash here and the reformulated scheme is the production path.
 function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
@@ -314,10 +314,9 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
             MM3 = (J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
         end
 
-        # Resolution-split accumulation: stretch axis / coherence / exposure
-        # sampled here where S = (MM1,MM2,MM3) and pre-update Γ are in hand
-        rs === nothing || _rsplit_accumulate!(rs, i, dt, MM1, MM2, MM3,
-                                              G[1], G[2], G[3])
+        # Resolution-split accumulation: stretch axis / coherence sampled
+        # here where S = (MM1,MM2,MM3) is in hand
+        rs === nothing || _rsplit_accumulate!(rs, i, dt, MM1, MM2, MM3)
 
         # Store Z under MM4 with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
         Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
@@ -342,9 +341,11 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         new_sig = dt*MM4 > cap ? sig * (1 - cap) : sig - dt * ( sig * MM4 )
         clamped_sig = clamp(new_sig, sfloor, sceil)
         get_sigma(p)[] = clamped_sig
-        # Attribute the *applied* Δσ² (post guard/clamp) to rVPM compression
+        # Attribute the ATTEMPTED Δσ² (post dtz_cap, PRE floor/ceil clamp) to
+        # the rVPM accumulator — clamp-pinned particles keep accruing so the
+        # per-mechanism fractional triggers still fire (Ryan 2026-09-08)
         rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
-                                            clamped_sig*clamped_sig - sig*sig)
+                                            new_sig*new_sig - sig*sig)
     end
     return nothing
 end
@@ -545,8 +546,7 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             # product); threaded loop is safe — writes are per-index
             if rs !== nothing
                 s = L*G0
-                _rsplit_accumulate!(rs, i, dt, s[1], s[2], s[3],
-                                    G0[1], G0[2], G0[3])
+                _rsplit_accumulate!(rs, i, dt, s[1], s[2], s[3])
             end
             q = exp(dt*L)*G0
             ratio = sqrt(q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) / sqrt(Gnorm2)
@@ -566,11 +566,18 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             G[2] = q[2]*gamma_scale
             G[3] = q[3]*gamma_scale
             get_sigma(p)[] *= rc^(-g)
-            # Attribute the applied Δσ² of the geometric contraction to rVPM
-            # compression (the blended diffusion part is attributed in
-            # viscousdiffusion's euler_exp branch).
-            rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
-                                            get_sigma(p)[]^2 - sig_before^2)
+            # Attribute the ATTEMPTED Δσ² of the geometric step to the rVPM
+            # accumulator (the blended diffusion part is attributed in
+            # viscousdiffusion's euler_exp branch): re-clamp the ratio with
+            # dtz_cap only — the floor/ceil legs are excluded so clamp-pinned
+            # particles keep accruing (Ryan 2026-09-08).
+            if rs !== nothing
+                _, hi_att = _exp_ratio_bounds(sig_before, g, cap, R(-Inf), R(Inf))
+                rc_att = min(ratio, hi_att)
+                sig_att = sig_before * rc_att^(-g)
+                _rsplit_accumulate_dsigma2!(rs, i, zero(R),
+                                            sig_att*sig_att - sig_before^2)
+            end
             # M[9] is private scratch for the euler_exp/CoreSpreading
             # composition. It stores the constant rate with the same total
             # contraction over this step: sigma(dt)/sigma(0)=exp(-dt*Zeff).
@@ -1045,7 +1052,7 @@ end
 "CPU path for RK3's `update_particle_states` (ReformulatedVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
 function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     rs = pfield.resolution_split
-    # Resolution-split axis/exposure: sample S once per accepted step, on the
+    # Resolution-split axis: sample S once per accepted step, on the
     # final RK3 stage only (b == 8/15; pattern FLOWVPM_viscous.jl's last-stage gate)
     rsplit_sample = rs !== nothing && isapprox(b, 8/15, atol=1e-7)
     for i in 1:pfield.np
@@ -1077,8 +1084,7 @@ function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:Ref
             MM3 = J[3]*G[1]+J[6]*G[2]+J[9]*G[3]
         end
 
-        rsplit_sample && _rsplit_accumulate!(rs, i, dt, MM1, MM2, MM3,
-                                             G[1], G[2], G[3])
+        rsplit_sample && _rsplit_accumulate!(rs, i, dt, MM1, MM2, MM3)
 
         # Store Z under MM4 with Z = [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2, and ϵ=(Eadv + Estr)/zeta_sgmp(0)
         Gnorm2 = G[1]*G[1] + G[2]*G[2] + G[3]*G[3]
@@ -1107,8 +1113,9 @@ function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:Ref
         # Update cross-sectional area
         sig_before = get_sigma(p)[]
         get_sigma(p)[] += b*M[8]
-        # Attribute the applied per-stage Δσ² to rVPM compression (stages are
-        # never rolled back, so per-stage accumulation ≡ per-accepted-step)
+        # Attribute the per-stage Δσ² to the rVPM accumulator (RK3 σ updates
+        # are unguarded, so applied ≡ attempted; stages are never rolled back,
+        # so per-stage accumulation ≡ per-accepted-step)
         rs === nothing || _rsplit_accumulate_dsigma2!(rs, i, zero(R),
                                             get_sigma(p)[]^2 - sig_before^2)
     end
