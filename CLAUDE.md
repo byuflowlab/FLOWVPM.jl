@@ -196,3 +196,5 @@ whatever environment `] test`/`include("test/runtests.jl")` runs in (it
 isn't a hard test dependency in `test/Project.toml`, to keep CPU-only
 `] test` from ever needing to fetch it) and real GPU hardware, so it's a
 no-op in ordinary CI.
+
+For ORC execution read `BYU_ORC_AGENTS.md`.
