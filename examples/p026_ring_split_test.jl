@@ -100,15 +100,13 @@ function force_split_all!(pfield, kernel::Symbol, use_stretch_axis::Bool)
     np0 = vpm.get_np(pfield)
     for i in 1:np0
         if kernel === :tetra4
-            vpm._split_viscous_tetra4!(pfield, rs, i, opts.viscous_offset_ratio)
+            vpm._split_viscous_tetra4!(pfield, rs, i, opts)
         else
             ex, ey, ez = vpm._rsplit_direction(rs, i, opts, pfield)
             if kernel === :tri3
-                vpm._split_compress_tri3!(pfield, rs, i, ex, ey, ez,
-                    opts.compress_offset_ratio)
+                vpm._split_compress_tri3!(pfield, rs, i, ex, ey, ez, opts)
             elseif kernel === :pair2
-                vpm._split_elongate_pair2!(pfield, rs, i, ex, ey, ez,
-                    opts.elongate_offset_ratio)
+                vpm._split_elongate_pair2!(pfield, rs, i, ex, ey, ez, opts)
             else
                 error("unknown kernel $(kernel)")
             end

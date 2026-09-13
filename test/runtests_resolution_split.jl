@@ -27,24 +27,24 @@ function stamp_slot!(rs, i, key)
     rs.sigma_0[i] = 1.0key
     rs.axis[1, i] = 2.0key; rs.axis[2, i] = 3.0key; rs.axis[3, i] = 4.0key
     rs.weight[i] = 5.0key
-    rs.exposure[i] = 6.0key
     rs.dvisc[i] = 7.0key
     rs.drvpm[i] = 8.0key
     return nothing
 end
 
 slot_values(rs, i) = (rs.sigma_0[i], rs.axis[1, i], rs.axis[2, i],
-                      rs.axis[3, i], rs.weight[i], rs.exposure[i],
+                      rs.axis[3, i], rs.weight[i],
                       rs.dvisc[i], rs.drvpm[i])
 
 sigma2_of(pf, i) = vpmrs.get_sigma(pf, i)[]^2
 
 # Δσ² attribution invariant (ported from the 026 W2 dsigma2 suite): for any
-# sequence of accepted steps with no split/merge/RBF-reset,
+# sequence of accepted steps with no split/merge/RBF-reset AND no engaged
+# floor/ceil clamp,
 #     σ²(t) − σ²(t₀) ≈ dvisc + drvpm    (per particle)
-# with each side accumulated at its source (viscous scheme vs rVPM
-# compression), including guard/clamp interventions (applied delta, not the
-# formula).
+# with each side accumulated at its source (viscous scheme vs rVPM area
+# evolution). Accumulators record ATTEMPTED (pre-clamp) Δσ², so the invariant
+# intentionally BREAKS when a clamp engages — see the pinned-clamp testset.
 function assert_delta_sigma2_conservation(pf, sigma2_0; rtol=1e-12)
     rs = pf.resolution_split
     for i in 1:pf.np
@@ -82,7 +82,7 @@ end
         rs = vpmrs.enable_resolution_split!(pf)
         for i in 1:pf.np
             @test rs.sigma_0[i] == vpmrs.get_sigma(pf, i)[]
-            @test rs.weight[i] == 0 && rs.exposure[i] == 0
+            @test rs.weight[i] == 0 && rs.dvisc[i] == 0 && rs.drvpm[i] == 0
         end
         # idempotent: re-enabling returns the same state object
         @test vpmrs.enable_resolution_split!(pf) === rs
@@ -95,7 +95,7 @@ end
         vpmrs.add_particle(pf, (1.0, 2.0, 3.0), (0.1, 0.2, 0.3), 0.25)
         i = pf.np
         @test rs.sigma_0[i] == 0.25
-        @test slot_values(rs, i)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+        @test slot_values(rs, i)[2:end] == (0, 0, 0, 0, 0, 0)
     end
 
     @testset "remove_particle swap-with-last + tail zero" begin
@@ -117,9 +117,9 @@ end
 end
 
 # --------------------------------------------------------------------------
-# 8.1 test 7 — sign-invariant averaging, exposure, reset, integrator wiring
+# 8.1 test 7 — sign-invariant averaging, reset, integrator wiring
 # --------------------------------------------------------------------------
-@testset "t7: sign-invariant axis averaging + exposure" begin
+@testset "t7: sign-invariant axis averaging" begin
 
     @testset "alternating ±S converges where raw sum cancels" begin
         pf = rsplit_field(; np=1)
@@ -129,7 +129,7 @@ end
         for k in 1:10
             s = (k % 2 == 0 ? -1.0 : 1.0) .* (2.0, 0.0, 0.0)
             raw .+= dt .* s
-            vpmrs._rsplit_accumulate!(rs, 1, dt, s[1], s[2], s[3], 0.0, 0.0, 1.0)
+            vpmrs._rsplit_accumulate!(rs, 1, dt, s[1], s[2], s[3])
         end
         @test norm(raw) < 1e-14                       # raw sum cancels
         axn = norm(rs.axis[:, 1])
@@ -143,28 +143,9 @@ end
         dt = 1e-2
         for k in 1:10
             s = k % 2 == 0 ? (1.0, 0.0, 0.0) : (0.0, 1.0, 0.0)
-            vpmrs._rsplit_accumulate!(rs, 1, dt, s[1], s[2], s[3], 0.0, 0.0, 1.0)
+            vpmrs._rsplit_accumulate!(rs, 1, dt, s[1], s[2], s[3])
         end
         @test norm(rs.axis[:, 1]) / rs.weight[1] ≈ sqrt(2)/2 rtol = 1e-12
-    end
-
-    @testset "exposure: signed λ along Γ̂" begin
-        pf = rsplit_field(; np=1)
-        rs = vpmrs.enable_resolution_split!(pf)
-        dt, lam = 1e-2, 0.7
-        G = (0.0, 0.0, 2.0)
-        for _ in 1:5   # stretch along Γ̂: λ > 0
-            vpmrs._rsplit_accumulate!(rs, 1, dt, lam*G[1], lam*G[2], lam*G[3],
-                                      G...)
-        end
-        @test rs.exposure[1] ≈ 5 * dt * lam rtol = 1e-12
-        for _ in 1:5   # compression along Γ̂: λ < 0 subtracts (signed)
-            vpmrs._rsplit_accumulate!(rs, 1, dt, -lam*G[1], -lam*G[2], -lam*G[3],
-                                      G...)
-        end
-        @test abs(rs.exposure[1]) < 1e-14
-        # ...while the axis kept accumulating sign-invariantly the whole time
-        @test norm(rs.axis[:, 1]) ≈ rs.weight[1] rtol = 1e-12
     end
 
     @testset "reset-on-split zeroes accumulators, restamps sigma_0" begin
@@ -173,7 +154,7 @@ end
         stamp_slot!(rs, 1, 3.0)
         vpmrs._rsplit_reset_slot!(rs, 1, 0.042)
         @test rs.sigma_0[1] == 0.042
-        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0)
     end
 
     @testset "integrator wiring: euler / euler_exp / rk3 final stage" begin
@@ -234,16 +215,16 @@ function one_parent_field(; X=(0.3, -0.2, 0.5), Gamma=(0.4, -0.7, 0.9),
     return pf
 end
 
-"Apply kernel `kern` (symbol) to particle 1 of `pf` with default-opts geometry."
-function apply_kernel!(pf, kern; dir=(0.0, 0.0, 1.0))
+"Apply kernel `kern` (symbol) to particle 1 of `pf` (default-opts geometry unless overridden)."
+function apply_kernel!(pf, kern; dir=(0.0, 0.0, 1.0),
+                       opts=vpmrs.ResolutionSplitOpts())
     rs = pf.resolution_split
-    opts = vpmrs.ResolutionSplitOpts()
     if kern === :tetra4
-        vpmrs._split_viscous_tetra4!(pf, rs, 1, opts.viscous_offset_ratio)
+        vpmrs._split_viscous_tetra4!(pf, rs, 1, opts)
     elseif kern === :tri3
-        vpmrs._split_compress_tri3!(pf, rs, 1, dir..., opts.compress_offset_ratio)
+        vpmrs._split_compress_tri3!(pf, rs, 1, dir..., opts)
     elseif kern === :pair2
-        vpmrs._split_elongate_pair2!(pf, rs, 1, dir..., opts.elongate_offset_ratio)
+        vpmrs._split_elongate_pair2!(pf, rs, 1, dir..., opts)
     else
         error("unknown kernel $kern")
     end
@@ -488,11 +469,13 @@ end
 
 
 # --------------------------------------------------------------------------
-# 8.1 test 8 — trigger check + router + anti-refire + skip counters + merge
+# 8.1 test 8 — per-mechanism fractional triggers + anti-refire + counters
+# (Ryan 2026-09-08 ruling: the trigger IS the mechanism; σ bounds are clamps)
 # --------------------------------------------------------------------------
 @testset "t8: triggers, routing, anti-refire, counters" begin
     Random.seed!(260908)
     NTzero = (; n_split_viscous=0, n_split_compress=0, n_split_elongate=0,
+                n_children_elongate=0,
                 n_skipped_capacity=0, n_skipped_mech_disabled=0)
 
     @testset "no armed trigger => no-op" begin
@@ -501,89 +484,108 @@ end
         @test pf.np == 1
     end
 
-    @testset "grow abs cap, viscous-dominated => tetra4" begin
-        pf = one_parent_field(; sigma=0.05)
+    @testset "viscous fraction => tetra4" begin
+        pf = one_parent_field(; sigma=0.05)          # sigma_0 = 0.05
         rs = pf.resolution_split
-        rs.dvisc[1] = 2e-3; rs.drvpm[1] = 1e-3
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+        # threshold: dvisc > ((1+f)^2 - 1)*sigma_0^2 = 1.25*0.0025 = 3.125e-3
+        rs.dvisc[1] = 4e-3
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5,
                                          enable_viscous_split=true,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_split_viscous == 1 && pf.np == 4
-        # anti-refire: children born at sigma_c < cap, fresh sigma_0
+        # anti-refire: children get fresh sigma_0 and zeroed accumulators
         @test vpmrs.split_particles!(pf, opts) == NTzero
         @test pf.np == 4
+        # just below threshold: no fire
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 3e-3
+        @test vpmrs.split_particles!(pf, opts) == NTzero
     end
 
-    @testset "grow ratio, rVPM-dominated => tri3" begin
+    @testset "compress fraction (drvpm > 0) => tri3" begin
         pf = one_parent_field(; sigma=0.05)
         rs = pf.resolution_split
-        rs.sigma_0[1] = 0.02              # ratio 2.5
-        rs.dvisc[1] = 1e-4; rs.drvpm[1] = 5e-4
-        opts = vpmrs.ResolutionSplitOpts(; sigma_growth_ratio_max=2.0,
-                                         enable_viscous_split=true,
+        rs.drvpm[1] = 4e-3                           # past the f=0.5 threshold
+        rs.dvisc[1] = 1.0                            # irrelevant: f_visc unarmed
+        opts = vpmrs.ResolutionSplitOpts(; f_comp=0.5,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_split_compress == 1 && pf.np == 3
-        # ratio restarts at 1 on children (fresh sigma_0 = sigma_c)
         @test vpmrs.split_particles!(pf, opts) == NTzero
     end
 
-    @testset "exposure trigger => pair2 (shrink)" begin
+    @testset "elongate fraction (drvpm < 0) => pair2" begin
         pf = one_parent_field(; sigma=0.05)
         rs = pf.resolution_split
-        rs.exposure[1] = 1.5
-        opts = vpmrs.ResolutionSplitOpts(; log_stretch_max=1.0,
+        # threshold: drvpm < ((1-f)^2 - 1)*sigma_0^2 = -0.51*0.0025 = -1.275e-3
+        rs.drvpm[1] = -2e-3
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=0.3,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_split_elongate == 1 && pf.np == 2
-        # exposure resets to 0 on children => must re-accumulate
-        @test all(iszero, rs.exposure[1:2])
+        # accumulators reset to 0 on children => must re-accumulate
+        @test all(iszero, rs.drvpm[1:2])
         @test vpmrs.split_particles!(pf, opts) == NTzero
-    end
-
-    @testset "floor pin => pair2; sigma_0 guard blocks child refire" begin
-        floorv = 0.05
-        pf = one_parent_field(; sigma=floorv)   # sigma pinned exactly on floor
-        rs = pf.resolution_split
-        rs.sigma_0[1] = 0.08                    # born above the floor
-        opts = vpmrs.ResolutionSplitOpts(; sigma_floor=floorv,
-                                         enable_stretch_split=true)
+        # net attempted collapse past sigma_0^2 fires for any armed f_elong
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.drvpm[1] = -1.0          # sigma_0^2 + drvpm < 0
         c = vpmrs.split_particles!(pf, opts)
-        @test c.n_split_elongate == 1 && pf.np == 2
-        # pair2 children keep sigma_c = sigma_p = floor and inherit
-        # sigma_0 = floor => the guard (sigma_0 > floor) permanently
-        # disarms the floor trigger for the lineage
-        @test all(rs.sigma_0[i] == floorv for i in 1:2)
-        @test vpmrs.split_particles!(pf, opts) == NTzero
-        @test pf.np == 2
+        @test c.n_split_elongate == 1
     end
 
-    @testset "grow wins when both sides fire" begin
+    @testset "compress-then-relax cancels (signed net accumulator)" begin
         pf = one_parent_field(; sigma=0.05)
         rs = pf.resolution_split
-        rs.exposure[1] = 5.0                    # shrink armed and firing
-        rs.dvisc[1] = 1.0                       # viscous-dominated grow
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04, log_stretch_max=1.0,
+        vpmrs._rsplit_accumulate_dsigma2!(rs, 1, 0.0, 4e-3)   # compression...
+        vpmrs._rsplit_accumulate_dsigma2!(rs, 1, 0.0, -4e-3)  # ...then relax back
+        @test rs.drvpm[1] == 0
+        opts = vpmrs.ResolutionSplitOpts(; f_comp=0.5, f_elong=0.3,
+                                         enable_stretch_split=true)
+        @test vpmrs.split_particles!(pf, opts) == NTzero
+        @test pf.np == 1
+    end
+
+    @testset "double fire viscous vs compress: larger ratio excess wins" begin
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5, f_comp=0.5,
+                                         enable_viscous_split=true,
+                                         enable_stretch_split=true)
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 8e-3
+        pf.resolution_split.drvpm[1] = 4e-3          # both fire; viscous excess larger
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_viscous == 1 && c.n_split_compress == 0
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 4e-3
+        pf.resolution_split.drvpm[1] = 8e-3          # compress excess larger
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_compress == 1 && c.n_split_viscous == 0
+    end
+
+    @testset "viscous (grow) wins over elongate (shrink)" begin
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 4e-3
+        pf.resolution_split.drvpm[1] = -2e-3         # elongate armed and firing
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5, f_elong=0.3,
                                          enable_viscous_split=true,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_split_viscous == 1 && c.n_split_elongate == 0 && pf.np == 4
     end
 
-    @testset "routed-but-disabled mechanism: skip + count, never reroute" begin
-        # viscous-dominated grow event with viscous mechanism OFF
+    @testset "firing-but-disabled mechanism: skip + count, never reroute" begin
+        # viscous fires with the viscous mechanism OFF
         pf = one_parent_field(; sigma=0.05)
         pf.resolution_split.dvisc[1] = 1.0
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_skipped_mech_disabled == 1 && pf.np == 1
         @test c.n_split_compress == 0          # not rerouted to tri3
-        # shrink event with the stretch mechanism OFF
+        # elongate fires with the stretch mechanism OFF
         pf = one_parent_field(; sigma=0.05)
-        pf.resolution_split.exposure[1] = 5.0
-        opts = vpmrs.ResolutionSplitOpts(; log_stretch_max=1.0,
+        pf.resolution_split.drvpm[1] = -1.0
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=0.3,
                                          enable_viscous_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_skipped_mech_disabled == 1 && pf.np == 1
@@ -592,24 +594,51 @@ end
     @testset "capacity skip counter" begin
         pf = one_parent_field(; sigma=0.05, maxp=3)  # tetra4 needs +3 slots
         pf.resolution_split.dvisc[1] = 1.0
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04,
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5,
                                          enable_viscous_split=true)
         c = vpmrs.split_particles!(pf, opts)
         @test c.n_skipped_capacity == 1 && c.n_split_viscous == 0 && pf.np == 1
     end
 
+    @testset "emission clamp: child sigma_c clamped, vol consistent" begin
+        # tetra4 children would be sigma_c = 0.05*4^(-1/3) ~ 0.0315
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5, sigma_max=0.02,
+                                         enable_viscous_split=true)
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 1.0
+        vpmrs.split_particles!(pf, opts)
+        for i in 1:pf.np
+            sig = vpmrs.get_sigma(pf, i)[]
+            @test sig == 0.02
+            @test vpmrs.get_vol(pf, i)[] ≈ 4/3*pi*sig^3 rtol=1e-12
+            @test pf.resolution_split.sigma_0[i] == sig
+        end
+        # sigma_min clamp on the same kernel
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5, sigma_min=0.04,
+                                         enable_viscous_split=true)
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.dvisc[1] = 1.0
+        vpmrs.split_particles!(pf, opts)
+        for i in 1:pf.np
+            @test vpmrs.get_sigma(pf, i)[] == 0.04
+        end
+        # NaN bounds: unclamped
+        @test vpmrs._rsplit_clamp_sigma(0.7, NaN, NaN) == 0.7
+        @test vpmrs._rsplit_clamp_sigma(0.7, 0.1, NaN) == 0.7
+        @test vpmrs._rsplit_clamp_sigma(0.05, 0.1, NaN) == 0.1
+        @test vpmrs._rsplit_clamp_sigma(0.7, NaN, 0.5) == 0.5
+    end
+
     @testset "multi-particle pass: mixed routing in one loop" begin
         pf = rsplit_field(; np=0, maxp=50)
-        # particles 1-2 sit above the 0.04 cap (grow); particle 3 stays below
-        # it so only its exposure (shrink) fires — grow would win otherwise
-        for (k, sig) in enumerate((0.05, 0.05, 0.03))
-            vpmrs.add_particle(pf, (0.5k, 0.0, 0.0), (0.0, 0.0, 1.0), sig)
+        for k in 1:3
+            vpmrs.add_particle(pf, (0.5k, 0.0, 0.0), (0.0, 0.0, 1.0), 0.05)
         end
         rs = vpmrs.enable_resolution_split!(pf)
-        rs.dvisc[1] = 1.0                       # grow viscous => tetra4
-        rs.drvpm[2] = 1.0                       # grow rVPM => tri3 (dvisc < drvpm)
-        rs.exposure[3] = 5.0                    # shrink => pair2
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=0.04, log_stretch_max=1.0,
+        rs.dvisc[1] = 1.0                       # viscous => tetra4
+        rs.drvpm[2] = 1.0                       # compress => tri3
+        rs.drvpm[3] = -1.0                      # elongate => pair2
+        opts = vpmrs.ResolutionSplitOpts(; f_visc=0.5, f_comp=0.5, f_elong=0.3,
                                          enable_viscous_split=true,
                                          enable_stretch_split=true)
         c = vpmrs.split_particles!(pf, opts)
@@ -628,7 +657,7 @@ end
         on_rep = i -> vpmrs._rsplit_reset_slot!(rs, i, 0.077)
         on_rep(1)
         @test rs.sigma_0[1] == 0.077
-        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0)
     end
 end
 
@@ -650,17 +679,52 @@ end
         assert_delta_sigma2_conservation(pf, s0)
     end
 
-    @testset "euler + sigma_guard clamp: applied delta attributed" begin
-        pf = rsplit_field()
-        vpmrs.enable_resolution_split!(pf)
-        s0 = [sigma2_of(pf, i) for i in 1:pf.np]
-        # Tight ceil forces the clamp to engage; the accumulator must record
-        # the applied (clamped) delta, keeping the invariant exact.
-        guard = (; floor=0.05, ceil=0.105)
-        for _ in 1:5
-            vpmrs._euler(pf, 1e-2; sigma_guard=guard)
-        end
-        assert_delta_sigma2_conservation(pf, s0)
+    @testset "euler + sigma_guard clamp: ATTEMPTED delta attributed" begin
+        # Freeze sigma with floor == ceil == current sigma: the applied delta
+        # is exactly zero every step, but the accumulator must keep accruing
+        # the attempted (pre-clamp) delta so triggers still fire at the
+        # clamps (Ryan 2026-09-08).
+        pf = rsplit_field(; np=1)
+        rs = vpmrs.enable_resolution_split!(pf)
+        sig0 = vpmrs.get_sigma(pf, 1)[]
+        guard = (; floor=sig0, ceil=sig0)
+        vpmrs._euler(pf, 1e-2; sigma_guard=guard)
+        @test vpmrs.get_sigma(pf, 1)[] == sig0        # pinned
+        d1 = rs.drvpm[1]
+        @test d1 != 0                                  # attempted accrues
+        vpmrs._euler(pf, 1e-2; sigma_guard=guard)
+        @test vpmrs.get_sigma(pf, 1)[] == sig0
+        @test abs(rs.drvpm[1]) > abs(d1)               # ...and keeps accruing
+        @test sign(rs.drvpm[1]) == sign(d1)
+
+        # and the matching fractional trigger fires despite frozen sigma
+        f_tiny = 1e-9
+        opts = rs.drvpm[1] > 0 ?
+            vpmrs.ResolutionSplitOpts(; f_comp=f_tiny,
+                                      enable_stretch_split=true) :
+            vpmrs.ResolutionSplitOpts(; f_elong=f_tiny,
+                                      enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_compress + c.n_split_elongate == 1
+        # fresh children re-arm only after new attempted deformation
+        @test vpmrs.split_particles!(pf, opts) ==
+              (; n_split_viscous=0, n_split_compress=0, n_split_elongate=0,
+                 n_children_elongate=0,
+                 n_skipped_capacity=0, n_skipped_mech_disabled=0)
+    end
+
+    @testset "euler_exp + sigma_guard clamp: attempted accrues while pinned" begin
+        pf = rsplit_field(; np=1, integration=vpmrs.euler_exp)
+        rs = vpmrs.enable_resolution_split!(pf)
+        sig0 = vpmrs.get_sigma(pf, 1)[]
+        guard = (; floor=sig0, ceil=sig0)
+        vpmrs._euler_exp(pf, 1e-2; sigma_guard=guard)
+        @test vpmrs.get_sigma(pf, 1)[] == sig0
+        d1 = rs.drvpm[1]
+        @test d1 != 0
+        vpmrs._euler_exp(pf, 1e-2; sigma_guard=guard)
+        @test vpmrs.get_sigma(pf, 1)[] == sig0
+        @test abs(rs.drvpm[1]) > abs(d1)
     end
 
     @testset "euler + CoreSpreading: viscous side is exactly 2ν·dt per step" begin
@@ -770,21 +834,22 @@ end
 
     @testset "split pass fires on cadence" begin
         pf = rsplit_field(; np=2, maxp=30)
-        # absolute cap far below current σ => both particles grow-trigger
-        # (route tetra4 or tri3 depending on the accumulated Δσ² attribution,
-        # so both mechanisms are enabled)
-        opts = vpmrs.ResolutionSplitOpts(; sigma_max=1e-6,
-                                         enable_viscous_split=true,
+        # pre-stamp a compress credit far past the f_comp threshold (the
+        # in-march accumulation adds only tiny deltas on top)
+        rs = vpmrs.enable_resolution_split!(pf)
+        rs.drvpm[1] = 1.0; rs.drvpm[2] = 1.0
+        opts = vpmrs.ResolutionSplitOpts(; f_comp=0.5,
                                          enable_stretch_split=true)
         vpmrs.run_vpm!(pf, 1e-2, 2; split_every=2, split_opts=opts,
                        verbose=false)
-        @test 6 <= pf.np <= 8                   # one pass at i=2: 2 parents ->
-                                                # 3 (tri3) or 4 (tetra4) each
+        @test pf.np == 6                        # one pass at i=2: 2 x tri3
         for i in 1:pf.np                        # children born fresh
             @test pf.resolution_split.sigma_0[i] == vpmrs.get_sigma(pf, i)[]
         end
         # off-cadence: no pass fires within nsteps
         pf2 = rsplit_field(; np=2, maxp=30)
+        rs2 = vpmrs.enable_resolution_split!(pf2)
+        rs2.drvpm[1] = 1.0; rs2.drvpm[2] = 1.0
         vpmrs.run_vpm!(pf2, 1e-2, 2; split_every=3, split_opts=opts,
                        verbose=false)
         @test pf2.np == 2
@@ -801,7 +866,7 @@ end
         @test pf.np == 1
         # sigma_0 := merged σ, accumulators zeroed (merged particle = new entity)
         @test rs.sigma_0[1] == vpmrs.get_sigma(pf, 1)[]
-        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0, 0)
+        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0)
     end
 
     @testset "merge with resolution_split === nothing is a no-op branch" begin
@@ -811,6 +876,170 @@ end
         vpmrs.merge_particles!(pf; r_merge=5.0)
         @test pf.np == 1
         @test pf.resolution_split === nothing
+    end
+end
+
+# --------------------------------------------------------------------------
+# t10 — adaptive in-line elongation kernel (theory doc §3, Ryan 2026-09-09)
+# --------------------------------------------------------------------------
+@testset "t10: adaptive elongation (plan, conservation, composition)" begin
+    Random.seed!(260910)
+    PHI = 2.75
+
+    "Stamp parent i's split state for an elongation event: reference σ₀,
+    attempted accumulator drvpm, and realized σ_p on the particle."
+    function stamp_elong!(pf, i, sigma0, drvpm, sigma_p)
+        rs = pf.resolution_split
+        rs.sigma_0[i] = sigma0
+        rs.drvpm[i] = drvpm
+        vpmrs.get_sigma(pf, i)[] = sigma_p
+        return rs
+    end
+
+    @testset "plan: m = round(λ·σ₀/σ_c), s tiles λ·ℓ₀ (unclamped)" begin
+        sigma0 = 0.05; f = 0.3
+        # trigger boundary exactly: σ_att = (1−f)σ₀, realized σ_p = σ_att
+        drvpm = ((1 - f)^2 - 1) * sigma0^2
+        sigma_p = (1 - f) * sigma0
+        lam = 1 / (1 - f)^2                       # 2.0408
+        pf = one_parent_field(; sigma=sigma0)
+        stamp_elong!(pf, 1, sigma0, drvpm, sigma_p)
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=f, elongate_overlap=PHI,
+                                         enable_stretch_split=true)
+        m, s = vpmrs._elongate_plan(pf.resolution_split, 1, opts, sigma_p)
+        @test m == 3                              # m_ideal = (1−f)⁻³ = 2.915
+        @test s ≈ lam * (sigma0/PHI) / 3 rtol=1e-12
+        # volume rule within rounding: m·σ_c³ ≈ σ₀³
+        @test abs(m - lam^1.5) < 0.5
+        # spacing near the target child overlap (off only by m rounding)
+        @test s ≈ (sigma_p/PHI) * (lam^1.5/m) rtol=1e-12
+    end
+
+    @testset "plan saturation: m_max and attempted-collapse fall back to Φ_t spacing" begin
+        sigma0 = 0.05
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=0.3, elongate_overlap=PHI,
+                                         elongate_m_max=4,
+                                         enable_stretch_split=true)
+        # λ = 4 with σ_p = 0.5σ₀ → m_ideal = 8 > m_max
+        pf = one_parent_field(; sigma=sigma0)
+        stamp_elong!(pf, 1, sigma0, -0.75*sigma0^2, 0.5*sigma0)
+        m, s = vpmrs._elongate_plan(pf.resolution_split, 1, opts, 0.5*sigma0)
+        @test m == 4
+        @test s ≈ 0.5*sigma0/PHI rtol=1e-12       # overlap retained, under-tiles
+        # attempted total collapse: σ₀² + drvpm ≤ 0
+        pf = one_parent_field(; sigma=sigma0)
+        stamp_elong!(pf, 1, sigma0, -2*sigma0^2, 0.5*sigma0)
+        m, s = vpmrs._elongate_plan(pf.resolution_split, 1, opts, 0.5*sigma0)
+        @test m == 4
+        @test s ≈ 0.5*sigma0/PHI rtol=1e-12
+    end
+
+    @testset "conservation + geometry for adaptive m (split_particles!)" begin
+        sigma0 = 0.05; f = 0.3
+        drvpm = ((1 - f)^2 - 1) * sigma0^2 * 1.0001   # just past trigger
+        sigma_p = (1 - f) * sigma0
+        for trial in 1:5
+            X0 = Tuple(randn(3)); G0 = Tuple(randn(3))
+            dir = Tuple(normalize(randn(3)))
+            pf = one_parent_field(; X=X0, Gamma=G0, sigma=sigma0,
+                                    circulation=0.8)
+            stamp_elong!(pf, 1, sigma0, drvpm, sigma_p)
+            # feed the direction through the axis average (coherent samples)
+            vpmrs._rsplit_accumulate!(pf.resolution_split, 1, 1.0, dir...)
+            opts = vpmrs.ResolutionSplitOpts(; f_elong=f,
+                                             elongate_overlap=PHI,
+                                             enable_stretch_split=true)
+            c = vpmrs.split_particles!(pf, opts)
+            m = pf.np
+            @test c.n_split_elongate == 1 && c.n_children_elongate == m == 3
+            Xs, Gs = children_X(pf), children_G(pf)
+            @test sum(Gs) ≈ collect(G0) atol=1e-14
+            @test sum(Xs) ./ m ≈ collect(X0) atol=1e-13
+            I0 = 0.5 .* (collect(X0) × collect(G0))
+            @test 0.5 .* sum(Xs[k] × Gs[k] for k in 1:m) ≈ I0 atol=1e-14
+            # in-line geometry: equispaced along dir, middle child at parent
+            offs = sort([sum((x .- collect(X0)) .* collect(dir)) for x in Xs])
+            @test offs[2] ≈ 0 atol=1e-13
+            @test offs[3] - offs[2] ≈ offs[2] - offs[1] rtol=1e-10
+            for x in Xs   # no component off the line
+                d = x .- collect(X0)
+                @test norm(d .- sum(d .* collect(dir)) .* collect(dir)) < 1e-13
+            end
+            # σ_c = σ_p, circulation unchanged (crosswise cut), fresh state
+            for k in 1:m
+                @test vpmrs.get_sigma(pf, k)[] == sigma_p
+                @test vpmrs.get_circulation(pf, k)[] == 0.8
+                @test pf.resolution_split.sigma_0[k] == sigma_p
+            end
+            # angular impulse error within the t2 bound, a = (m−1)s/2
+            a = (offs[3] - offs[1]) / 2
+            A0 = (collect(X0) × (collect(X0) × collect(G0))) ./ 3
+            Ac = sum(Xs[k] × (Xs[k] × Gs[k]) for k in 1:m) ./ 3
+            @test norm(Ac - A0) <= a^2 * norm(collect(G0)) / 3 * (1 + 1e-12)
+        end
+    end
+
+    @testset "composition: two small splits ≡ one big split (exact-m regime)" begin
+        sigma0 = 0.05
+        r = 2.0^(-1/3)                            # per-step σ ratio → m_ideal = 2 exactly
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=0.2, elongate_overlap=PHI,
+                                         enable_stretch_split=true)
+        # step 1 of the two-step path
+        pf = one_parent_field(; sigma=sigma0)
+        stamp_elong!(pf, 1, sigma0, (r^2 - 1)*sigma0^2, r*sigma0)
+        m1, s1 = vpmrs._elongate_plan(pf.resolution_split, 1, opts, r*sigma0)
+        # step 2: a child of step 1 (σ₀ = rσ₀) stretches by the same ratio
+        pf2 = one_parent_field(; sigma=r*sigma0)
+        stamp_elong!(pf2, 1, r*sigma0, (r^2 - 1)*(r*sigma0)^2, r^2*sigma0)
+        m2, s2 = vpmrs._elongate_plan(pf2.resolution_split, 1, opts, r^2*sigma0)
+        # one-shot to the same final σ
+        pf3 = one_parent_field(; sigma=sigma0)
+        stamp_elong!(pf3, 1, sigma0, (r^4 - 1)*sigma0^2, r^2*sigma0)
+        m3, s3 = vpmrs._elongate_plan(pf3.resolution_split, 1, opts, r^2*sigma0)
+        @test m1 == m2 == 2
+        @test m3 == 4 == m1*m2                    # same child count...
+        @test s3 ≈ s2 rtol=1e-12                  # ...same final spacing
+    end
+
+    @testset "capacity: adaptive m needs m−1 slots" begin
+        sigma0 = 0.05; f = 0.3
+        drvpm = ((1 - f)^2 - 1) * sigma0^2 * 1.0001
+        pf = one_parent_field(; sigma=sigma0, maxp=2)  # m=3 needs +2 slots
+        stamp_elong!(pf, 1, sigma0, drvpm, (1 - f)*sigma0)
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=f, elongate_overlap=PHI,
+                                         enable_stretch_split=true)
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_skipped_capacity == 1 && c.n_split_elongate == 0 && pf.np == 1
+    end
+
+    @testset "legacy fallback: elongate_overlap = NaN keeps fixed pair2" begin
+        pf = one_parent_field(; sigma=0.05)
+        pf.resolution_split.drvpm[1] = -2e-3
+        opts = vpmrs.ResolutionSplitOpts(; f_elong=0.3,
+                                         enable_stretch_split=true)
+        @test isnan(opts.elongate_overlap)        # NaN is the FLOWVPM default
+        c = vpmrs.split_particles!(pf, opts)
+        @test c.n_split_elongate == 1 && c.n_children_elongate == 2 && pf.np == 2
+    end
+
+    @testset "opts validation" begin
+        @test_throws ArgumentError vpmrs.ResolutionSplitOpts(; elongate_overlap=-1.0)
+        @test_throws ArgumentError vpmrs.ResolutionSplitOpts(; elongate_m_max=1)
+    end
+end
+
+# --------------------------------------------------------------------------
+# t11 — circulation bookkeeping (Ryan 2026-09-09): lengthwise bundle
+# division (tri3/tetra4) carries circ/m; crosswise cuts keep circ
+# --------------------------------------------------------------------------
+@testset "t11: circulation bookkeeping per kernel" begin
+    for (kern, m, share) in ((:tetra4, 4, 1/4), (:tri3, 3, 1/3), (:pair2, 2, 1.0))
+        pf = one_parent_field(; circulation=0.8)
+        apply_kernel!(pf, kern)
+        @test pf.np == m
+        for k in 1:m
+            @test vpmrs.get_circulation(pf, k)[] ≈ 0.8*share rtol=1e-12
+        end
     end
 end
 

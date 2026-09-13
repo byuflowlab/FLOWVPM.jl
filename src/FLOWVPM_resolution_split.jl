@@ -13,8 +13,14 @@
     * Stretch (Mechanism B, spec §3b + Ryan 2026-09-07 two-regime ruling):
       - compression regime (grow side): 3-child triangle in the plane normal
         to the averaged stretch axis, `σ_c = σ_p/√3` (W5 mass-per-length rule);
-      - elongation regime (shrink side): 2 in-line children along the stretch
-        axis with `σ_c = σ_p` (re-discretizes length; cross-section unchanged).
+      - elongation regime (shrink side): in-line children along the stretch
+        axis with `σ_c = σ_p` (re-discretizes length; cross-section
+        unchanged). With `elongate_overlap` set (the driver default), child
+        count and spacing are ADAPTIVE — m = clamp(round(λ_att·σ₀/σ_c), 2,
+        elongate_m_max) children tile the accumulated stretch at the target
+        overlap (theory doc §3, Ryan 2026-09-09); with `elongate_overlap =
+        NaN` the legacy fixed 2-child kernel at `elongate_offset_ratio`
+        spacing is used.
 
     The split plane/axis uses the sign-invariant running average of the
     stretching vector S accumulated since the particle's last split (reset on
@@ -41,20 +47,21 @@ semantics mirror `i ← np` (see `_rsplit_swap!`/`_rsplit_zero!`).
 Semantics: mean stretch axis = `normalize(axis[:,i])`; coherence =
 `|axis[:,i]|/weight[i] ∈ (0,1]`. Each sample `s = dt·S` is sign-aligned to the
 current sum (`dot(s, axis) < 0 ⇒ s ← −s`) before adding, so anti-parallel
-flapping accumulates instead of cancelling. `exposure` is the accumulated
-separation exposure `Σ dt·λ` with `λ = (Γ·S)/|Γ|²` (log length-stretch along
-Γ̂). All of axis/weight/exposure/dvisc/drvpm reset on split and on merge (the
-merged representative is a new entity).
+flapping accumulates instead of cancelling. `dvisc`/`drvpm` are per-mechanism
+ATTEMPTED Δσ² accumulators (Ryan 2026-09-08 fractional-gating ruling): each
+records the pre-clamp σ² change its mechanism tried to apply since the
+particle's last split, so a particle pinned at the sigma_guard floor/ceiling
+keeps accruing credit and its trigger still fires. `drvpm` is a signed net
+(compression + and elongation − cancel — a particle that compresses then
+relaxes back never splits); `dvisc` is nonnegative by physics. All of
+axis/weight/dvisc/drvpm reset on split and on merge (the merged representative
+is a new entity).
 
-Anti-refire WITHOUT cooldown — each trigger is self-limiting via its own reset:
-* ratio trigger: children/merged rep get fresh `sigma_0` → ratio restarts at 1;
-* abs cap: grow-side kernels (tetra4, tri3) birth children at `σ_c < σ_p ≈ cap`
-  → must regrow to refire (pair2's `σ_c = σ_p` only fires on shrink events,
-  far from the cap);
-* exposure: reset to 0 on split → must re-accumulate `log_stretch_max`;
-* floor: fires only when `sigma_0 > floor` — children born at/below the floor
-  can never refire it (floor trigger permanently disarmed for that lineage;
-  the exposure trigger still covers them).
+Anti-refire WITHOUT cooldown — every trigger reads only `sigma_0` and the
+accumulators, and `_rsplit_reset_slot!` restamps `sigma_0 = σ_c` and zeroes
+the accumulators on each child (and on merged representatives), so a fresh
+child — even one still pinned at a clamp (pair2's `σ_c = σ_p` included) —
+re-arms only after accruing fresh attempted deformation.
 """
 mutable struct ResolutionSplitState{R}
     # per-particle arrays, lockstep with pfield.particles columns — that's ALL
@@ -62,15 +69,13 @@ mutable struct ResolutionSplitState{R}
     sigma_0::Vector{R}     # σ reference at creation / last split / last merge
     axis::Matrix{R}        # (3, maxp) sign-aligned running Σ dt·S since last split
     weight::Vector{R}      # Σ dt·|S| since last split (coherence denominator)
-    exposure::Vector{R}    # Σ dt·λ along Γ̂ since last split (shrink separation exposure)
-    dvisc::Vector{R}       # Σ Δσ² from viscous spreading   (attribution → viscous mech)
-    drvpm::Vector{R}       # Σ Δσ² from rVPM compression    (attribution → stretch mech)
+    dvisc::Vector{R}       # Σ attempted Δσ² from viscous spreading (≥ 0)
+    drvpm::Vector{R}       # Σ attempted Δσ² from rVPM area evolution (signed net)
 end
 
 ResolutionSplitState{R}(maxparticles::Int) where {R} = ResolutionSplitState{R}(
     zeros(R, maxparticles),
     zeros(R, 3, maxparticles),
-    zeros(R, maxparticles),
     zeros(R, maxparticles),
     zeros(R, maxparticles),
     zeros(R, maxparticles),
@@ -102,52 +107,84 @@ end
 """
     ResolutionSplitOpts{R}(; kwargs...)
 
-Flat options for `split_particles!(pfield, opts::ResolutionSplitOpts)`. Each
-trigger threshold is independently disabled by `NaN` (the default); a particle
-splits when its quantity crosses an armed threshold AND the routed mechanism is
-enabled (disabled mechanism ⇒ skip + count, never reroute).
+Flat options for `split_particles!(pfield, opts::ResolutionSplitOpts)`.
+Triggers are PER-MECHANISM growth fractions relative to the particle's own
+`sigma_0` (Ryan 2026-09-08 ruling), each independently disabled by `NaN` (the
+default): mechanism k fires when its own attempted Δσ² accumulator crosses its
+fraction, i.e. `sqrt(σ₀² + Δσ²_k)/σ₀` leaves `[1 − f_elong, 1 + f_k]` on the
+corresponding side. The trigger IS the mechanism — there is no separate
+routing step. A firing mechanism that is not enabled skips + counts, never
+reroutes.
+
+`sigma_min`/`sigma_max` are CLAMPS, not triggers: emitted children are clamped
+into `[sigma_min, sigma_max]` (NaN = unbounded on that side). In-step σ is
+clamped separately by the integrator's `sigma_guard` (052c floor/ceil — a
+permanent partner of splitting, no longer a band-aid); accumulation is
+pre-clamp, so clamped particles keep firing.
 
 Naming: `viscous_*` is the isotropic viscous mechanism (spec §3a); the stretch
-mechanism's two regimes are `compress_*` (negative stretch → 3-child triangle)
-and `elongate_*` (positive stretch → 2 in-line children). Both stretch regimes
-share `enable_stretch_split`.
+mechanism's two regimes are `compress_*` (net rVPM compression → 3-child
+triangle) and `elongate_*` (net rVPM elongation → 2 in-line children). Both
+stretch regimes share `enable_stretch_split`.
 """
 struct ResolutionSplitOpts{R}
-    # triggers — NaN disables each independently
-    sigma_max::R              # grow:   σ > sigma_max (absolute cap)
-    sigma_growth_ratio_max::R # grow:   σ/σ₀ > this
-    log_stretch_max::R        # shrink: accumulated log length-stretch (exposure) > this
-    sigma_floor::R            # shrink: σ pinned on the floor (σ ≤ floor·(1+1e-6))
+    # per-mechanism fractional triggers — NaN disables each independently
+    f_visc::R                 # viscous:  sqrt(σ₀² + dvisc)/σ₀ > 1 + f_visc
+    f_comp::R                 # compress: sqrt(σ₀² + drvpm)/σ₀ > 1 + f_comp (drvpm > 0)
+    f_elong::R                # elongate: sqrt(max(σ₀² + drvpm, 0))/σ₀ < 1 − f_elong
+    # σ bounds — clamps on emitted children, NaN = unbounded
+    sigma_min::R
+    sigma_max::R
     # mechanisms
     enable_viscous_split::Bool # §3a: isotropic 4-child tetrahedron
     enable_stretch_split::Bool # §3b + 2026-09-07 two-regime ruling
     # child placement — child offset from parent center, as a ratio of parent σ
     viscous_offset_ratio::R   # tetra vertex radius / σ_p (default: second-moment match)
     compress_offset_ratio::R  # tri3 ring radius / σ_p (compression; default spacing 1.8 σ_c)
-    elongate_offset_ratio::R  # pair2 half-spacing / σ_p (elongation; default spacing 1.0 σ_p)
+    elongate_offset_ratio::R  # LEGACY pair2 half-spacing / σ_p (used only when elongate_overlap is NaN)
+    # adaptive in-line elongation (theory doc §3): child count m = clamp(
+    # round(λ_att·σ₀/σ_c), 2, elongate_m_max) tiles the stretched length
+    # λ_att·σ₀/elongate_overlap at spacing ≈ σ_c/elongate_overlap
+    elongate_overlap::R       # target child overlap Φ_t = σ_c/spacing; NaN → legacy fixed pair2
+    elongate_m_max::Int       # cap on children per elongation split (≥ 2)
     # split-plane orientation for the stretch mechanism
     use_stretch_axis::Bool    # false → split plane ⟂ Γ̂ always (comparison arm)
     axis_coherence_min::R     # below this coherence → fall back to Γ̂ (still splits)
 end
 
 function ResolutionSplitOpts{R}(;
+            f_visc                 = R(NaN),
+            f_comp                 = R(NaN),
+            f_elong                = R(NaN),
+            sigma_min              = R(NaN),
             sigma_max              = R(NaN),
-            sigma_growth_ratio_max = R(NaN),
-            log_stretch_max        = R(NaN),
-            sigma_floor            = R(NaN),
             enable_viscous_split::Bool = false,
             enable_stretch_split::Bool = false,
             viscous_offset_ratio   = R(1.3503),
             compress_offset_ratio  = R(0.6),
             elongate_offset_ratio  = R(0.5),
+            elongate_overlap       = R(NaN),
+            elongate_m_max::Int    = 4,
             use_stretch_axis::Bool = true,
             axis_coherence_min     = R(0.5),
         ) where {R}
-    return ResolutionSplitOpts{R}(R(sigma_max), R(sigma_growth_ratio_max),
-                R(log_stretch_max), R(sigma_floor),
+    isnan(f_visc) || f_visc > 0 || throw(ArgumentError(
+        "f_visc must be positive (or NaN to disable), got $(f_visc)"))
+    isnan(f_comp) || f_comp > 0 || throw(ArgumentError(
+        "f_comp must be positive (or NaN to disable), got $(f_comp)"))
+    isnan(f_elong) || 0 < f_elong < 1 || throw(ArgumentError(
+        "f_elong must be in (0, 1) (or NaN to disable), got $(f_elong)"))
+    isnan(elongate_overlap) || elongate_overlap > 0 || throw(ArgumentError(
+        "elongate_overlap must be positive (or NaN for the legacy fixed " *
+        "pair2 kernel), got $(elongate_overlap)"))
+    elongate_m_max >= 2 || throw(ArgumentError(
+        "elongate_m_max must be at least 2, got $(elongate_m_max)"))
+    return ResolutionSplitOpts{R}(R(f_visc), R(f_comp), R(f_elong),
+                R(sigma_min), R(sigma_max),
                 enable_viscous_split, enable_stretch_split,
                 R(viscous_offset_ratio), R(compress_offset_ratio),
                 R(elongate_offset_ratio),
+                R(elongate_overlap), elongate_m_max,
                 use_stretch_axis, R(axis_coherence_min))
 end
 
@@ -161,7 +198,6 @@ ResolutionSplitOpts(; kwargs...) = ResolutionSplitOpts{FLOAT_TYPE}(; kwargs...)
     rs.sigma_0[i] = sigma
     rs.axis[1, i] = 0; rs.axis[2, i] = 0; rs.axis[3, i] = 0
     rs.weight[i] = 0
-    rs.exposure[i] = 0
     rs.dvisc[i] = 0
     rs.drvpm[i] = 0
     return nothing
@@ -182,7 +218,6 @@ particle is a new entity, W3).
     rs.axis[2, i] = rs.axis[2, np]
     rs.axis[3, i] = rs.axis[3, np]
     rs.weight[i] = rs.weight[np]
-    rs.exposure[i] = rs.exposure[np]
     rs.dvisc[i] = rs.dvisc[np]
     rs.drvpm[i] = rs.drvpm[np]
     return nothing
@@ -193,7 +228,6 @@ end
     rs.sigma_0[np] = 0
     rs.axis[1, np] = 0; rs.axis[2, np] = 0; rs.axis[3, np] = 0
     rs.weight[np] = 0
-    rs.exposure[np] = 0
     rs.dvisc[np] = 0
     rs.drvpm[np] = 0
     return nothing
@@ -203,15 +237,15 @@ end
 # ACCUMULATION (integrator-inline; caller guards on `rs === nothing`)
 ################################################################################
 """
-    _rsplit_accumulate!(rs, i, dt, sx, sy, sz, gx, gy, gz)
+    _rsplit_accumulate!(rs, i, dt, sx, sy, sz)
 
-Accumulate one stretching sample `S = (sx,sy,sz)` (and strength `Γ = (gx,gy,gz)`)
-for particle `i` over time weight `dt`: sign-invariant axis average, coherence
-weight, and separation exposure `λ = (Γ·S)/|Γ|²` — all in a single pass, called
-where S is already in hand inside the integrator (~20 flops).
+Accumulate one stretching sample `S = (sx,sy,sz)` for particle `i` over time
+weight `dt`: sign-invariant axis average and coherence weight (split DIRECTION
+state only — trigger state lives in the Δσ² accumulators), called where S is
+already in hand inside the integrator (~15 flops).
 """
 @inline function _rsplit_accumulate!(rs::ResolutionSplitState, i::Int, dt,
-                                     sx, sy, sz, gx, gy, gz)
+                                     sx, sy, sz)
     n = sqrt(sx*sx + sy*sy + sz*sz)
     n > 0 || return nothing
     ax = rs.axis
@@ -219,18 +253,18 @@ where S is already in hand inside the integrator (~20 flops).
     sgn = d < 0 ? -one(n) : one(n)
     ax[1, i] += sgn*dt*sx; ax[2, i] += sgn*dt*sy; ax[3, i] += sgn*dt*sz
     rs.weight[i] += dt*n
-    g2 = gx*gx + gy*gy + gz*gz
-    g2 > 0 && (rs.exposure[i] += dt*(gx*sx + gy*sy + gz*sz)/g2)   # λ = Γ·S/|Γ|²
     return nothing
 end
 
 """
     _rsplit_accumulate_dsigma2!(rs, i, dv, dr)
 
-Accumulate the applied Δσ² attribution for particle `i`: `dv` from viscous
-spreading, `dr` from rVPM compression — written inline at each site where the
-integrator/viscous scheme applies a σ update. Routes grow-side split events to
-the dominant mechanism.
+Accumulate the ATTEMPTED (pre-clamp) Δσ² attribution for particle `i`: `dv`
+from viscous spreading, `dr` from the rVPM area evolution (signed: compression
++, elongation −) — written inline at each site where the integrator/viscous
+scheme computes a σ update, BEFORE any sigma_guard floor/ceil clamp, so
+clamp-pinned particles keep accruing and their per-mechanism fractional
+triggers still fire (Ryan 2026-09-08).
 """
 @inline function _rsplit_accumulate_dsigma2!(rs::ResolutionSplitState, i::Int, dv, dr)
     rs.dvisc[i] += dv
@@ -292,15 +326,25 @@ _inplane_angle() = 2pi*rand()
 ################################################################################
 # SHARED CHILD EMISSION
 ################################################################################
+"NaN-tolerant σ clamp: NaN bound = unbounded on that side."
+@inline function _rsplit_clamp_sigma(s, smin, smax)
+    isnan(smax) || (s = min(s, smax))
+    isnan(smin) || (s = max(s, smin))
+    return s
+end
+
 """
     _rsplit_emit_child!(pfield, rs, slot, x, y, z, gx, gy, gz, sigma_c, circ,
-                        is_stat)
+                        is_stat, opts)
 
 Emit one split child. `slot > 0` overwrites that existing column in place
 (child 1 reuses the parent's slot); `slot == 0` appends via `add_particle`
 (caller guarantees headroom). Either way the child gets:
 
-* `vol = (4/3)π σ_c³` — W5 σ³-consistent hygiene rule, NOT `vol_p/m`. This
+* `σ_c` clamped into `[opts.sigma_min, opts.sigma_max]` (NaN = unbounded) —
+  the σ bounds are clamp operations, never triggers (Ryan 2026-09-08);
+* `vol = (4/3)π σ_c³` from the CLAMPED σ_c — W5 σ³-consistent hygiene rule,
+  NOT `vol_p/m`. This
   intentionally breaks merge inversion (merging's `σ = cbrt(Σσ³)` no longer
   reproduces the parent) and, for the pair2 kernel's `σ_c = σ_p`, doubles the
   σ-implied total volume — accepted, `vol` feeds no dynamics.
@@ -310,8 +354,10 @@ Emit one split child. `slot > 0` overwrites that existing column in place
 * fresh ResolutionSplitState (`sigma_0 = σ_c`, accumulators zero).
 """
 function _rsplit_emit_child!(pfield, rs::ResolutionSplitState, slot::Int,
-                             x, y, z, gx, gy, gz, sigma_c, circ, is_stat::Bool)
+                             x, y, z, gx, gy, gz, sigma_c, circ, is_stat::Bool,
+                             opts::ResolutionSplitOpts)
     R = eltype(pfield.particles)
+    sigma_c = _rsplit_clamp_sigma(sigma_c, opts.sigma_min, opts.sigma_max)
     vol_c = R(4)/R(3) * pi * sigma_c^3
     if slot == 0
         add_particle(pfield, (x, y, z), (gx, gy, gz), sigma_c;
@@ -350,7 +396,7 @@ end
 # KERNELS
 ################################################################################
 """
-    _split_viscous_tetra4!(pfield, rs, i, offset_ratio)
+    _split_viscous_tetra4!(pfield, rs, i, opts)
 
 Viscous mechanism (spec §3a): isotropic 4-child split of particle `i` on the
 vertices of a randomly oriented regular tetrahedron centered on the parent.
@@ -360,25 +406,28 @@ spec §3a; edge = a·√(8/3)), all children `Γ_p/4 ∥ Γ_p`. Child 1 overwrit
 slot `i`; 3 children appended (caller guarantees headroom).
 """
 function _split_viscous_tetra4!(pfield, rs::ResolutionSplitState, i::Int,
-                                offset_ratio)
+                                opts::ResolutionSplitOpts)
     x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
     sigma_c = sigma_p * 4.0^(-1/3)
-    a = offset_ratio * sigma_p
+    a = opts.viscous_offset_ratio * sigma_p
     Q = _random_rotation()
     cgx, cgy, cgz = gx/4, gy/4, gz/4
+    # lengthwise bundle division: each of the 4 filaments carries 1/4 of the
+    # parent's vorticity flux (circulation is diagnostic-only today)
+    circ = circ/4
     # canonical unit tetrahedron vertices: (±1,±1,±1)-family / √3
     s3 = sqrt(3)
     for (k, v) in enumerate(((1, 1, 1), (1, -1, -1), (-1, 1, -1), (-1, -1, 1)))
         d = Q * SVector{3,Float64}(v[1]/s3, v[2]/s3, v[3]/s3)
         _rsplit_emit_child!(pfield, rs, k == 1 ? i : 0,
                             x0 + a*d[1], y0 + a*d[2], z0 + a*d[3],
-                            cgx, cgy, cgz, sigma_c, circ, is_stat)
+                            cgx, cgy, cgz, sigma_c, circ, is_stat, opts)
     end
     return nothing
 end
 
 """
-    _split_compress_tri3!(pfield, rs, i, ex, ey, ez, offset_ratio)
+    _split_compress_tri3!(pfield, rs, i, ex, ey, ez, opts)
 
 Stretch mechanism, COMPRESSION regime (negative stretch: the tube shortens
 and fattens — re-discretize the cross-section; doc §3b geometry): 3 children
@@ -388,15 +437,29 @@ random in-plane orientation. `σ_c = σ_p/√3` (W5 mass-per-length rule),
 ring radius `a = offset_ratio·σ_p` ⇒ triangle side `a√3`, i.e.
 `spacing/σ_c = 3·offset_ratio` (default 0.6 → spacing 1.8 σ_c; the
 moment-match value 1.155 is available by knob [D2]). Children `Γ_p/3 ∥ Γ_p`
-— parallel to the parent Γ, NOT forced along the axis. Child 1 overwrites
-slot `i`; 2 appended.
+— parallel to the parent Γ, NOT forced along the axis — each carrying
+`circulation/3` (lengthwise bundle division splits the vorticity flux).
+
+Child count is FIXED at m = 3 (Ryan 2026-09-09): re-discretizing the
+fattened cross-section into birth-sized cores wants `m ≈ (1+f_comp)²`
+filaments, so the triangle is matched to `f_comp ≈ √3−1 ≈ 0.73`; m = 2
+would impose an artificial transverse anisotropy on an axisymmetric
+fattening, so the triangle (smallest in-plane-isotropic arrangement) is
+kept even at smaller f_comp. Larger accumulated compression could be
+matched by higher m with a more complicated child shape (ring + center,
+two rings) — deliberately not pursued yet (theory doc §5). Child 1
+overwrites slot `i`; 2 appended.
 """
 function _split_compress_tri3!(pfield, rs::ResolutionSplitState, i::Int,
-                               ex, ey, ez, offset_ratio)
+                               ex, ey, ez, opts::ResolutionSplitOpts)
     x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
     sigma_c = sigma_p / sqrt(3)
-    a = offset_ratio * sigma_p
+    a = opts.compress_offset_ratio * sigma_p
     cgx, cgy, cgz = gx/3, gy/3, gz/3
+    # lengthwise bundle division: each of the 3 filaments carries 1/3 of the
+    # parent's vorticity flux (circulation is diagnostic-only today); the
+    # crosswise elongation cut, by contrast, keeps circulation unchanged
+    circ = circ/3
     # stable in-plane basis: cross the normal with its least-aligned
     # coordinate axis, then complete the right-handed triad
     ax_, ay_, az_ = abs(ex), abs(ey), abs(ez)
@@ -413,38 +476,105 @@ function _split_compress_tri3!(pfield, rs::ResolutionSplitState, i::Int,
         dx = a*(c*t1x + s*t2x); dy = a*(c*t1y + s*t2y); dz = a*(c*t1z + s*t2z)
         _rsplit_emit_child!(pfield, rs, k == 0 ? i : 0,
                             x0 + dx, y0 + dy, z0 + dz,
-                            cgx, cgy, cgz, sigma_c, circ, is_stat)
+                            cgx, cgy, cgz, sigma_c, circ, is_stat, opts)
     end
     return nothing
 end
 
 """
-    _split_elongate_pair2!(pfield, rs, i, ex, ey, ez, offset_ratio)
+    _split_elongate_pair2!(pfield, rs, i, ex, ey, ez, opts)
 
-Stretch mechanism, ELONGATION regime (positive stretch: the tube lengthens
-and thins — the cross-section is fine, re-discretize the LENGTH; Ryan
-2026-09-07 third ruling, superseding doc §3b's routing of shrink events to
-the triangle): 2 children on the line through the parent along `(ex,ey,ez)`
+Stretch mechanism, ELONGATION regime — LEGACY fixed 2-child kernel, used
+only when `opts.elongate_overlap` is NaN (the adaptive
+`_split_elongate_line!` replaced it as the default, Ryan 2026-09-09; kept
+as the comparison arm because its fixed spacing is dimensionally arbitrary —
+over/under-coverage ratio `2Φ(1−f_elong)³`, see theory doc §3): 2 children
+on the line through the parent along `(ex,ey,ez)`
 (averaged stretch axis or Γ̂ fallback) at `±b`, `b = offset_ratio·σ_p`
 (default 0.5 ⇒ spacing 1.0 σ_p — children stay well-overlapped), each child
 `Γ_p/2 ∥ Γ_p`, and **`σ_c = σ_p`** — core radius unchanged, each child
 represents half the segment length. Total Γ, centroid, linear impulse exact;
-angular impulse exact by the ± symmetry. Floor consistency: children inherit
-`sigma_0 = σ_c = σ_p` (≤ floor at a floor event) so the floor trigger's
-`sigma_0 > floor` guard self-disarms for them (exposure resets to 0 and must
-re-accumulate). No random draw — the axis is state, the offsets symmetric.
+angular impulse exact by the ± symmetry. Children inherit `sigma_0 = σ_c =
+σ_p` with zeroed accumulators, so even a still-floor-pinned child re-arms
+only after accruing fresh attempted shrink (no structural guard needed). No
+random draw — the axis is state, the offsets symmetric.
 """
 function _split_elongate_pair2!(pfield, rs::ResolutionSplitState, i::Int,
-                                ex, ey, ez, offset_ratio)
+                                ex, ey, ez, opts::ResolutionSplitOpts)
     x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
-    b = offset_ratio * sigma_p
+    b = opts.elongate_offset_ratio * sigma_p
     cgx, cgy, cgz = gx/2, gy/2, gz/2
     _rsplit_emit_child!(pfield, rs, i,
                         x0 - b*ex, y0 - b*ey, z0 - b*ez,
-                        cgx, cgy, cgz, sigma_p, circ, is_stat)
+                        cgx, cgy, cgz, sigma_p, circ, is_stat, opts)
     _rsplit_emit_child!(pfield, rs, 0,
                         x0 + b*ex, y0 + b*ey, z0 + b*ez,
-                        cgx, cgy, cgz, sigma_p, circ, is_stat)
+                        cgx, cgy, cgz, sigma_p, circ, is_stat, opts)
+    return nothing
+end
+
+"""
+    _elongate_plan(rs, i, opts, sigma_p) -> (m, s)
+
+Child count and spacing for the ADAPTIVE in-line elongation kernel (theory
+doc §3; requires `opts.elongate_overlap` finite). The rVPM channel conserves
+σ²·L exactly, so the attempted accumulator gives the represented length
+stretch directly, `λ_att = σ₀²/(σ₀² + drvpm)` (`drvpm < 0` here). Children of
+core `σ_c = σ_p` tile the stretched length `λ_att·ℓ₀` (birth tile
+`ℓ₀ = σ₀/Φ_t`) at spacing `≈ σ_c/Φ_t`:
+
+    m = clamp(round(λ_att·σ₀/σ_p), 2, elongate_m_max),   s = λ_att·ℓ₀/m.
+
+Unclamped this is `m* = (1−f_elong)⁻³` with `m·σ_c³ = σ₀³` (the volume
+rule / merge inverse), is self-consistent without per-particle L₀ state,
+and composes exactly across repeated splits (up to integer rounding).
+Saturation: when `m_ideal > elongate_m_max` (or `σ₀² + drvpm ≤ 0`,
+attempted total collapse), spacing falls back to the target `σ_p/Φ_t` —
+children retain overlap and the event under-tiles rather than spraying
+`m_max` children over the full stretched length.
+"""
+@inline function _elongate_plan(rs::ResolutionSplitState, i::Int,
+                                opts::ResolutionSplitOpts, sigma_p)
+    s0 = rs.sigma_0[i]
+    s02 = s0*s0
+    den = s02 + rs.drvpm[i]
+    s_target = sigma_p / opts.elongate_overlap
+    den > 0 || return (opts.elongate_m_max, s_target)
+    lam = s02 / den
+    m_ideal = lam * s0 / sigma_p
+    m_ideal > opts.elongate_m_max && return (opts.elongate_m_max, s_target)
+    m = max(2, round(Int, m_ideal))
+    s = lam * (s0 / opts.elongate_overlap) / m
+    return (m, s)
+end
+
+"""
+    _split_elongate_line!(pfield, rs, i, ex, ey, ez, m, s, opts)
+
+Stretch mechanism, ELONGATION regime, adaptive in-line kernel (theory doc
+§3): `m` children on the line through the parent along `(ex,ey,ez)` at
+spacing `s` (from `_elongate_plan`), centroid-symmetric offsets
+`(k − (m+1)/2)·s`, each child `Γ_p/m ∥ Γ_p`, `σ_c = σ_p` (cross-section
+untouched), `circulation` unchanged (a crosswise cut preserves each
+segment's circulation). Total Γ, centroid, linear impulse exact for any m
+(symmetric offsets cancel pairwise; odd m leaves the middle child at the
+parent position); angular impulse error is quadratic in the offsets,
+`|ΔA| ≤ a²|Γ|/3` with `a = (m−1)s/2` the outermost offset, vanishing when
+the split axis is parallel to Γ (t2's bound, same as the other kernels).
+Child 1 overwrites slot `i`; `m − 1` appended (caller guarantees headroom).
+"""
+function _split_elongate_line!(pfield, rs::ResolutionSplitState, i::Int,
+                               ex, ey, ez, m::Int, s,
+                               opts::ResolutionSplitOpts)
+    x0, y0, z0, gx, gy, gz, sigma_p, circ, is_stat = _rsplit_parent(pfield, i)
+    cgx, cgy, cgz = gx/m, gy/m, gz/m
+    half = (m + 1) / 2
+    for k in 1:m
+        off = (k - half) * s
+        _rsplit_emit_child!(pfield, rs, k == 1 ? i : 0,
+                            x0 + off*ex, y0 + off*ey, z0 + off*ez,
+                            cgx, cgy, cgz, sigma_p, circ, is_stat, opts)
+    end
     return nothing
 end
 
@@ -452,31 +582,45 @@ end
 # TRIGGER CHECK + ROUTING + MAIN PASS
 ################################################################################
 """
-    _rsplit_check(opts, rs, pfield, i) -> :none | :grow | :shrink
+    _rsplit_check(opts, rs, pfield, i) -> :none | :viscous | :compress | :elongate
 
-Flat trigger check (no trees, no severity — nothing ranks candidates):
+Per-mechanism fractional trigger check (Ryan 2026-09-08 ruling) — the trigger
+IS the mechanism, so this returns the kernel to route to directly. With
+`σ₀ = sigma_0[i]` and the attempted per-mechanism accumulators:
 
-* grow:   `σ > sigma_max` OR `σ/σ₀ > sigma_growth_ratio_max`
-* shrink: `exposure > log_stretch_max` OR floor pin
-  (`σ ≤ sigma_floor·(1+1e-6) && sigma_0 > sigma_floor`)
+* `:viscous`  — `dvisc > ((1 + f_visc)² − 1)·σ₀²`
+* `:compress` — `drvpm > ((1 + f_comp)² − 1)·σ₀²`
+* `:elongate` — `drvpm < ((1 − f_elong)² − 1)·σ₀²` (negative bound; a net
+  attempted collapse past `σ₀² + drvpm ≤ 0` fires for any armed f_elong)
 
-Every threshold is NaN-disabled (NaN comparisons are false). Grow wins when
-both sides fire. The floor never *gates* splitting — the pin is a shrink
-TRIGGER, and its `sigma_0 > floor` guard is the anti-refire mechanism:
-children born at/below the floor (pair2's `σ_c = σ_p` included) permanently
-disarm it for their lineage, leaving the exposure trigger to cover them.
+Every fraction is NaN-disabled (NaN comparisons are false). All comparisons
+are in Δσ² space (no sqrt on the hot path). `:compress`/`:elongate` are
+mutually exclusive (one signed accumulator); when `:viscous` fires together
+with a stretch regime, the larger ratio excess wins, with `:viscous` winning
+ties and beating `:elongate` (grow-wins convention, unchanged from the
+absolute-threshold design). Realized σ and the sigma_guard clamps never enter
+the check — a clamp-pinned particle keeps firing (accumulation is pre-clamp).
 """
 @inline function _rsplit_check(opts::ResolutionSplitOpts, rs::ResolutionSplitState,
                                pfield, i::Int)
-    sig = get_sigma(pfield, i)[]
     s0 = rs.sigma_0[i]
-    if sig > opts.sigma_max || (s0 > 0 && sig/s0 > opts.sigma_growth_ratio_max)
-        return :grow
+    s0 > 0 || return :none
+    s02 = s0*s0
+    dvisc = rs.dvisc[i]; drvpm = rs.drvpm[i]
+    fires_visc = dvisc > ((1 + opts.f_visc)^2 - 1)*s02
+    fires_comp = drvpm > ((1 + opts.f_comp)^2 - 1)*s02
+    fires_elong = drvpm < ((1 - opts.f_elong)^2 - 1)*s02
+    if fires_visc
+        # rare double fire: compare ratio excesses (sqrt off the hot path)
+        if fires_comp
+            excess_v = sqrt(1 + dvisc/s02) - (1 + opts.f_visc)
+            excess_c = sqrt(1 + drvpm/s02) - (1 + opts.f_comp)
+            return excess_v >= excess_c ? :viscous : :compress
+        end
+        return :viscous   # grow wins over :elongate
     end
-    rs.exposure[i] > opts.log_stretch_max && return :shrink
-    if sig <= opts.sigma_floor*(1 + 1e-6) && s0 > opts.sigma_floor
-        return :shrink
-    end
+    fires_comp && return :compress
+    fires_elong && return :elongate
     return :none
 end
 
@@ -492,47 +636,67 @@ or wire into a time march via `run_vpm!`'s `split_every`/`split_opts` kwargs
 One serial loop over the pre-pass particles (`1:np0`), no scratch, no
 ranking: appending is safe while iterating because children land either in
 slot `i` (already visited) or in slots `> np0` (never visited this call).
-Routing: shrink events (elongation) → pair2; grow events → tetra4 when
-viscous Δσ² attribution dominates (`dvisc ≥ drvpm`), tri3 otherwise. A
-routed-but-disabled mechanism skips and counts — never reroutes (W6 keeps
-the viscous mechanism gated by evidence). The only hard guard is
-maxparticles headroom (a correctness requirement, not a feature).
+`_rsplit_check` returns the firing mechanism directly (per-mechanism
+fractional triggers — no separate routing step): `:viscous` → tetra4,
+`:compress` → tri3, `:elongate` → pair2. A firing-but-disabled mechanism
+skips and counts — never reroutes (W6 keeps the viscous mechanism gated by
+evidence). Emitted children are clamped into
+`[opts.sigma_min, opts.sigma_max]`. The only hard guard is maxparticles
+headroom (a correctness requirement, not a feature).
 
 `dt` is accepted for the caller's policy seam but unused — all state
 accumulation happens inline in the integrator, not here.
 
 Returns `(; n_split_viscous, n_split_compress, n_split_elongate,
-n_skipped_capacity, n_skipped_mech_disabled)`.
+n_children_elongate, n_skipped_capacity, n_skipped_mech_disabled)`.
+`n_children_elongate` totals the children emitted by elongation events (the
+adaptive kernel emits a variable 2..`elongate_m_max` per event; the other
+mechanisms stay fixed at 4 and 3 children).
 """
 function split_particles!(pfield, opts::ResolutionSplitOpts;
                           verbose::Bool=false, dt=nothing)
     rs = enable_resolution_split!(pfield)
     n_split_viscous = 0; n_split_compress = 0; n_split_elongate = 0
+    n_children_elongate = 0
     n_skipped_capacity = 0; n_skipped_mech_disabled = 0
     np0 = get_np(pfield)
     maxp = pfield.maxparticles
     for i in 1:np0
-        side = _rsplit_check(opts, rs, pfield, i)
-        side === :none && continue
-        if side === :shrink
+        mech = _rsplit_check(opts, rs, pfield, i)
+        mech === :none && continue
+        if mech === :elongate
             if !opts.enable_stretch_split
                 n_skipped_mech_disabled += 1; continue
             end
-            if get_np(pfield) + 1 > maxp
-                n_skipped_capacity += 1; break
+            if isnan(opts.elongate_overlap)
+                # legacy fixed pair2 (elongate_offset_ratio spacing)
+                if get_np(pfield) + 1 > maxp
+                    n_skipped_capacity += 1; break
+                end
+                ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
+                _split_elongate_pair2!(pfield, rs, i, ex, ey, ez, opts)
+                n_split_elongate += 1
+                n_children_elongate += 2
+            else
+                # adaptive in-line kernel (theory doc §3): the plan must be
+                # computed BEFORE the capacity check (m − 1 appended slots)
+                m, s = _elongate_plan(rs, i, opts, get_sigma(pfield, i)[])
+                if get_np(pfield) + (m - 1) > maxp
+                    n_skipped_capacity += 1; break
+                end
+                ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
+                _split_elongate_line!(pfield, rs, i, ex, ey, ez, m, s, opts)
+                n_split_elongate += 1
+                n_children_elongate += m
             end
-            ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
-            _split_elongate_pair2!(pfield, rs, i, ex, ey, ez,
-                                   opts.elongate_offset_ratio)
-            n_split_elongate += 1
-        elseif rs.dvisc[i] >= rs.drvpm[i]
+        elseif mech === :viscous
             if !opts.enable_viscous_split
                 n_skipped_mech_disabled += 1; continue
             end
             if get_np(pfield) + 3 > maxp
                 n_skipped_capacity += 1; break
             end
-            _split_viscous_tetra4!(pfield, rs, i, opts.viscous_offset_ratio)
+            _split_viscous_tetra4!(pfield, rs, i, opts)
             n_split_viscous += 1
         else
             if !opts.enable_stretch_split
@@ -542,8 +706,7 @@ function split_particles!(pfield, opts::ResolutionSplitOpts;
                 n_skipped_capacity += 1; break
             end
             ex, ey, ez = _rsplit_direction(rs, i, opts, pfield)
-            _split_compress_tri3!(pfield, rs, i, ex, ey, ez,
-                                  opts.compress_offset_ratio)
+            _split_compress_tri3!(pfield, rs, i, ex, ey, ez, opts)
             n_split_compress += 1
         end
     end
@@ -551,9 +714,11 @@ function split_particles!(pfield, opts::ResolutionSplitOpts;
                    n_skipped_capacity + n_skipped_mech_disabled) > 0
         println("split_particles! (resolution): viscous=$(n_split_viscous)"*
                 " compress=$(n_split_compress) elongate=$(n_split_elongate)"*
+                " (children=$(n_children_elongate))"*
                 " | skipped: capacity=$(n_skipped_capacity)"*
                 " mech_disabled=$(n_skipped_mech_disabled)")
     end
     return (; n_split_viscous, n_split_compress, n_split_elongate,
+              n_children_elongate,
               n_skipped_capacity, n_skipped_mech_disabled)
 end
