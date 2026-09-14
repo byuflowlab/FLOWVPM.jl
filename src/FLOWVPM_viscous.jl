@@ -287,6 +287,11 @@ function _corespreading_euler_broadcast!(pfield, nu, dt)
 
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ 2*nu*dt), sigma)
 
+    # Attribute the exact viscous Δσ² = 2ν·dt (broadcast twin of the CPU site)
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, 2*nu*dt,
+        zero(eltype(sigma)), active)
+
     return nothing
 end
 
@@ -295,9 +300,9 @@ GPU-compatible broadcast path for `CoreSpreading`'s euler_exp blended-diffusion
 update (`y' = -2*Zeff*y + 2*nu` with Zeff read from M[9], see the scalar
 branch in `viscousdiffusion`). Both `ifelse` branches are evaluated
 elementwise, so the `expm1` branch may produce NaN where M[9] == 0 — those
-lanes select the |z*dt| < 1e-8 series branch, which is finite. As on the
-other device paths, the resolution-split Δσ² attribution mirror is NOT
-maintained (splitting is CPU-only).
+lanes select the |z*dt| < 1e-8 series branch, which is finite. The
+resolution-split Δσ² attribution is maintained by a broadcast twin of the
+CPU site.
 """
 function _corespreading_eulerexp_broadcast!(pfield, nu, dt)
     P = pfield.particles
@@ -313,6 +318,13 @@ function _corespreading_eulerexp_broadcast!(pfield, nu, dt)
                          (-nu) .* expm1.(-2 .* zdt) ./ M9)
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ diffusion), sigma)
 
+    # Attribute the diffusion part of the blended update to viscous spreading
+    # (broadcast twin of the CPU site; the geometric contraction was
+    # attributed in _euler_exp_broadcast!)
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, diffusion,
+        zero(eltype(sigma)), active)
+
     return nothing
 end
 
@@ -327,6 +339,12 @@ function _corespreading_rk3_broadcast!(pfield, nu, dt, aux1, aux2)
 
     M7 .= ifelse.(active .> 0, aux1 .* M7 .+ dt*2*nu, M7)
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ aux2 .* M7), sigma)
+
+    # Attribute the applied per-stage σ² increment to viscous spreading
+    # (broadcast twin of the CPU site; M7 already holds the updated stage value)
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, aux2 .* M7,
+        zero(eltype(sigma)), active)
 
     return nothing
 end

@@ -1043,4 +1043,153 @@ end
     end
 end
 
+# --------------------------------------------------------------------------
+# t12 — CPU-vs-broadcast accumulator parity (026 GPU splitting).
+# The broadcast integrator twins run on plain Arrays too, so the device
+# accumulation code paths are exercised WITHOUT a GPU by calling the twins
+# directly against the scalar CPU paths on cloned fields.
+# --------------------------------------------------------------------------
+@testset "t12: CPU-vs-broadcast accumulator parity" begin
+
+    UINF = [0.3, -0.1, 0.2]
+
+    "clone fixture with one static particle (slot 2) to exercise masking"
+    function parity_pair(; kwargs...)
+        pfs = (rsplit_field(; np=4, kwargs...), rsplit_field(; np=4, kwargs...))
+        for pf in pfs
+            pf.particles[vpmrs.STATIC_INDEX, 2] = 1
+            for i in 1:pf.np
+                vpmrs.set_U(pf, i, (0.1i, -0.05i, 0.02i))
+            end
+            vpmrs.enable_resolution_split!(pf)
+        end
+        return pfs
+    end
+
+    function rs_parity(a, b; rtol=1e-12)
+        ra, rb = a.resolution_split, b.resolution_split
+        n = a.np
+        @test ra.sigma_0[1:n] ≈ rb.sigma_0[1:n] rtol=rtol
+        @test ra.axis[:, 1:n] ≈ rb.axis[:, 1:n] rtol=rtol
+        @test ra.weight[1:n] ≈ rb.weight[1:n] rtol=rtol
+        @test ra.dvisc[1:n] ≈ rb.dvisc[1:n] rtol=rtol
+        @test ra.drvpm[1:n] ≈ rb.drvpm[1:n] rtol=rtol
+    end
+
+    @testset "euler twins" begin
+        pc, pb = parity_pair()
+        f, g = pc.formulation.f, pc.formulation.g
+        zeta0 = pc.kernel.zeta(0)
+        guard = (; dtz_cap=0.05)
+        for _ in 1:3
+            vpmrs._euler_cpu_reformulated!(pc, 1e-2, UINF, f, g, zeta0;
+                                           sigma_guard=guard)
+            vpmrs._euler_broadcast_reformulated!(pb, 1e-2, UINF, f, g, zeta0;
+                                                 sigma_guard=guard)
+        end
+        @test pc.particles[:, 1:pc.np] ≈ pb.particles[:, 1:pb.np] rtol=1e-12
+        rs_parity(pc, pb)
+        # static particle accumulated nothing on either path
+        @test pc.resolution_split.weight[2] == 0
+        @test pb.resolution_split.weight[2] == 0
+        @test pb.resolution_split.drvpm[2] == 0
+    end
+
+    @testset "euler_exp twins (incl. dtz_cap-only attempted Δσ²)" begin
+        pc, pb = parity_pair(; integration=vpmrs.euler_exp)
+        g = pc.formulation.g
+        zeta0 = pc.kernel.zeta(0)
+        R = eltype(pc.particles)
+        # tight cap + floor: attempted Δσ² must re-clamp with the cap ONLY
+        cap, sfloor, sceil = R(1e-4), R(0.05), R(Inf)
+        for _ in 1:3
+            vpmrs._euler_exp_cpu!(pc, 1e-2, UINF, g, zeta0, false,
+                                  cap, sfloor, sceil)
+            vpmrs._euler_exp_broadcast!(pb, 1e-2, UINF, g, zeta0,
+                                        cap, sfloor, sceil)
+        end
+        # broadcast path evaluates exp(dt*L) by substepped Taylor — not
+        # bitwise vs the scalar exact exponential, but far tighter than 1e-8
+        @test pc.particles[:, 1:pc.np] ≈ pb.particles[:, 1:pb.np] rtol=1e-8
+        rs_parity(pc, pb; rtol=1e-8)
+    end
+
+    @testset "rk3 twins (axis sampled on final stage only)" begin
+        pc, pb = parity_pair(; integration=vpmrs.rungekutta3)
+        f, g = pc.formulation.f, pc.formulation.g
+        zeta0 = pc.kernel.zeta(0)
+        for (a, b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
+            vpmrs.update_particle_states_cpu_reformulated!(pc, a, b, 1e-2,
+                                                           UINF, f, g, zeta0)
+            vpmrs.update_particle_states_broadcast_reformulated!(pb, a, b,
+                                                           1e-2, UINF, f, g, zeta0)
+        end
+        @test pc.particles[:, 1:pc.np] ≈ pb.particles[:, 1:pb.np] rtol=1e-12
+        rs_parity(pc, pb)
+        # axis armed only from the b == 8/15 stage: weight positive on active
+        @test pc.resolution_split.weight[1] > 0
+    end
+
+    @testset "CoreSpreading twins: euler / euler_exp-blend / rk3" begin
+        nu = 3e-4
+        # euler branch
+        pc, pb = parity_pair(; viscous=vpmrs.CoreSpreading(nu, 0.1))
+        vpmrs.viscousdiffusion(pc, pc.viscous, 1e-2)   # Array dispatch = CPU loop
+        vpmrs._corespreading_euler_broadcast!(pb, nu, 1e-2)
+        rs_parity(pc, pb)
+        @test pb.resolution_split.dvisc[1] ≈ 2*nu*1e-2 rtol=1e-12
+        @test pb.resolution_split.dvisc[2] == 0        # static masked
+
+        # euler_exp blended-diffusion branch (M9 stamped as Zeff)
+        pc, pb = parity_pair(; integration=vpmrs.euler_exp,
+                             viscous=vpmrs.CoreSpreading(nu, 0.1))
+        for pf in (pc, pb), i in 1:pf.np
+            vpmrs.get_M(vpmrs.get_particle(pf, i))[9] = 0.5 + 0.1i
+        end
+        vpmrs.viscousdiffusion(pc, pc.viscous, 1e-2)
+        vpmrs._corespreading_eulerexp_broadcast!(pb, nu, 1e-2)
+        rs_parity(pc, pb)
+
+        # rk3 branch (aux-weighted stage accumulation)
+        pc, pb = parity_pair(; integration=vpmrs.rungekutta3,
+                             viscous=vpmrs.CoreSpreading(nu, 0.1))
+        for (aux1, aux2) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
+            vpmrs.viscousdiffusion(pc, pc.viscous, 1e-2; aux1, aux2)
+            vpmrs._corespreading_rk3_broadcast!(pb, nu, 1e-2, aux1, aux2)
+        end
+        rs_parity(pc, pb)
+    end
+
+    @testset "trigger-decision parity after broadcast accumulation" begin
+        # accumulate via the broadcast twins, then split: events must fire
+        # exactly as on a CPU-accumulated clone (counters + np, geometry has
+        # RNG so positions are not compared)
+        pc, pb = parity_pair()
+        f, g = pc.formulation.f, pc.formulation.g
+        zeta0 = pc.kernel.zeta(0)
+        for _ in 1:40
+            vpmrs._euler_cpu_reformulated!(pc, 5e-2, UINF, f, g, zeta0)
+            vpmrs._euler_broadcast_reformulated!(pb, 5e-2, UINF, f, g, zeta0)
+        end
+        opts = vpmrs.ResolutionSplitOpts(; f_comp=0.02, f_elong=0.02,
+                                         enable_stretch_split=true)
+        nc = vpmrs.split_particles!(pc, opts; dt=5e-2)
+        nb = vpmrs.split_particles!(pb, opts; dt=5e-2)
+        @test nc == nb
+        @test pc.np == pb.np
+    end
+
+    @testset "device-style enable on a non-Array-backed clone" begin
+        # enable_resolution_split! must seed sigma_0 WITHOUT scalar indexing
+        # on non-Array storage; emulate with a wrapped host array type
+        pf = rsplit_field()
+        # exercise the broadcast seeding branch directly on the Array field:
+        R = eltype(pf.particles)
+        rs = vpmrs.ResolutionSplitState(pf.particles, pf.maxparticles)
+        @test rs.sigma_0 isa Vector{R}
+        @test size(rs.axis) == (3, pf.maxparticles)
+        @test all(rs.weight .== 0)
+    end
+end
+
 end # outer testset

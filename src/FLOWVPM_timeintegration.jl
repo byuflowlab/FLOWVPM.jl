@@ -381,6 +381,11 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
         MM3 = J[3, :] .* G[1, :] .+ J[6, :] .* G[2, :] .+ J[9, :] .* G[3, :]
     end
 
+    # Resolution-split accumulation: stretch axis / coherence sampled here
+    # where S = (MM1,MM2,MM3) is in hand (broadcast twin of the CPU site)
+    rs = pfield.resolution_split
+    rs === nothing || _rsplit_accumulate_broadcast!(rs, dt, MM1, MM2, MM3, active)
+
     # Compute Z: [ (f+g)/(1+3f) * S⋅Γ - f/(1+3f) * Cϵ⋅Γ ] / mag(Γ)^2
     Gnorm2 = G[1, :] .* G[1, :] .+ G[2, :] .* G[2, :] .+ G[3, :] .* G[3, :]
     S_dot_G = MM1 .* G[1, :] .+ MM2 .* G[2, :] .+ MM3 .* G[3, :]
@@ -402,14 +407,13 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     sig_new = ifelse.(active .* (dt .* MM4) .> cap,
                       sigma .* (1 - cap),
                       sigma .- dt .* active .* (sigma .* MM4))
+    # Attribute the ATTEMPTED Δσ² (post dtz_cap, PRE floor/ceil clamp) to the
+    # rVPM accumulator — broadcast twin of the CPU site (Ryan 2026-09-08)
+    rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, zero(R),
+                                    sig_new.^2 .- sigma.^2, active)
     pfield.particles[SIGMA_INDEX, :] .= ifelse.(active .> 0,
                                                 clamp.(sig_new, sfloor, sceil),
                                                 sig_new)
-
-    # NOTE: the resolution-split accumulators (ResolutionSplitState, incl. the
-    # Δσ² attribution mirrors) are NOT maintained on this device-backed path —
-    # splitting is CPU-only. If GPU splitting ever lands, move the
-    # accumulators to persistent device rows.
 
     return nothing
 end
@@ -625,8 +629,9 @@ The frozen-gradient action `q = exp(dt*L)*Γ` is evaluated matrix-free by
 substepped truncated-Taylor matvecs (see `EXP_SUBSTEP_THETA`), so no
 per-particle 3×3 matrix exponential is materialized. The scalar path's
 non-finite-ratio DomainError guard is enforced post-hoc via one masked
-reduction. As on the other device paths, the resolution-split accumulators
-are NOT maintained (splitting is CPU-only).
+reduction. The resolution-split accumulators are maintained by broadcast
+twins of the CPU sites (axis sample from the pre-update Γ; attempted Δσ²
+with the dtz_cap-only re-clamp).
 """
 function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
                               cap=R(Inf), sfloor=R(-Inf), sceil=R(Inf)) where {R, R2}
@@ -651,6 +656,24 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
     SFS1, SFS2, SFS3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
     sigma = view(P, SIGMA_INDEX, :)
     M9 = view(P, M_INDEX[9], :)
+
+    # Resolution-split accumulation: axis sample S = L*Γ with the pre-update
+    # Γ (broadcast twin of the CPU site; the |S| > 0 gate inside the helper
+    # subsumes the CPU path's Γ ≠ 0 branch since S = L*Γ)
+    rs = pfield.resolution_split
+    if rs !== nothing
+        if pfield.transposed
+            _rsplit_accumulate_broadcast!(rs, dt,
+                J1.*G1 .+ J2.*G2 .+ J3.*G3,
+                J4.*G1 .+ J5.*G2 .+ J6.*G3,
+                J7.*G1 .+ J8.*G2 .+ J9.*G3, active)
+        else
+            _rsplit_accumulate_broadcast!(rs, dt,
+                J1.*G1 .+ J4.*G2 .+ J7.*G3,
+                J2.*G1 .+ J5.*G2 .+ J8.*G3,
+                J3.*G1 .+ J6.*G2 .+ J9.*G3, active)
+        end
+    end
 
     # Field-wide substep count from an elementwise-sum bound on |dt*L|
     # (over-estimates the norm by ≤ 3×, which only adds accuracy)
@@ -725,9 +748,27 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
     G1 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q1 .* scale, G1)
     G2 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q2 .* scale, G2)
     G3 .= ifelse.((active .> 0) .& (Gnorm2 .> 0), q3 .* scale, G3)
+    # Attribute the ATTEMPTED Δσ² of the geometric step to the rVPM
+    # accumulator BEFORE sigma is updated in place: re-clamp the ratio with
+    # dtz_cap only — floor/ceil legs excluded so clamp-pinned particles keep
+    # accruing (broadcast twin of the CPU site, Ryan 2026-09-08). q1's row is
+    # dead after the Γ update above; reuse it for the attributed ratio.
+    if rs !== nothing
+        rc_att = q1
+        if isfinite(cap)
+            rc_att .= min.(ratio, exp(cap / g))
+        else
+            rc_att .= ratio
+        end
+        # ifelse (not a mask product) so the NaN ratio of Γ = 0 lanes cannot
+        # leak through as NaN*0
+        _rsplit_accumulate_dsigma2_broadcast!(rs, zero(R),
+            ifelse.(Gnorm2 .> 0,
+                    (sigma .* rc_att .^ (-g)).^2 .- sigma.^2,
+                    zero(R)),
+            active)
+    end
     sigma .= ifelse.((active .> 0) .& (Gnorm2 .> 0), sigma .* rc .^ (-g), sigma)
-    # NOTE: the resolution-split accumulators (ResolutionSplitState) are NOT
-    # maintained on this device-backed path — splitting is CPU-only.
 
     # M[9]: constant-effective contraction rate Zeff = g*log(r)/dt for the
     # euler_exp/CoreSpreading composition (see the scalar path)
@@ -1175,6 +1216,15 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
         MM3 .= J3.*G1 .+ J6.*G2 .+ J9.*G3
     end
 
+    # Resolution-split axis: sample S once per accepted step, on the final
+    # RK3 stage only (b == 8/15) — broadcast twin of the CPU site. Must run
+    # while MM1/MM2/MM3 still hold S (their rows are reused as M4/5/6_new
+    # below).
+    rs = pfield.resolution_split
+    if rs !== nothing && isapprox(b, 8/15, atol=1e-7)
+        _rsplit_accumulate_broadcast!(rs, dt, MM1, MM2, MM3, active)
+    end
+
     # Store Z under MM4 (reuses Gnorm2's row -- Gnorm2 is only read here, on its own row, once)
     Gnorm2 .= G1.^2 .+ G2.^2 .+ G3.^2
     S_dot_G .= MM1 .* G1 .+ MM2 .* G2 .+ MM3 .* G3
@@ -1207,9 +1257,13 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     G2 .+= active .* b .* M5_new
     G3 .+= active .* b .* M6_new
 
+    # Attribute the per-stage Δσ² to the rVPM accumulator BEFORE sigma is
+    # updated in place (broadcast twin of the CPU site; RK3 σ updates are
+    # unguarded, so applied ≡ attempted)
+    rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, zero(R),
+        (sigma_v .+ active .* b .* M8_new).^2 .- sigma_v.^2, active)
+
     sigma_v .+= active .* b .* M8_new
-    # NOTE: the resolution-split accumulators (ResolutionSplitState) are NOT
-    # maintained on this device-backed path — splitting is CPU-only.
 
     # Static particles keep their previous M storage (frozen), others get the new RK stage value
     M1 .= ifelse.(isactive, M1_new, M1)

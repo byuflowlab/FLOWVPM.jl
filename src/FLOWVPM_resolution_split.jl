@@ -63,23 +63,37 @@ the accumulators on each child (and on merged representatives), so a fresh
 child — even one still pinned at a clamp (pair2's `σ_c = σ_p` included) —
 re-arms only after accruing fresh attempted deformation.
 """
-mutable struct ResolutionSplitState{R}
+mutable struct ResolutionSplitState{R, TV<:AbstractVector{R}, TM<:AbstractMatrix{R}}
     # per-particle arrays, lockstep with pfield.particles columns — that's ALL
-    # of it: no cooldown, no scratch (the main pass is a single serial loop)
-    sigma_0::Vector{R}     # σ reference at creation / last split / last merge
-    axis::Matrix{R}        # (3, maxp) sign-aligned running Σ dt·S since last split
-    weight::Vector{R}      # Σ dt·|S| since last split (coherence denominator)
-    dvisc::Vector{R}       # Σ attempted Δσ² from viscous spreading (≥ 0)
-    drvpm::Vector{R}       # Σ attempted Δσ² from rVPM area evolution (signed net)
+    # of it: no cooldown, no scratch (the main pass is a single serial loop).
+    # Backing storage matches the owning pfield's array type (host Vector/
+    # Matrix on Array-backed fields, device arrays on GPU-backed fields) so
+    # the broadcast integrator twins can accumulate in place on either
+    # backend; the scalar hooks below are only ever called from host-side
+    # code paths (add/remove/split/merge run on Array-backed fields or the
+    # host mirror of a device-backed wake).
+    sigma_0::TV            # σ reference at creation / last split / last merge
+    axis::TM               # (3, maxp) sign-aligned running Σ dt·S since last split
+    weight::TV             # Σ dt·|S| since last split (coherence denominator)
+    dvisc::TV              # Σ attempted Δσ² from viscous spreading (≥ 0)
+    drvpm::TV              # Σ attempted Δσ² from rVPM area evolution (signed net)
 end
 
-ResolutionSplitState{R}(maxparticles::Int) where {R} = ResolutionSplitState{R}(
+ResolutionSplitState{R}(maxparticles::Int) where {R} = ResolutionSplitState(
     zeros(R, maxparticles),
     zeros(R, 3, maxparticles),
     zeros(R, maxparticles),
     zeros(R, maxparticles),
     zeros(R, maxparticles),
 )
+
+"Allocate a ResolutionSplitState whose arrays match `template`'s storage type
+(e.g. CuArray for a device-backed particle matrix), zero-initialized."
+function ResolutionSplitState(template::AbstractMatrix{R}, maxparticles::Int) where {R}
+    v() = fill!(similar(template, R, maxparticles), zero(R))
+    m() = fill!(similar(template, R, (3, maxparticles)), zero(R))
+    return ResolutionSplitState(v(), m(), v(), v(), v())
+end
 
 """
     enable_resolution_split!(pfield)
@@ -92,9 +106,19 @@ file is a no-op (one branch), so the feature costs nothing when off.
 function enable_resolution_split!(pfield)
     if pfield.resolution_split === nothing
         R = eltype(pfield.particles)
-        rs = ResolutionSplitState{R}(pfield.maxparticles)
-        for i in 1:get_np(pfield)
-            rs.sigma_0[i] = get_sigma(pfield, i)[]
+        if pfield.particles isa Array
+            rs = ResolutionSplitState{R}(pfield.maxparticles)
+            for i in 1:get_np(pfield)
+                rs.sigma_0[i] = get_sigma(pfield, i)[]
+            end
+        else
+            # device-backed field: allocate matching device arrays and seed
+            # sigma_0 by broadcast (no scalar indexing on device storage)
+            rs = ResolutionSplitState(pfield.particles, pfield.maxparticles)
+            np = get_np(pfield)
+            if np > 0
+                view(rs.sigma_0, 1:np) .= view(pfield.particles, SIGMA_INDEX, 1:np)
+            end
         end
         pfield.resolution_split = rs
     end
@@ -269,6 +293,52 @@ triggers still fire (Ryan 2026-09-08).
 @inline function _rsplit_accumulate_dsigma2!(rs::ResolutionSplitState, i::Int, dv, dr)
     rs.dvisc[i] += dv
     rs.drvpm[i] += dr
+    return nothing
+end
+
+################################################################################
+# BROADCAST ACCUMULATION (device-compatible twins of the two hooks above,
+# called from the broadcast integrator paths; work on plain Arrays too)
+################################################################################
+"""
+    _rsplit_accumulate_broadcast!(rs, dt, S1, S2, S3, mask)
+
+Broadcast twin of `_rsplit_accumulate!`: accumulate one stretching sample per
+particle from full-length row vectors `S1,S2,S3` (length maxparticles, dead
+tail columns hold S = 0 and are masked out by the |S| > 0 gate). `mask` is the
+active-particle mask (1 active, 0 static). Allocates small temporaries — the
+broadcast paths allocate by design (see `_euler_broadcast_reformulated!`).
+"""
+function _rsplit_accumulate_broadcast!(rs::ResolutionSplitState, dt, S1, S2, S3, mask)
+    ax1 = view(rs.axis, 1, :); ax2 = view(rs.axis, 2, :); ax3 = view(rs.axis, 3, :)
+    R = eltype(rs.weight)
+    n = sqrt.(S1.^2 .+ S2.^2 .+ S3.^2)
+    # gate: active AND |S| > 0 (also excludes non-finite dead-tail lanes).
+    # ifelse (not a mask product) throughout so a NaN in an excluded lane
+    # cannot leak through as NaN*0.
+    m = (mask .> 0) .& (n .> 0)
+    # sign-invariant axis add: flip the sample toward the running axis
+    d = ax1 .* S1 .+ ax2 .* S2 .+ ax3 .* S3
+    sgndt = ifelse.(d .< 0, -R(dt), R(dt))
+    ax1 .+= ifelse.(m, sgndt .* S1, zero(R))
+    ax2 .+= ifelse.(m, sgndt .* S2, zero(R))
+    ax3 .+= ifelse.(m, sgndt .* S3, zero(R))
+    rs.weight .+= ifelse.(m, R(dt) .* n, zero(R))
+    return nothing
+end
+
+"""
+    _rsplit_accumulate_dsigma2_broadcast!(rs, dv, dr, mask)
+
+Broadcast twin of `_rsplit_accumulate_dsigma2!`: `dv`/`dr` are per-particle
+attempted Δσ² attributions (scalars or full-length row vectors), masked by
+the active mask.
+"""
+function _rsplit_accumulate_dsigma2_broadcast!(rs::ResolutionSplitState, dv, dr, mask)
+    R = eltype(rs.dvisc)
+    # ifelse (not a mask product) so NaN in an excluded lane cannot leak
+    rs.dvisc .+= ifelse.(mask .> 0, dv, zero(R))
+    rs.drvpm .+= ifelse.(mask .> 0, dr, zero(R))
     return nothing
 end
 
