@@ -218,12 +218,27 @@ ResolutionSplitOpts(; kwargs...) = ResolutionSplitOpts{FLOAT_TYPE}(; kwargs...)
 # LOCKSTEP LIFECYCLE (called from add_particle/remove_particle when enabled)
 ################################################################################
 "Initialize slot `i` for a newly created particle with smoothing radius `sigma`."
-@inline function _rsplit_init_slot!(rs::ResolutionSplitState, i::Int, sigma)
+@inline function _rsplit_init_slot!(rs::ResolutionSplitState{R, Vector{R}, Matrix{R}},
+                                    i::Int, sigma) where {R}
     rs.sigma_0[i] = sigma
     rs.axis[1, i] = 0; rs.axis[2, i] = 0; rs.axis[3, i] = 0
     rs.weight[i] = 0
     rs.dvisc[i] = 0
     rs.drvpm[i] = 0
+    return nothing
+end
+
+# Device-generic fallback for the three lifecycle hooks: scalar indexing is
+# disallowed on GPU arrays, so write single slots via view broadcasts (each a
+# tiny kernel launch — same per-particle cost class as add_particle's own
+# device column writes). The Vector/Matrix methods above/below keep the host
+# path allocation-free and branch-free.
+@inline function _rsplit_init_slot!(rs::ResolutionSplitState{R}, i::Int, sigma) where {R}
+    view(rs.sigma_0, i:i) .= R(sigma)
+    view(rs.axis, :, i) .= zero(R)
+    view(rs.weight, i:i) .= zero(R)
+    view(rs.dvisc, i:i) .= zero(R)
+    view(rs.drvpm, i:i) .= zero(R)
     return nothing
 end
 
@@ -236,7 +251,8 @@ particle is a new entity, W3).
     _rsplit_init_slot!(rs, i, sigma)
 
 "Mirror `remove_particle`'s swap-with-last: copy slot `np`'s state into slot `i`."
-@inline function _rsplit_swap!(rs::ResolutionSplitState, i::Int, np::Int)
+@inline function _rsplit_swap!(rs::ResolutionSplitState{R, Vector{R}, Matrix{R}},
+                               i::Int, np::Int) where {R}
     rs.sigma_0[i] = rs.sigma_0[np]
     rs.axis[1, i] = rs.axis[1, np]
     rs.axis[2, i] = rs.axis[2, np]
@@ -247,13 +263,32 @@ particle is a new entity, W3).
     return nothing
 end
 
+@inline function _rsplit_swap!(rs::ResolutionSplitState, i::Int, np::Int)
+    view(rs.sigma_0, i:i) .= view(rs.sigma_0, np:np)
+    view(rs.axis, :, i) .= view(rs.axis, :, np)
+    view(rs.weight, i:i) .= view(rs.weight, np:np)
+    view(rs.dvisc, i:i) .= view(rs.dvisc, np:np)
+    view(rs.drvpm, i:i) .= view(rs.drvpm, np:np)
+    return nothing
+end
+
 "Zero the vacated tail slot `np` after a removal."
-@inline function _rsplit_zero!(rs::ResolutionSplitState, np::Int)
+@inline function _rsplit_zero!(rs::ResolutionSplitState{R, Vector{R}, Matrix{R}},
+                               np::Int) where {R}
     rs.sigma_0[np] = 0
     rs.axis[1, np] = 0; rs.axis[2, np] = 0; rs.axis[3, np] = 0
     rs.weight[np] = 0
     rs.dvisc[np] = 0
     rs.drvpm[np] = 0
+    return nothing
+end
+
+@inline function _rsplit_zero!(rs::ResolutionSplitState{R}, np::Int) where {R}
+    view(rs.sigma_0, np:np) .= zero(R)
+    view(rs.axis, :, np) .= zero(R)
+    view(rs.weight, np:np) .= zero(R)
+    view(rs.dvisc, np:np) .= zero(R)
+    view(rs.drvpm, np:np) .= zero(R)
     return nothing
 end
 
