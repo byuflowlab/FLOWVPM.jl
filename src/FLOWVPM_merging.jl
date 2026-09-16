@@ -447,6 +447,8 @@ function merge_particles!(
     verbose::Bool=false,
     gamma_align_cos::Real=-1.0,
     on_representative::Union{Nothing,Function}=nothing,
+    event_io::Union{Nothing,IO}=nothing,
+    event_tag::Integer=0,
 )
     np = get_np(pfield)
     np <= 1 && return 0
@@ -573,9 +575,18 @@ function merge_particles!(
                 _uf_union!(parent, rank, ia, nearest)
                 paired[ia] = 1
                 paired[nearest] = 1
+                if event_io !== nothing
+                    # Per-event merge telemetry (026 wave-2): one CSV row per
+                    # accepted pair, schema step,np,sigma_i,sigma_j,dist
+                    sigma_n = pfield.particles[SIGMA_INDEX, nearest]
+                    println(event_io, event_tag, ',', np, ',', sigma_i, ',',
+                            sigma_n, ',', sqrt(nearest_dist2))
+                end
             end
         end
     end
+
+    event_io === nothing || flush(event_io)
 
     n_removed = _finalize_merge_clusters!(pfield, ws; on_representative=on_representative)
 

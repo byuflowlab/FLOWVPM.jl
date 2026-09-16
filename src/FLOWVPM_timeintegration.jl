@@ -59,6 +59,15 @@ function _sigma_guard_params(::Type{R}, sigma_guard::NamedTuple) where R
 end
 
 """
+Cumulative (per-process) count of sigma_guard FLOOR-clamp engagements —
+active particles whose unguarded core-size update would have gone below
+`sigma_guard.floor` this step (026 wave-2 telemetry). Counted in all four
+integrator paths (`_euler` / `_euler_exp`, scalar and broadcast). Read it
+as `SIGMA_FLOOR_HITS[]`; resets to 0 on process (re)start.
+"""
+const SIGMA_FLOOR_HITS = Threads.Atomic{Int}(0)
+
+"""
     _reset_M_storage!(pfield)
 
 Zero the per-particle `M` storage rows (the RK3 low-storage state) of every
@@ -340,6 +349,8 @@ function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::
         sig = get_sigma(p)[]
         new_sig = dt*MM4 > cap ? sig * (1 - cap) : sig - dt * ( sig * MM4 )
         clamped_sig = clamp(new_sig, sfloor, sceil)
+        sfloor > 0 && new_sig < sfloor &&
+            Threads.atomic_add!(SIGMA_FLOOR_HITS, 1)
         get_sigma(p)[] = clamped_sig
         # Attribute the ATTEMPTED Δσ² (post dtz_cap, PRE floor/ceil clamp) to
         # the rVPM accumulator — clamp-pinned particles keep accruing so the
@@ -411,6 +422,13 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     # rVPM accumulator — broadcast twin of the CPU site (Ryan 2026-09-08)
     rs === nothing || _rsplit_accumulate_dsigma2_broadcast!(rs, zero(R),
                                     sig_new.^2 .- sigma.^2, active)
+    if isfinite(sfloor) && sfloor > 0
+        # live prefix only: lanes beyond np carry zeros/stale state
+        np = pfield.np
+        av, sv = view(active, 1:np), view(sig_new, 1:np)
+        nh = sum(ifelse.((av .> 0) .& (sv .< sfloor), 1, 0))
+        nh > 0 && Threads.atomic_add!(SIGMA_FLOOR_HITS, Int(nh))
+    end
     pfield.particles[SIGMA_INDEX, :] .= ifelse.(active .> 0,
                                                 clamp.(sig_new, sfloor, sceil),
                                                 sig_new)
@@ -564,6 +582,15 @@ function _euler_exp_cpu!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0, relax
             if guarded
                 lo, hi = _exp_ratio_bounds(sig_before, g, cap, sfloor, sceil)
                 rc = clamp(ratio, lo, hi)
+                # Floor-hit census: the floor leg binds when the unguarded
+                # ratio overruns the floor bound AND the dtz_cap bound is not
+                # the tighter of the two (see SIGMA_FLOOR_HITS)
+                if isfinite(sfloor) && sfloor > 0
+                    hf = (sig_before / sfloor)^(one(R)/g)
+                    if ratio > hf && (!isfinite(cap) || hf <= exp(cap/g))
+                        Threads.atomic_add!(SIGMA_FLOOR_HITS, 1)
+                    end
+                end
             end
             gamma_scale = rc == ratio ? ratio^(-3*g) : rc^(1 - 3*g) / ratio
             G[1] = q[1]*gamma_scale
@@ -741,6 +768,19 @@ function _euler_exp_broadcast!(pfield::ParticleField{R}, dt, Uinf, g::R2, zeta0,
         isfinite(sfloor) && sfloor > 0 && (rc .= min.(rc, (sigma ./ sfloor) .^ inv_g))
         isfinite(cap) && (rc .= min.(rc, exp(cap * inv_g)))
         scale .= rc .^ (1 - 3*g) ./ ratio
+        # Floor-hit census (broadcast twin of the scalar site): the floor leg
+        # binds where the unguarded ratio overruns the floor bound and the
+        # dtz_cap bound is not tighter — see SIGMA_FLOOR_HITS
+        if isfinite(sfloor) && sfloor > 0
+            capb = isfinite(cap) ? exp(cap * inv_g) : R(Inf)
+            # live prefix only: lanes beyond np carry zeros/stale state
+            av, gv = view(active, 1:np), view(Gnorm2, 1:np)
+            rv, sgv = view(ratio, 1:np), view(sigma, 1:np)
+            nh = sum(ifelse.((av .> 0) .& (gv .> 0) .&
+                             (rv .> (sgv ./ sfloor).^inv_g) .&
+                             ((sgv ./ sfloor).^inv_g .<= capb), 1, 0))
+            nh > 0 && Threads.atomic_add!(SIGMA_FLOOR_HITS, Int(nh))
+        end
     else
         rc .= ratio
         scale .= ratio .^ (-3*g)
