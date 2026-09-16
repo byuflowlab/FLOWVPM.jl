@@ -946,12 +946,14 @@ cache's fixed box. With derived bounds the coupling recenters once
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
 function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
-        extra_targets::Tuple=(), extra_sources::Tuple=(), self_induce::Bool=true)
+        extra_targets::Tuple=(), extra_sources::Tuple=(), self_induce::Bool=true,
+        extra_hessian::Tuple=ntuple(_ -> false, length(extra_targets)))
     st = _radix_fmm_coupling!(pfield)
     # extra targets (probes, ring nodes) and extra sources (bound segments,
     # ring filaments) ride the same call as direct rectangular evaluations
     # (FastMultipole src/radix_extra_systems.jl); the particles keep their
-    # hessian, the extra targets take velocity only.
+    # hessian, the extra targets take velocity only unless `extra_hessian`
+    # asks for their velocity gradient too (fluid-domain probes).
     #
     # `self_induce=false` drops the particles from the source tuple: the
     # lifecycle is skipped and the call delivers the extra sources alone, which
@@ -959,7 +961,9 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
     # was evaluated earlier in the step, over a field that has since changed).
     targets = (pfield, extra_targets...)
     sources = self_induce ? (pfield, extra_sources...) : extra_sources
-    hessian = (self_induce, ntuple(_ -> false, length(extra_targets))...)
+    length(extra_hessian) == length(extra_targets) ||
+        throw(ArgumentError("one extra_hessian flag per extra target is required"))
+    hessian = (self_induce, extra_hessian...)
     try
         fmm.fmm!(targets, sources, st.cache;
             scalar_potential=false, gradient=true, hessian, sfs)
@@ -997,12 +1001,13 @@ function UJ_fmm_gpu!(pfield::ParticleField;
         reset::Bool=true, reset_sfs::Bool=false, sfs::Bool=false,
         rbf::Bool=false, verbose::Bool=false,
         extra_targets::Tuple=(), extra_sources::Tuple=(),
-        self_induce::Bool=true, optargs...)
+        self_induce::Bool=true, extra_hessian::Tuple=ntuple(_ -> false, length(extra_targets)),
+        optargs...)
     rbf && error("rbf/zeta evaluation is not supported on the radix/GPU FMM " *
         "path (use UJ_direct/zeta_direct for CuArray-backed fields)")
     reset && _reset_particles(pfield)
     reset_sfs && _reset_particles_sfs(pfield)
-    _radix_fmm_evaluate!(pfield; sfs, extra_targets, extra_sources, self_induce)
+    _radix_fmm_evaluate!(pfield; sfs, extra_targets, extra_sources, self_induce, extra_hessian)
     return nothing
 end
 
