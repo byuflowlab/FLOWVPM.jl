@@ -958,7 +958,8 @@ cache's fixed box. With derived bounds the coupling recenters once
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
 function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
-        extra_targets::Tuple=(), extra_sources::Tuple=(), self_induce::Bool=true,
+        extra_targets::Tuple=(), extra_sources::Tuple=(), tree_sources::Tuple=(),
+        self_induce::Bool=true,
         extra_hessian::Tuple=ntuple(_ -> false, length(extra_targets)))
     st = _radix_fmm_coupling!(pfield)
     # extra targets (probes, ring nodes) and extra sources (bound segments,
@@ -978,7 +979,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
     hessian = (self_induce, extra_hessian...)
     try
         fmm.fmm!(targets, sources, st.cache;
-            scalar_potential=false, gradient=true, hessian, sfs)
+            scalar_potential=false, gradient=true, hessian, sfs, tree_sources)
     catch err
         (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
         # out-of-box (or other geometry) rejection: recenter and retry once;
@@ -989,7 +990,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
             (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
         fmm.recenter!(st.cache, pfield; bounds)
         fmm.fmm!(targets, sources, st.cache;
-            scalar_potential=false, gradient=true, hessian, sfs)
+            scalar_potential=false, gradient=true, hessian, sfs, tree_sources)
     end
     return nothing
 end
@@ -1012,14 +1013,15 @@ rather than silently dropping physics.
 function UJ_fmm_gpu!(pfield::ParticleField;
         reset::Bool=true, reset_sfs::Bool=false, sfs::Bool=false,
         rbf::Bool=false, verbose::Bool=false,
-        extra_targets::Tuple=(), extra_sources::Tuple=(),
+        extra_targets::Tuple=(), extra_sources::Tuple=(), tree_sources::Tuple=(),
         self_induce::Bool=true, extra_hessian::Tuple=ntuple(_ -> false, length(extra_targets)),
         optargs...)
     rbf && error("rbf/zeta evaluation is not supported on the radix/GPU FMM " *
         "path (use UJ_direct/zeta_direct for CuArray-backed fields)")
     reset && _reset_particles(pfield)
     reset_sfs && _reset_particles_sfs(pfield)
-    _radix_fmm_evaluate!(pfield; sfs, extra_targets, extra_sources, self_induce, extra_hessian)
+    _radix_fmm_evaluate!(pfield; sfs, extra_targets, extra_sources, tree_sources,
+                         self_induce, extra_hessian)
     return nothing
 end
 
