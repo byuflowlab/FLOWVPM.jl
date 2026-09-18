@@ -705,21 +705,32 @@ function _radix_measured_depth(pfield::ParticleField, settings::RadixFMMSettings
     for (ell, _) in cands
         try
             probe = _radix_settings_with_ell(settings, ell)
-            cache = _build_radix_fmm_cache(pfield, probe)
+            # sized to the LIVE count, not the capacity: the timing does not
+            # depend on the capacity (measured equal at 100k and 1.6M) and a
+            # capacity-sized probe cache had to be reclaimed by a full GC per
+            # candidate, which with device arrays resident cost seconds each
+            # (a measured rebuild at 44k particles: 7.1 s, of which the three
+            # builds and evaluations were 2 s)
+            cache = _build_radix_fmm_cache(pfield, probe; max_n_bodies=np)
             fmm.fmm!(pfield, cache; scalar_potential=false, gradient=true,
                      hessian=true); sync!()           # warm: compile + first touch
             t = time()
             fmm.fmm!(pfield, cache; scalar_potential=false, gradient=true, hessian=true)
             sync!()
             dt = time() - t
-            dt < best_t && ((best_ell, best_t) = (ell, dt))
+            if dt < best_t
+                best_ell, best_t = ell, dt
+            else
+                # candidates run deepest first and the evaluation time is
+                # unimodal in the depth, so the first slower depth ends the
+                # search: the shallow depths are the expensive ones to time
+                # (ell 2 and 3 at 44k particles are near-direct sums, seconds
+                # each, and were most of a 6.7 s rebuild)
+                break
+            end
         catch
             # inadmissible in practice (capacity, watchdog, adequacy): skip it
         end
-        # each candidate cache is sized to `max_n_bodies`, not to the live
-        # count, so three of them at a production capacity is three times the
-        # device footprint of the one we keep. Reclaim before the next build.
-        GC.gc()
     end
     copyto!(view(pfield.particles, first(U_INDEX):last(J_INDEX), 1:np), saved)
     return best_ell
@@ -731,7 +742,8 @@ _radix_settings_with_ell(settings::RadixFMMSettings, ell::Int) =
                         for f in fieldnames(RadixFMMSettings))...)
 
 function _build_radix_fmm_cache(pfield::ParticleField{R},
-                                settings::RadixFMMSettings) where R
+                                settings::RadixFMMSettings;
+                                max_n_bodies::Int=pfield.maxparticles) where R
     _validate_radix_fmm_settings(pfield)
     device = !(pfield.particles isa Array)
     if device
@@ -791,7 +803,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     # CPU Estr_direct!/Estr_fmm! source and target semantics.
     return fmm.RadixFMMCache(pfield;
         expansion_order=P, ell,
-        max_n_bodies=pfield.maxparticles,
+        max_n_bodies,
         bounds=(SVector{3,TF}(bounds[1]),
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
         hessian=true, sfs=true, sfs_transposed=pfield.transposed,
