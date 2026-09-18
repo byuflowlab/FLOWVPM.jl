@@ -54,12 +54,20 @@ particle's last split, so a particle pinned at the sigma_guard floor/ceiling
 keeps accruing credit and its trigger still fires. `drvpm` is a signed net
 (compression + and elongation − cancel — a particle that compresses then
 relaxes back never splits); `dvisc` is nonnegative by physics. All of
-axis/weight/dvisc/drvpm reset on split and on merge (the merged representative
-is a new entity).
+axis/weight/dvisc/drvpm reset on split. On MERGE the ledger is NOT reset
+(026 §22.2, Ryan ruling 2026-09-17): `_rsplit_merge_lineage!` gives the
+representative the |α|-weighted means of the members' `sigma_0²`/`dvisc`/
+`drvpm` plus the merge separation term credited to `drvpm`, so merge-driven
+coarsening stays visible to the fractional triggers (merging equals is
+maturity-neutral; a reset here laundered merge growth — the ctrllg_floor
+runaway). The axis/weight direction state inherits the same |α|-weighted
+lineage (sign-aligned; Ryan 2026-09-18) so a merge-matured particle that
+fires soon after merging splits along the physical stretch axis instead of
+the empty-axis Γ̂ fallback.
 
 Anti-refire WITHOUT cooldown — every trigger reads only `sigma_0` and the
 accumulators, and `_rsplit_reset_slot!` restamps `sigma_0 = σ_c` and zeroes
-the accumulators on each child (and on merged representatives), so a fresh
+the accumulators on each child, so a fresh
 child — even one still pinned at a clamp (pair2's `σ_c = σ_p` included) —
 re-arms only after accruing fresh attempted deformation.
 """
@@ -244,11 +252,61 @@ end
 
 """
 Reset slot `i` to a fresh entity with reference radius `sigma` (used on split
-children in-place and by the merge `on_representative` hook — the merged
-particle is a new entity, W3).
+children in-place — a split genuinely re-resolves, so children re-seed
+`sigma_0 = σ_c` with zero accumulators; the MERGE path uses
+`_rsplit_merge_lineage!` instead, 026 §22.2).
 """
 @inline _rsplit_reset_slot!(rs::ResolutionSplitState, i::Int, sigma) =
     _rsplit_init_slot!(rs, i, sigma)
+
+"Read one slot of a lockstep state vector without scalar indexing on device
+storage (host `Vector` reads directly; the generic method reduces a 1-element
+view, which is device-legal)."
+@inline _rsplit_slot_value(v::Vector, i::Int) = @inbounds v[i]
+@inline _rsplit_slot_value(v::AbstractVector, i::Int) = sum(view(v, i:i))
+@inline _rsplit_slot_value(m::Matrix, r::Int, i::Int) = @inbounds m[r, i]
+@inline _rsplit_slot_value(m::AbstractMatrix, r::Int, i::Int) = sum(view(m, r:r, i))
+
+"""
+    _rsplit_merge_lineage!(rs, i, sigma0_sq, dvisc, drvpm, ax_x, ax_y, ax_z, wcoh)
+
+Coincident-limit ledger lineage on MERGE (026 §22.2, Ryan rulings
+2026-09-17/18): stamp the representative slot `i` with
+`sigma_0 = sqrt(sigma0_sq)` and the given accumulator values — the caller
+passes the |α|-weighted means over the merged members (all σ²-additive, one
+weight definition, so the ledger identity σ² ≈ σ₀² + ΣΔσ² survives the merge
+exactly), with the separation term (1/3)⟨|xᵢ−x̄|²⟩_w already added to `drvpm`
+(grow side → compress/tri3 trigger). The stretch-axis estimator inherits the
+same lineage (Ryan 2026-09-18): `(ax_x,ax_y,ax_z)` is the |α|-weighted mean
+of the members' sign-aligned axis sums and `wcoh` the |α|-weighted mean of
+their coherence weights — a merge-matured particle can fire a split within a
+few steps of merging (its Δσ² carries through), so it must not sit in the
+empty-axis Γ̂-fallback window the old zeroing left behind. Coincident
+identical members preserve axis and coherence exactly.
+"""
+@inline function _rsplit_merge_lineage!(rs::ResolutionSplitState{R, Vector{R}, Matrix{R}},
+                                        i::Int, sigma0_sq, dvisc, drvpm,
+                                        ax_x, ax_y, ax_z, wcoh) where {R}
+    rs.sigma_0[i] = sqrt(sigma0_sq)
+    rs.axis[1, i] = ax_x; rs.axis[2, i] = ax_y; rs.axis[3, i] = ax_z
+    rs.weight[i] = wcoh
+    rs.dvisc[i] = dvisc
+    rs.drvpm[i] = drvpm
+    return nothing
+end
+
+@inline function _rsplit_merge_lineage!(rs::ResolutionSplitState{R},
+                                        i::Int, sigma0_sq, dvisc, drvpm,
+                                        ax_x, ax_y, ax_z, wcoh) where {R}
+    view(rs.sigma_0, i:i) .= sqrt(R(sigma0_sq))
+    view(rs.axis, 1:1, i) .= R(ax_x)
+    view(rs.axis, 2:2, i) .= R(ax_y)
+    view(rs.axis, 3:3, i) .= R(ax_z)
+    view(rs.weight, i:i) .= R(wcoh)
+    view(rs.dvisc, i:i) .= R(dvisc)
+    view(rs.drvpm, i:i) .= R(drvpm)
+    return nothing
+end
 
 "Mirror `remove_particle`'s swap-with-last: copy slot `np`'s state into slot `i`."
 @inline function _rsplit_swap!(rs::ResolutionSplitState{R, Vector{R}, Matrix{R}},

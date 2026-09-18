@@ -1388,7 +1388,7 @@ const F = FLOWVPM
             @test pf.np == np_before
         end
 
-        @testset "parallel merge: count, Γ sum, σ cube-root rule" begin
+        @testset "parallel merge: count, Γ sum, second-moment σ rule" begin
             pf = _two_filament_pf(sign_b=+1.0, n=3, dy=0.05, σ=0.5)
             np_before = pf.np
             # Total Γ_x before
@@ -1406,8 +1406,9 @@ const F = FLOWVPM
                 gamma_x_after += pf.particles[F.GAMMA_INDEX.start, i]
             end
             @test gamma_x_after ≈ gamma_x_before
-            # Each survivor gets σ_uv = cbrt(σ_p^3 + σ_q^3) = cbrt(2) * 0.5
-            σ_expected = cbrt(2.0) * 0.5
+            # Each survivor gets the second-moment σ (026 §22.1): equal pair
+            # separated by 2*dy → σ_uv² = σ² + (2*dy)²/12
+            σ_expected = sqrt(0.5^2 + 0.1^2 / 12)
             for i in 1:pf.np
                 @test pf.particles[F.SIGMA_INDEX, i] ≈ σ_expected atol=1e-12
             end

@@ -130,9 +130,11 @@ function _finalize_merged_particle!(
     c_unweighted_z,
     weight_sum,
     vol_sum,
-    sigma3_sum,
     circulation_weighted_sum,
     sigma_sum,
+    candidates_by_root::Vector{Int},
+    range_start::Int,
+    range_end::Int,
 )
     R = eltype(pfield.particles)
     zeroR = zero(R)
@@ -145,7 +147,8 @@ function _finalize_merged_particle!(
     c_y = zeroR
     c_z = zeroR
 
-    if weight_sum > weight_threshold
+    use_weighted = weight_sum > weight_threshold
+    if use_weighted
         inv_weight = inv(weight_sum)
         x_x = x_weighted_x * inv_weight
         x_y = x_weighted_y * inv_weight
@@ -163,7 +166,59 @@ function _finalize_merged_particle!(
         c_z = c_unweighted_z * inv_members
     end
 
-    sigma = cbrt(sigma3_sum)
+    # Second-moment merged σ (026 §22.1, Ryan ruling 2026-09-16):
+    #     σ_new² = ⟨σ²⟩_w + (1/3)⟨|xᵢ − x̄|²⟩_w,  w = |Γ|
+    # — the moment-optimal single-isotropic replacement (total strength and
+    # centroid are already conserved; the one free parameter matches the trace
+    # of the pair's vorticity second moment). Coincident limit → σ, killing
+    # the +26%/pair σ-pump of the old volume-conserving cbrt(Σσ³) rule.
+    # Variance is taken about the placement actually used above (weighted
+    # centroid, or the unweighted fallback with w = 1 when Σ|Γ| ≈ 0 — same
+    # branch condition, so the means stay mutually consistent). The same loop
+    # gathers the |α|-weighted ledger means for the merge lineage (§22.2).
+    # Heap-allocated like `acc` below so dual-number eltypes don't blow the
+    # stack: [Σw, Σwσ², Σw|Δx|², Σwσ₀², Σw·dvisc, Σw·drvpm,
+    # Σw·(±axis_x,y,z) (sign-aligned to the running sum, same convention as
+    # `_rsplit_accumulate!`), Σw·weight].
+    rs = pfield.resolution_split
+    ext = zeros(R, 10)
+    for k in range_start:range_end
+        i = candidates_by_root[k]
+        w = one(R)
+        if use_weighted
+            g_x = pfield.particles[GAMMA_INDEX.start, i]
+            g_y = pfield.particles[GAMMA_INDEX.start + 1, i]
+            g_z = pfield.particles[GAMMA_INDEX.start + 2, i]
+            w = sqrt(g_x * g_x + g_y * g_y + g_z * g_z)
+        end
+        d_x = pfield.particles[X_INDEX.start, i] - x_x
+        d_y = pfield.particles[X_INDEX.start + 1, i] - x_y
+        d_z = pfield.particles[X_INDEX.start + 2, i] - x_z
+        sigma_i = pfield.particles[SIGMA_INDEX, i]
+        ext[1] += w
+        ext[2] += w * sigma_i * sigma_i
+        ext[3] += w * (d_x * d_x + d_y * d_y + d_z * d_z)
+        if rs !== nothing
+            s0 = _rsplit_slot_value(rs.sigma_0, i)
+            ext[4] += w * s0 * s0
+            ext[5] += w * _rsplit_slot_value(rs.dvisc, i)
+            ext[6] += w * _rsplit_slot_value(rs.drvpm, i)
+            a_x = _rsplit_slot_value(rs.axis, 1, i)
+            a_y = _rsplit_slot_value(rs.axis, 2, i)
+            a_z = _rsplit_slot_value(rs.axis, 3, i)
+            sgn = ext[7] * a_x + ext[8] * a_y + ext[9] * a_z < zeroR ?
+                  -one(R) : one(R)
+            ext[7] += sgn * w * a_x
+            ext[8] += sgn * w * a_y
+            ext[9] += sgn * w * a_z
+            ext[10] += w * _rsplit_slot_value(rs.weight, i)
+        end
+    end
+    # ext[1] > 0 always: use_weighted implies Σ|Γ| > threshold; otherwise
+    # every member contributes w = 1 and n_members ≥ 2.
+    inv_w = inv(ext[1])
+    separation_var = ext[3] * inv_w / 3
+    sigma = sqrt(ext[2] * inv_w + separation_var)
     circulation = circulation_weighted_sum / sigma_sum
 
     set_X(pfield, representative, (x_x, x_y, x_z))
@@ -180,13 +235,17 @@ function _finalize_merged_particle!(
     set_SFS(pfield, representative, zeroR)
     set_U_prev(pfield, representative, zeroR)
 
-    # Reset the representative's resolution-split state (026, D-A 2026-09-08):
-    # the merged particle is a new entity — reset its slot with reference
-    # radius equal to the merged σ. A stale sigma_0 (or carried accumulators /
-    # Δσ² attribution from one member) would misarm the shrink trigger and
-    # misroute future splits. No-op (one branch) when splitting is not enabled.
-    rs = pfield.resolution_split
-    rs === nothing || _rsplit_reset_slot!(rs, representative, sigma)
+    # Coincident-limit ledger lineage (026 §22.2, Ryan rulings 2026-09-17/18),
+    # replacing the old reset (σ₀ := merged σ, accumulators := 0) that made
+    # merge-driven growth invisible to the fractional split triggers: every
+    # ledger line — σ₀², each Δσ² accumulator, and the stretch-axis direction
+    # state — becomes the SAME |α|-weighted mean over members, and the
+    # separation term (1/3)⟨|Δx|²⟩_w — in σ² but NOT σ₀² — is credited to
+    # drvpm (grow side → compress/tri3 trigger). Merging equals is
+    # maturity-neutral; only genuine coarsening advances the split clock.
+    rs === nothing || _rsplit_merge_lineage!(rs, representative,
+        ext[4] * inv_w, ext[5] * inv_w, ext[6] * inv_w + separation_var,
+        ext[7] * inv_w, ext[8] * inv_w, ext[9] * inv_w, ext[10] * inv_w)
 
     return nothing
 end
@@ -215,7 +274,6 @@ function _accumulate_and_finalize_root!(
         c_unweighted_x = zeroR; c_unweighted_y = zeroR; c_unweighted_z = zeroR
         weight_sum = zeroR
         vol_sum = zeroR
-        sigma3_sum = zeroR
         circulation_weighted_sum = zeroR
         sigma_sum = zeroR
 
@@ -238,7 +296,6 @@ function _accumulate_and_finalize_root!(
             gamma_y += gamma_i_y
             gamma_z += gamma_i_z
             vol_sum += pfield.particles[VOL_INDEX, i]
-            sigma3_sum += sigma * sigma * sigma
             circulation_weighted_sum += sigma * pfield.particles[CIRCULATION_INDEX, i]
             sigma_sum += sigma
             x_unweighted_x += pos_x
@@ -271,9 +328,11 @@ function _accumulate_and_finalize_root!(
             c_unweighted_x, c_unweighted_y, c_unweighted_z,
             weight_sum,
             vol_sum,
-            sigma3_sum,
             circulation_weighted_sum,
             sigma_sum,
+            candidates_by_root,
+            range_start,
+            range_end,
         )
         return nothing
     end
@@ -299,7 +358,6 @@ function _accumulate_and_finalize_root!(
         acc[2]  += gamma_i_y
         acc[3]  += gamma_i_z
         acc[17] += pfield.particles[VOL_INDEX, i]
-        acc[18] += sigma * sigma * sigma
         acc[19] += sigma * pfield.particles[CIRCULATION_INDEX, i]
         acc[20] += sigma
         acc[10] += pos_x
@@ -332,9 +390,11 @@ function _accumulate_and_finalize_root!(
         acc[13], acc[14], acc[15],  # c_unweighted
         acc[16],                    # weight_sum
         acc[17],                    # vol_sum
-        acc[18],                    # sigma3_sum
         acc[19],                    # circulation_weighted_sum
         acc[20],                    # sigma_sum
+        candidates_by_root,
+        range_start,
+        range_end,
     )
 
     return nothing

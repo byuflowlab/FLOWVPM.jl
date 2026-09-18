@@ -855,18 +855,30 @@ end
         @test pf2.np == 2
     end
 
-    @testset "merge_particles! natively resets the representative slot" begin
+    @testset "merge_particles! natively applies coincident-limit lineage" begin
+        # 026 §22.2 (Ryan 2026-09-17/18): the old reset (sigma_0 := merged σ,
+        # accumulators := 0) laundered merge growth from the triggers; now
+        # every ledger line — including the axis/weight direction state —
+        # becomes the |α|-weighted mean over members (axes sign-aligned) and
+        # the separation term (1/3)⟨|Δx|²⟩_w is credited to drvpm.
+        d = 0.01
         pf = rsplit_field(; np=0, maxp=10)
         vpmrs.add_particle(pf, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
-        vpmrs.add_particle(pf, (0.01, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+        vpmrs.add_particle(pf, (d, 0.0, 0.0), (0.0, 0.0, 1.0), 0.1)
         rs = vpmrs.enable_resolution_split!(pf)
         stamp_slot!(rs, 1, 3.0)
         stamp_slot!(rs, 2, 4.0)
         vpmrs.merge_particles!(pf; r_merge=5.0)
         @test pf.np == 1
-        # sigma_0 := merged σ, accumulators zeroed (merged particle = new entity)
-        @test rs.sigma_0[1] == vpmrs.get_sigma(pf, 1)[]
-        @test slot_values(rs, 1)[2:end] == (0, 0, 0, 0, 0, 0)
+        # equal weights: means of stamped (sigma_0, dvisc, drvpm) pairs
+        @test rs.sigma_0[1] ≈ sqrt((3.0^2 + 4.0^2) / 2)
+        @test rs.dvisc[1] ≈ (7.0 * 3.0 + 7.0 * 4.0) / 2
+        @test rs.drvpm[1] ≈ (8.0 * 3.0 + 8.0 * 4.0) / 2 + d^2 / 12
+        # equal weights, parallel stamped axes → componentwise means
+        @test slot_values(rs, 1)[2:5] == ((2.0*3 + 2.0*4)/2, (3.0*3 + 3.0*4)/2,
+                                          (4.0*3 + 4.0*4)/2, (5.0*3 + 5.0*4)/2)
+        # merged σ follows the §22.1 second-moment rule, not sigma_0
+        @test vpmrs.get_sigma(pf, 1)[]^2 ≈ 0.1^2 + d^2 / 12
     end
 
     @testset "merge with resolution_split === nothing is a no-op branch" begin

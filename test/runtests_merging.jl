@@ -35,17 +35,143 @@ end
         @test p[FLOWVPM.C_INDEX] ≈ [3.25, 4.25, 5.25]
     end
 
-    @testset "Sigma volume conservation" begin
+    # 026 §22.1 (Ryan ruling 2026-09-16): the volume-conserving merged σ
+    # cbrt(σᵢ³+σⱼ³) formerly asserted here was a σ-pump (+26% per equal pair
+    # regardless of overlap); replaced by second-moment matching
+    #     σ_new² = ⟨σ²⟩_w + (1/3)⟨|xᵢ−x̄|²⟩_w,  w = |Γ|.
+    @testset "Second-moment sigma: unequal coincident pair" begin
         pfield = FLOWVPM.ParticleField(4)
-        for sigma in (1.0, 2.0, 3.0)
-            FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), sigma)
-        end
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 2.0)
 
         removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
 
         @test removed == 1
-        @test FLOWVPM.get_np(pfield) == 2
-        @test sum(FLOWVPM.get_sigma(pfield, i)[]^3 for i in 1:2) ≈ 1.0^3 + 2.0^3 + 3.0^3
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][] ≈ sqrt((1.0^2 + 2.0^2) / 2)
+    end
+
+    @testset "Second-moment sigma: coincident equal pair is pump-free" begin
+        sigma = 0.7
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (1.0, 2.0, 3.0), (0.0, 2.0, 0.0), sigma)
+        FLOWVPM.add_particle(pfield, (1.0, 2.0, 3.0), (0.0, 2.0, 0.0), sigma)
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
+
+        @test removed == 1
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][] ≈ sigma atol=4eps(sigma)
+    end
+
+    @testset "Second-moment sigma: equal pair at distance d" begin
+        sigma = 0.5
+        d = 0.3
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 1.0, 0.0), sigma)
+        FLOWVPM.add_particle(pfield, (d, 0.0, 0.0), (1.0, 1.0, 0.0), sigma)
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=2d, sigma_relative=false)
+
+        @test removed == 1
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][]^2 ≈ sigma^2 + d^2 / 12
+    end
+
+    # 026 §22.2 (Ryan ruling 2026-09-17): coincident-limit ledger lineage —
+    # on merge every resolution-split ledger line becomes the |α|-weighted
+    # mean over members (σ₀² and each Δσ² accumulator), and the separation
+    # term (1/3)⟨|Δx|²⟩_w is credited to drvpm (grow side).
+    @testset "Merge lineage: maturity neutrality of coincident equals" begin
+        g = 1.4                       # both particles at growth ratio g = σ/σ₀
+        sigma = 0.42
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), sigma)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), sigma)
+        rs = FLOWVPM.enable_resolution_split!(pfield)
+        rs.sigma_0[1] = sigma / g
+        rs.sigma_0[2] = sigma / g
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
+
+        @test removed == 1
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][] / rs.sigma_0[1] ≈ g
+        @test rs.dvisc[1] == 0
+        @test rs.drvpm[1] ≈ 0 atol=1e-15
+    end
+
+    @testset "Merge lineage: separation term credited to drvpm" begin
+        sigma = 0.5
+        d = 0.2
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), sigma)
+        FLOWVPM.add_particle(pfield, (d, 0.0, 0.0), (1.0, 0.0, 0.0), sigma)
+        rs = FLOWVPM.enable_resolution_split!(pfield)
+        rs.drvpm[1] = 3e-3
+        rs.drvpm[2] = 5e-3
+        rs.dvisc[1] = 1e-3
+        rs.dvisc[2] = 2e-3
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=2d, sigma_relative=false)
+
+        @test removed == 1
+        # equal weights: ⟨|Δx|²⟩_w = (d/2)² and the credit is d²/12
+        @test rs.drvpm[1] ≈ (3e-3 + 5e-3) / 2 + d^2 / 12
+        @test rs.dvisc[1] ≈ (1e-3 + 2e-3) / 2
+        @test rs.sigma_0[1] ≈ sigma
+        # the σ² gained by the merge equals the drvpm credit exactly, so the
+        # ledger identity σ² ≈ σ₀² + ΣΔσ² is preserved by the merge
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][]^2 - sigma^2 ≈ d^2 / 12
+    end
+
+    @testset "Merge lineage: unequal weights use |Gamma|-weighted means" begin
+        w1, w2 = 1.0, 3.0
+        s01, s02 = 0.30, 0.50
+        v1, v2 = 1e-3, 4e-3
+        r1, r2 = -2e-3, 6e-3
+        sig1, sig2 = 0.35, 0.55
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (w1, 0.0, 0.0), sig1)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (w2, 0.0, 0.0), sig2)
+        rs = FLOWVPM.enable_resolution_split!(pfield)
+        rs.sigma_0[1] = s01; rs.sigma_0[2] = s02
+        rs.dvisc[1] = v1;    rs.dvisc[2] = v2
+        rs.drvpm[1] = r1;    rs.drvpm[2] = r2
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
+
+        @test removed == 1
+        W = w1 + w2
+        @test rs.sigma_0[1]^2 ≈ (w1 * s01^2 + w2 * s02^2) / W
+        @test rs.dvisc[1] ≈ (w1 * v1 + w2 * v2) / W
+        @test rs.drvpm[1] ≈ (w1 * r1 + w2 * r2) / W  # coincident: zero separation term
+        p = merged_particle(pfield)
+        @test p[FLOWVPM.SIGMA_INDEX][]^2 ≈ (w1 * sig1^2 + w2 * sig2^2) / W
+    end
+
+    @testset "Merge lineage: stretch axis sign-aligned weighted mean" begin
+        # 026 axis lineage (Ryan 2026-09-18): the direction state inherits
+        # the same |α|-weighted mean, with member axes sign-aligned to the
+        # running sum (anti-parallel axes flip, matching _rsplit_accumulate!).
+        w1, w2 = 1.0, 3.0
+        pfield = FLOWVPM.ParticleField(4)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (w1, 0.0, 0.0), 0.5)
+        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (w2, 0.0, 0.0), 0.5)
+        rs = FLOWVPM.enable_resolution_split!(pfield)
+        rs.axis[1, 1] = 1.0; rs.weight[1] = 1.0
+        rs.axis[1, 2] = -2.0; rs.weight[2] = 2.0   # anti-parallel → flips
+
+        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.1, sigma_relative=false)
+
+        @test removed == 1
+        W = w1 + w2
+        @test rs.axis[1, 1] ≈ (w1 * 1.0 + w2 * 2.0) / W
+        @test rs.axis[2, 1] == 0 && rs.axis[3, 1] == 0
+        @test rs.weight[1] ≈ (w1 * 1.0 + w2 * 2.0) / W
+        # coincident identical members preserve coherence exactly (= 1 here)
+        @test abs(rs.axis[1, 1]) / rs.weight[1] ≈ 1.0
     end
 
     @testset "Transitive chains form only one pair per call" begin
