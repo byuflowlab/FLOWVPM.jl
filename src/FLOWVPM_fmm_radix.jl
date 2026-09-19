@@ -219,10 +219,6 @@ Base.@kwdef struct RadixFMMSettings
     # long epoch is expensive: on the NREL 5MW production run one epoch ran
     # 779 steps from 215k to 687k particles with the step going 1.8 s -> 89.3 s.
     rebuild_growth::Float64 = 2.0
-    # Rebuild as soon as `rebuild_growth` is crossed, skipping the occupancy
-    # early-out in `_radix_depth_outgrown!`. That early-out is sound under the
-    # deepest-admissible rule, so this is a debugging override.
-    rebuild_always::Bool = false
 end
 
 """
@@ -618,7 +614,6 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     np = pfield.np
     np > st.settings.rebuild_growth * st.np_checked[] || return false
     st.np_checked[] = np
-    st.settings.rebuild_always && return true
     # Under the deepest-admissible rule a deeper choice is impossible until the
     # occupancy cap itself passes the cached depth, so the cap is a sound
     # early-out.
