@@ -218,6 +218,9 @@ Base.@kwdef struct RadixFMMSettings
     rebuild_growth::Float64 = 2.0
 end
 
+# Deepest radix level the dense per-level node table allows (8^ell Int32).
+const _RADIX_MAX_ELL = 8
+
 """
     _validate_radix_fmm_settings(settings::RadixFMMSettings)
 
@@ -301,11 +304,9 @@ function _validate_radix_fmm_settings(pfield::ParticleField,
     kernel = _radix_direct_kernel(settings)
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
-    ell, q = settings.ell === nothing ?
-        _radix_auto_geometry(L_geo, sigma_max, pfield.np,
-            settings.near_radius2, _radix_primary_reach(kernel),
-            settings.accuracy_margin) :
-        (settings.ell, settings.near_radius2)
+    ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np,
+        settings.near_radius2, _radix_primary_reach(kernel),
+        settings.accuracy_margin; ell_fixed = settings.ell)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
@@ -489,23 +490,32 @@ Task 035 cycle-1 joint depth/leaf-radius rule. Chooses the deepest radix
 depth `ell` for which some supported leaf near radius `q >= q_floor`
 satisfies the margin-guarded inequality
 `g_min(q) * h_leaf >= margin * rho_t * sigma_max` (`h_leaf = L / 2^ell`),
-capped by an occupancy heuristic of about `n^(1/3)` cells per side; at
+capped only by the memory bound `_RADIX_MAX_ELL`; at
 the chosen depth the smallest passing `q` (cheapest direct near set) is used.
 The margin buys regularization-deficit accuracy headroom over the bare
 adequacy gate FastMultipole enforces (`margin = 1` reproduces adequacy-only
 selection). Errors loudly when no depth `>= 2` is admissible.
 """
 function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
-                              rho_t::Real, margin::Real)
+                              rho_t::Real, margin::Real; ell_fixed=nothing)
     reach = margin * rho_t * sigma_max
     qs = sort!([Int(q) for q in fmm._SUPPORTED_RIGID_NEAR_RADII2 if q >= q_floor])
     isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
         "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
     gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
-    ell_occupancy = max(2, floor(Int, log2(max(np, 8)) / 3))
+    # The only cap is memory: the dense per-level node table is 8^ell Int32
+    # entries (~64 MB at 8, ~0.5 GB at 9). The occupancy heuristic that used
+    # to sit here, about n^(1/3) cells per side, assumes a uniformly filled
+    # box; a wake is a thin structure in a mostly empty box, and one level
+    # past that cap halved the step at sixteen rotors (near field 28 s -> 4.6
+    # s of 56). Adequacy alone decides the depth.
+    ell_top = _RADIX_MAX_ELL
+    # a fixed `ell` still takes the smallest adequate stencil at that depth
+    # (near_radius2 is a floor on the auto path too)
+    ells = ell_fixed === nothing ? (ell_top:-1:2) : (Int(ell_fixed):Int(ell_fixed))
     # every admissible depth, with the smallest near set that satisfies it
     admissible = Tuple{Int,Int}[]
-    for ell in ell_occupancy:-1:2
+    for ell in ells
         h = L / 2^ell
         for q in qs
             if gaps[q] * h >= reach
@@ -557,10 +567,8 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     # width L/2^ell is identical — rectangularity only trims per-axis counts.
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
-    ell, q = settings.ell === nothing ?
-        _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
-            kernel_primary_reach, settings.accuracy_margin) :
-        (settings.ell, settings.near_radius2)
+    ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
+        kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
@@ -611,10 +619,8 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     np = pfield.np
     np > st.settings.rebuild_growth * st.np_checked[] || return false
     st.np_checked[] = np
-    # Under the deepest-admissible rule a deeper choice is impossible until the
-    # occupancy cap itself passes the cached depth, so the cap is a sound
-    # early-out.
-    max(2, floor(Int, log2(max(np, 8)) / 3)) > st.cache.ell || return false
+    # The admissible depth grows with the box (a wake convects), so the
+    # geometry is re-derived whenever the count has grown by rebuild_growth.
     bounds = st.settings.bounds === nothing ?
         _radix_derive_bounds(pfield, st.settings.padding;
             rectangular=st.settings.rectangular) : st.settings.bounds
