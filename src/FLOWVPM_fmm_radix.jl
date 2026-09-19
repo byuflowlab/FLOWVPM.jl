@@ -306,8 +306,7 @@ function _validate_radix_fmm_settings(pfield::ParticleField,
         Float64(maximum(bounds[2]))
     ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np,
         settings.near_radius2, _radix_primary_reach(kernel),
-        settings.accuracy_margin; ell_fixed = settings.ell,
-        occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL))
+        settings.accuracy_margin; ell_fixed = settings.ell)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
@@ -485,55 +484,6 @@ function _radix_center_snapped_bounds(bounds, ell::Integer)
 end
 
 """
-    _radix_occupancy_sums(pfield, bounds, ell_top) -> Dict{Int,Tuple{Int,Float64}}
-
-For every level `2:ell_top`, the number of OCCUPIED cells and the sum over
-cells of (bodies in the cell)^2, from one host sort of the particles' Morton
-keys at `ell_top` (a level-`ell` key is the finest key shifted by
-`3*(ell_top - ell)`). The squared sum is the expected number of near-field
-pairs per stencil offset; with the stencil size it ranks admissible depths by
-the near-field work they cost, which is the term that dominates the device
-step. O(np log np) once per rebuild, on the host.
-"""
-function _radix_occupancy_sums(pfield::ParticleField, bounds, ell_top::Int)
-    np = pfield.np
-    out = Dict{Int,Tuple{Int,Float64}}()
-    np == 0 && return out
-    x_min, L = bounds
-    n = 1 << ell_top
-    hx, hy, hz = L isa Real ? (L / n, L / n, L / n) : (L[1] / n, L[2] / n, L[3] / n)
-    # one host copy: a device-backed field must not be indexed elementwise
-    X = Array(view(pfield.particles, X_INDEX, 1:np))
-    keys = Vector{UInt64}(undef, np)
-    @inbounds for i in 1:np
-        ix = clamp(floor(Int, (X[1, i] - x_min[1]) / hx), 0, n - 1)
-        iy = clamp(floor(Int, (X[2, i] - x_min[2]) / hy), 0, n - 1)
-        iz = clamp(floor(Int, (X[3, i] - x_min[3]) / hz), 0, n - 1)
-        keys[i] = UInt64(fmm.morton_key(SVector{3,Int}(ix, iy, iz), ell_top))
-    end
-    sort!(keys)
-    for ell in 2:ell_top
-        sh = 3 * (ell_top - ell)
-        n_occ = 0; sumsq = 0.0
-        run = 1
-        @inbounds for i in 2:np
-            if (keys[i] >> sh) == (keys[i - 1] >> sh)
-                run += 1
-            else
-                n_occ += 1; sumsq += Float64(run)^2; run = 1
-            end
-        end
-        n_occ += 1; sumsq += Float64(run)^2
-        out[ell] = (n_occ, sumsq)
-    end
-    return out
-end
-
-# integer offsets within a rigid stencil of squared radius q
-_radix_stencil_size(q::Int) = (r = isqrt(q); count(ox * ox + oy * oy + oz * oz <= q
-    for ox in -r:r, oy in -r:r, oz in -r:r))
-
-"""
     _radix_auto_geometry(L, sigma_max, np, q_floor, rho_t, margin) -> (ell, q)
 
 Task 035 cycle-1 joint depth/leaf-radius rule. Chooses the deepest radix
@@ -547,24 +497,21 @@ adequacy gate FastMultipole enforces (`margin = 1` reproduces adequacy-only
 selection). Errors loudly when no depth `>= 2` is admissible.
 """
 function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
-                              rho_t::Real, margin::Real; ell_fixed=nothing,
-                              occupancy=nothing)
+                              rho_t::Real, margin::Real; ell_fixed=nothing)
     reach = margin * rho_t * sigma_max
     qs = sort!([Int(q) for q in fmm._SUPPORTED_RIGID_NEAR_RADII2 if q >= q_floor])
     isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
         "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
     gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
-    # The only cap is memory: the dense per-level node table is 8^ell Int32
-    # entries (~64 MB at 8). An occupancy heuristic of ~n^(1/3) cells per
-    # side used to sit here; it assumes a uniformly filled box, and a wake is
-    # a thin structure in a mostly empty one. Checked against an exact sum
-    # (test/gpu/al_depth_rule.jl, 2026-09-19): sixteen rotors at 363k
-    # particles are at 1.3e-4..1.6e-4 for every depth 2..8, four rotors at
-    # 4.6e-5..6.3e-5 for 2..6, Metal 1e-5 for 2..4 -- no degradation with
-    # depth -- and the deepest is the fastest (16 rotors: 73 ms at 8 vs 171
-    # at the cap's 6). Which admissible depth is used is decided below by
-    # the near-pair count, not by "deepest".
-    ell_top = _RADIX_MAX_ELL
+    # Occupancy cap, about n^(1/3) cells per side, under the memory bound.
+    # It assumes a uniformly filled box, and one level past it halved the
+    # step at sixteen rotors (near field 28 s -> 4.6 s of 56, 2026-09-19).
+    # It stays until the deeper regime it hides has an exact-reference
+    # accuracy gate: the one production run that rebuilt past it (NREL 5MW,
+    # 650k particles, a rebuild at step 899) returned CP 7% high and the
+    # wake-induced velocity 27% low on the step evaluated on that grid. The
+    # host-vs-device gate cannot see that, since both arms share the lists.
+    ell_top = min(_RADIX_MAX_ELL, max(2, floor(Int, log2(max(np, 8)) / 3)))
     # a fixed `ell` still takes the smallest adequate stencil at that depth
     # (near_radius2 is a floor on the auto path too)
     ells = ell_fixed === nothing ? (ell_top:-1:2) : (Int(ell_fixed):Int(ell_fixed))
@@ -579,26 +526,9 @@ function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
             end
         end
     end
-    if !isempty(admissible)
-        # Without occupancy counts: deepest admissible. With them: the
-        # admissible (ell, q) with the fewest expected near-field pairs,
-        # stencil size times the sum of squared cell occupancies. That is
-        # the term that dominates the device step (M2L is a few percent), and
-        # it is what "deepest admissible" gets wrong when the smallest
-        # adequate stencil at the deepest level is wide: the NREL 5MW spent
-        # an epoch at 8 s/step, four times its other epochs, on such a pick.
-        # Exact counts, no calibration.
-        occupancy === nothing && return first(admissible)
-        best = first(admissible); best_cost = Inf
-        for (ell, q) in admissible
-            haskey(occupancy, ell) || continue
-            c = _radix_stencil_size(q) * occupancy[ell][2]
-            if c < best_cost
-                best_cost = c; best = (ell, q)
-            end
-        end
-        return best
-    end
+    # Deepest admissible. It minimizes near-field work and measured fastest on
+    # every case tried, from one rotor at 69k particles to the 5MW at 653k.
+    isempty(admissible) || return first(admissible)
     error("no admissible radix depth (need ell >= 2): the margin-guarded " *
         "near-set inequality requires g_min(q)*L/2^ell >= " *
         "margin*rho_t*sigma_max = $reach, but even ell = 2 with the largest " *
@@ -640,8 +570,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
     ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
-        kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell,
-        occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL))
+        kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell)
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
@@ -704,13 +633,11 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     ell = try
         first(_radix_auto_geometry(L_geo, sigma_max, np,
             st.settings.near_radius2, _radix_primary_reach(kernel),
-            st.settings.accuracy_margin;
-            occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)))
+            st.settings.accuracy_margin))
     catch
         return false
     end
-    # the cheapest depth can move either way as the wake spreads
-    return ell != st.cache.ell
+    return ell > st.cache.ell
 end
 
 """
