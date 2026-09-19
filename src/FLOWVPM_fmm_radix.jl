@@ -205,14 +205,11 @@ Base.@kwdef struct RadixFMMSettings
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
     # The radix depth is always the DEEPEST the adequacy gate admits, capped
-    # by the occupancy heuristic. There is no selector: a calibrated cost model
-    # and a measure-every-candidate probe were both tried and both lost. On the
-    # NREL 5MW production run (10 rev, 90 steps/rev, 653k particles, H200) the
-    # deepest rule ran the whole case in 1141 s while the cost model was still
-    # at 6.05 s/step and the measured probe at 2.87 s/step near step 700, and
-    # it also won at one rotor (69k) and four rotors (137k). It carries no
-    # constants, so nothing needs recalibrating when the kernels, the
-    # precision or the device change.
+    # by the occupancy heuristic, and there is no selector in front of it. It
+    # measured fastest at every scale tried, from one rotor at 69k particles
+    # to the NREL 5MW case at 653k, and it carries no fitted constants, so
+    # nothing needs recalibrating when the kernels, the precision or the
+    # device change.
     # Growth in `np` that makes the cache reconsider its depth. The depth is
     # otherwise held for the whole epoch, and the per-cell near-field work
     # grows faster than `np` does (the box grows too as a wake convects), so a
