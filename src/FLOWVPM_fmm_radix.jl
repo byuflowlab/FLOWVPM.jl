@@ -503,13 +503,15 @@ function _radix_auto_geometry(L::Real, sigma_max::Real, np::Int, q_floor::Int,
     isempty(qs) && error("near_radius2=$q_floor exceeds every supported rigid " *
         "near radius $(fmm._SUPPORTED_RIGID_NEAR_RADII2)")
     gaps = Dict(q => fmm._ball_stencil_min_gap(q) for q in qs)
-    # The only cap is memory: the dense per-level node table is 8^ell Int32
-    # entries (~64 MB at 8, ~0.5 GB at 9). The occupancy heuristic that used
-    # to sit here, about n^(1/3) cells per side, assumes a uniformly filled
-    # box; a wake is a thin structure in a mostly empty box, and one level
-    # past that cap halved the step at sixteen rotors (near field 28 s -> 4.6
-    # s of 56). Adequacy alone decides the depth.
-    ell_top = _RADIX_MAX_ELL
+    # Occupancy cap, about n^(1/3) cells per side, under the memory bound.
+    # It assumes a uniformly filled box, and one level past it halved the
+    # step at sixteen rotors (near field 28 s -> 4.6 s of 56, 2026-09-19).
+    # It stays until the deeper regime it hides has an exact-reference
+    # accuracy gate: the one production run that rebuilt past it (NREL 5MW,
+    # 650k particles, a rebuild at step 899) returned CP 7% high and the
+    # wake-induced velocity 27% low on the step evaluated on that grid. The
+    # host-vs-device gate cannot see that, since both arms share the lists.
+    ell_top = min(_RADIX_MAX_ELL, max(2, floor(Int, log2(max(np, 8)) / 3)))
     # a fixed `ell` still takes the smallest adequate stencil at that depth
     # (near_radius2 is a floor on the auto path too)
     ells = ell_fixed === nothing ? (ell_top:-1:2) : (Int(ell_fixed):Int(ell_fixed))
