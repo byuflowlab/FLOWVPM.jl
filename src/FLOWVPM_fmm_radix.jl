@@ -639,9 +639,17 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     # width L/2^ell is identical — rectangularity only trims per-axis counts.
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
+    occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)
     ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
         kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell,
-        occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL))
+        occupancy)
+    if get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1"
+        # one line per (re)build: what the depth rule saw and what it chose
+        occ = join((string(l, ":", occupancy[l][1], "/", round(Int, occupancy[l][2]))
+                    for l in sort!(collect(keys(occupancy)))), " ")
+        println("radix build: np=$(pfield.np) L=$(round(L_geo; sigdigits=4)) sigma_max=$(round(sigma_max; sigdigits=4)) -> ell=$ell q=$q  [ell:cells/sum_sq  $occ]")
+        flush(stdout)
+    end
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
@@ -692,6 +700,9 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     np = pfield.np
     np > st.settings.rebuild_growth * st.np_checked[] || return false
     st.np_checked[] = np
+    verbose = get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1"
+    t0 = time()
+    verbose && (println("radix depth check: np=$np (cached ell=$(st.cache.ell)) ..."); flush(stdout))
     # The admissible depth grows with the box (a wake convects), so the
     # geometry is re-derived whenever the count has grown by rebuild_growth.
     bounds = st.settings.bounds === nothing ?
@@ -701,14 +712,18 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     kernel = _radix_direct_kernel(st.settings)
     L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
         Float64(maximum(bounds[2]))
+    t1 = time()
+    occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)
+    t2 = time()
     ell = try
         first(_radix_auto_geometry(L_geo, sigma_max, np,
             st.settings.near_radius2, _radix_primary_reach(kernel),
-            st.settings.accuracy_margin;
-            occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)))
+            st.settings.accuracy_margin; occupancy))
     catch
+        verbose && (println("radix depth check: no admissible geometry, cache kept ($(round(time() - t0; digits=2)) s)"); flush(stdout))
         return false
     end
+    verbose && (println("radix depth check: L=$(round(L_geo; sigdigits=4)) sigma_max=$(round(sigma_max; sigdigits=4)) -> ell=$ell (bounds+sigma $(round(t1 - t0; digits=2)) s, occupancy $(round(t2 - t1; digits=2)) s, total $(round(time() - t0; digits=2)) s)"); flush(stdout))
     # the cheapest depth can move either way as the wake spreads
     return ell != st.cache.ell
 end
@@ -781,6 +796,7 @@ function _radix_fmm_coupling!(pfield::ParticleField)
     st = get(_radix_fmm_couplings, pfield, nothing)
     if st !== nothing && (_radix_depth_outgrown!(pfield, st) ||
                           _radix_sigma_outgrown!(pfield, st))
+        get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix coupling dropped for rebuild at np=$(pfield.np)"); flush(stdout))
         delete!(_radix_fmm_couplings, pfield)
         st = nothing
     end
@@ -826,7 +842,12 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
     sources = self_induce ? (pfield, extra_sources...) : extra_sources
     length(extra_hessian) == length(extra_targets) ||
         throw(ArgumentError("one extra_hessian flag per extra target is required"))
-    hessian = (self_induce, extra_hessian...)
+    # The particles take U AND J from every source, the extra sources included:
+    # a sources-only call (bound segments and rings onto the wake between the
+    # RK3 stages) must deliver the filaments' velocity gradient too, or the
+    # reformulated VPM stretches the wake with part of the field missing.
+    # (`self_induce` used to sit here, which dropped J on exactly that call.)
+    hessian = (true, extra_hessian...)
     try
         fmm.fmm!(targets, sources, st.cache;
             scalar_potential=false, gradient=true, hessian, sfs, tree_sources)
