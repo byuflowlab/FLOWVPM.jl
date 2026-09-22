@@ -17,7 +17,6 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     GS = get_Gamma(source_particle)
     JS = get_J(source_particle)
     JT = get_J(target_particle)
-
     # Stretching term
     if transposed
         # Transposed scheme (Γq⋅∇')(Up - Uq)
@@ -38,6 +37,9 @@ particle-to-particle interactions. See 20210901 notebook for derivation.
     get_SFS(target_particle)[1] += zeta_sgm*S1
     get_SFS(target_particle)[2] += zeta_sgm*S2
     get_SFS(target_particle)[3] += zeta_sgm*S3
+    #set_one_field(target_particle, SFS_INDEX[1], get_SFS(target_particle)[1] + zeta_sgm*S1)
+    #set_one_field(target_particle, SFS_INDEX[2], get_SFS(target_particle)[2] + zeta_sgm*S2)
+    #set_one_field(target_particle, SFS_INDEX[3], get_SFS(target_particle)[3] + zeta_sgm*S3)
 end
 
 function Estr_direct!(pfield)
@@ -67,8 +69,8 @@ function Estr_direct_multithreaded(pfield::ParticleField)
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
                 dx, dy, dz = sx - tx, sy - ty, sz - tz
-                r = sqrt(dx * dx + dy * dy + dz * dz)
-
+                r2 = dx * dx + dy * dy + dz * dz
+                r = r2 > 0 ? sqrt(r2) : zero(typeof(r2)) # AD derivatives are corrupted with NaNs without this check.
                 Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
             end
         end
@@ -84,7 +86,9 @@ function Estr_direct_singlethreaded(pfield::ParticleField)
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
             dx, dy, dz = sx - tx, sy - ty, sz - tz
-            r = sqrt(dx * dx + dy * dy + dz * dz)
+            r2 = dx * dx + dy * dy + dz * dz
+            r = r2 > 0 ? sqrt(r2) : zero(typeof(r2)) # AD derivatives are corrupted with NaNs without this check.
+            #r = sqrt(dx * dx + dy * dy + dz * dz)
 
             Estr_direct(target_particle, source_particle, r, pfield.kernel.zeta, pfield.transposed)
         end

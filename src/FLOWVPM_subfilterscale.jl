@@ -220,27 +220,28 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # finish dynamic procedure
         SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
-
         # Apply clipping strategies
         for clipping in SFS.clippings
             if pfield.np > MIN_MT_NP
                 Threads.@threads for i in 1:pfield.np
                     # Skip static particles
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    is_static(pfield, i) && continue
 
                     if clipping(pfield, i)
                         # Clip SFS model by nullifying the model coefficient
-                        pfield.particles[C_INDEX[1],i] *= 0
+                        set_one_field(pfield, i, C_INDEX[1], 0)
+                        #pfield.particles[C_INDEX[1],i] *= 0
                     end
                 end
             else
                 for i in 1:pfield.np
                     # Skip static particles
-                    pfield.particles[STATIC_INDEX,i] != 0 && continue
+                    is_static(pfield, i) && continue
 
                     if clipping(pfield, i)
                         # Clip SFS model by nullifying the model coefficient
-                        pfield.particles[C_INDEX[1],i] *= 0
+                        set_one_field(pfield, i, C_INDEX[1], 0)
+                        #pfield.particles[C_INDEX[1],i] *= 0
                     end
                 end
             end
@@ -465,15 +466,16 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[SIGMA_INDEX,i] *= alpha
+            #pfield.particles[SIGMA_INDEX,i] *= alpha
+            set_sigma(pfield, i, pfield.particles[SIGMA_INDEX, i]*alpha)
         end
     else
         for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[SIGMA_INDEX,i] *= alpha
+            #pfield.particles[SIGMA_INDEX,i] *= alpha
+            set_sigma(pfield, i, pfield.particles[SIGMA_INDEX, i]*alpha)
         end
     end
-
     # Calculate UJ with test filter
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
 
@@ -482,12 +484,14 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            #pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            set_M(pfield, i, zeroR)
         end
     else
         for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            #pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            set_M(pfield, i, zeroR)
         end
     end
 
@@ -499,25 +503,32 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
 
         M = get_M(p)
         J = get_J(p)
-        Gamma = get_Gamma(p)
+        G = get_Gamma(p)
 
         # Calculate and store stretching with test filter under p.M[:, 1]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            M[1] = J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
-            M[2] = J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
-            M[3] = J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
+            #M[1] = J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            #M[2] = J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            #M[3] = J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
+            set_MS1(pfield, i, J[1]*G[1]+J[2]*G[2]+J[3]*G[3])
+            set_MS2(pfield, i, J[4]*G[1]+J[5]*G[2]+J[6]*G[3])
+            set_MS3(pfield, i, J[7]*G[1]+J[8]*G[2]+J[9]*G[3])
         else
             # Classic scheme (Γ⋅∇)U
-            M[1] = J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
-            M[2] = J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
-            M[3] = J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
+            #M[1] = J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            #M[2] = J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            #M[3] = J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
+            set_MS1(pfield, i, J[1]*G[1]+J[4]*G[2]+J[7]*G[3])
+            set_MS2(pfield, i, J[2]*G[1]+J[5]*G[2]+J[8]*G[3])
+            set_MS3(pfield, i, J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
         end
 
         # Calculate and store SFS with test filter under p.M[:, 2]
-        M[4] = get_SFS1(p)
-        M[5] = get_SFS2(p)
-        M[6] = get_SFS3(p)
+        #M[4] = get_SFS1(p)
+        #M[5] = get_SFS2(p)
+        #M[6] = get_SFS3(p)
+        
     end
 
 
@@ -526,12 +537,14 @@ function dynamicprocedure_pseudo3level_beforeUJ(pfield, SFS::SubFilterScale{R},
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[SIGMA_INDEX,i] /= alpha
+            #pfield.particles[SIGMA_INDEX,i] /= alpha
+            set_sigma(pfield, i, pfield.particles[SIGMA_INDEX, i]/alpha)
         end
     else
         for i in 1:pfield.np
             pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[SIGMA_INDEX,i] /= alpha
+            #pfield.particles[SIGMA_INDEX,i] /= alpha
+            set_sigma(pfield, i, pfield.particles[SIGMA_INDEX, i]/alpha)
         end
     end
 
@@ -562,27 +575,35 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         is_static(p) && continue
         M = get_M(p)
         J = get_J(p)
-        Gamma = get_Gamma(p)
+        #Gamma = get_Gamma(p)
+        G = get_Gamma(p)
 
         # Calculate stretching with domain filter and substract from test filter
         # stored under p.M[:, 1], resulting in (Γ⋅∇)dUdσ
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            M[1] -= J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
-            M[2] -= J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
-            M[3] -= J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
+            #M[1] -= J[1]*Gamma[1]+J[2]*Gamma[2]+J[3]*Gamma[3]
+            #M[2] -= J[4]*Gamma[1]+J[5]*Gamma[2]+J[6]*Gamma[3]
+            #M[3] -= J[7]*Gamma[1]+J[8]*Gamma[2]+J[9]*Gamma[3]
+            set_MS1(pfield, i, M[1] - (J[1]*G[1]+J[2]*G[2]+J[3]*G[3]))
+            set_MS2(pfield, i, M[2] - (J[4]*G[1]+J[5]*G[2]+J[6]*G[3]))
+            set_MS3(pfield, i, M[3] - (J[7]*G[1]+J[8]*G[2]+J[9]*G[3]))
         else
             # Classic scheme (Γ⋅∇)U
-            M[1] -= J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
-            M[2] -= J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
-            M[3] -= J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
+            #M[1] -= J[1]*Gamma[1]+J[4]*Gamma[2]+J[7]*Gamma[3]
+            #M[2] -= J[2]*Gamma[1]+J[5]*Gamma[2]+J[8]*Gamma[3]
+            #M[3] -= J[3]*Gamma[1]+J[6]*Gamma[2]+J[9]*Gamma[3]
+            set_MS1(pfield, i, M[1] - (J[1]*G[1]+J[4]*G[2]+J[7]*G[3]))
+            set_MS2(pfield, i, M[2] - (J[2]*G[1]+J[5]*G[2]+J[8]*G[3]))
+            set_MS3(pfield, i, M[3] - (J[3]*G[1]+J[6]*G[2]+J[9]*G[3]))
         end
 
         # Calculate SFS with domain filter and substract from test filter stored
         # under p.M[:, 2], resulting in dEdσ
-        M[4] -= get_SFS1(p)
-        M[5] -= get_SFS2(p)
-        M[6] -= get_SFS3(p)
+        #M[4] -= get_SFS1(p)
+        #M[5] -= get_SFS2(p)
+        #M[6] -= get_SFS3(p)
+        set_MQSTR(pfield, i, M[4:6] .- get_SFS(pfield, i))
     end
 
 
@@ -605,9 +626,11 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
         # Initialize denominator to something other than zero
         if C_p[3] == 0
-            C_p[3] = deno
+            set_one_field(pfield, i, 40, deno)
+            #C_p[3] = deno
             if C_p[3] == 0
-                C_p[3] = eps()
+                #C_p[3] = eps()
+                set_one_field(pfield, i, 40, eps())
             end
         end
 
@@ -636,11 +659,14 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Save numerator and denominator of model coefficient
-        C_p[2] = nume
-        C_p[3] = deno
+        #C_p[2] = nume
+        #C_p[3] = deno
+        set_one_field(pfield, i, 39, nume)
+        set_one_field(pfield, i, 40, deno)
 
         # Store model coefficient
-        C_p[1] = C_p[2] / C_p[3]
+        #C_p[1] = C_p[2] / C_p[3]
+        set_one_field(pfield, i, 38, C_p[2] / C_p[3])
 
         if isnan(C_p[1])
             println("nume: ", nume)
@@ -652,22 +678,26 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         end
 
         # Force the coefficient to be positive
-        C_p[1] *= sign(C_p[1])^force_positive
+        #C_p[1] *= sign(C_p[1])^force_positive
+        set_one_field(pfield, i, 38, C_p[1]*sign(C_p[1])^force_positive)
     end
 
     # Flush temporal memory
-    zeroR::R = zero(R)
+    reset_particles_M(pfield)
+    #=zeroR::R = zero(R)
     if pfield.np > MIN_MT_NP
         Threads.@threads for i in 1:pfield.np
-            pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            is_static(pfield, i) && continue
+            #pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            set_M(pfield, i, zeroR)
         end
     else
         for i in 1:pfield.np
-            pfield.particles[STATIC_INDEX,i] != 0 && continue
-            pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            is_static(pfield, i) && continue
+            #pfield.particles[M_INDEX,i] .= zeroR # this is necessary to reset the particle's M storage memory
+            set_M(pfield, i, zeroR)
         end
-    end
+    end=#
 
     return nothing
 end
@@ -686,7 +716,7 @@ function dynamicprocedure_sensorfunction(pfield, SFS::SubFilterScale{R},
                                          ) where {R}
 
     # Storage terms: f(λ) <=> get_C(p)[1], test-filter ξ <=> get_C(p)[2], primary-filter ξ <=> get_C(p)[3]
-
+    
     # ERROR CASES
     if minC < 0
         error("Invalid C bounds: Got a negative bound for minC ($(minC))")

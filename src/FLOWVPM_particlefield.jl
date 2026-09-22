@@ -281,8 +281,7 @@ get_SFS(P) = view(P, SFS_INDEX)
 get_static(P) = view(P, STATIC_INDEX)
 get_U_prev(P) = view(P, U_PREV_INDEX)
 
-#is_static(P) = Bool(P[43]) # this causes so many type errors
-is_static(P) = false
+is_static(P) = P[STATIC_INDEX] == 0 ? false : true
 
 # This extra function computes the vorticity using the cross-product
 get_W(P) = (get_W1(P), get_W2(P), get_W3(P))
@@ -318,6 +317,7 @@ get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
 get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
 get_U_prev(pfield::ParticleField, i::Int) = view(pfield.particles, U_PREV_INDEX, i)
+is_static(pfield::ParticleField, i) = pfield.particles[STATIC_INDEX, i] == 0 ? false : true
 
 "Set functions for particles"
 function set_X(P, val) P[X_INDEX] .= val end
@@ -341,6 +341,7 @@ function set_static(P, val) P[STATIC_INDEX] = val end
 function set_PSE(P, val) P[PSE_INDEX] .= val end
 function set_SFS(P, val) P[SFS_INDEX] .= val end
 function set_U_prev(P, val) P[U_PREV_INDEX] = val end
+function set_one_field(P, idx, val) P[idx] = val end
 
 
 "Set functions for particles in ParticleField"
@@ -481,21 +482,15 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
             Threads.@threads for i in 1:pfield.np
                 Ux, Uy, Uz = get_U(pfield, i)
                 U2 = Ux*Ux + Uy*Uy + Uz*Uz
-                if U2 > 0
-                    set_U_prev(pfield, i, sqrt(U2))
-                else
-                    set_U_prev(pfield, i, zero(U2))
-                end
+                U_prev = U2 > 0 ? sqrt(U2) : zero(U2)
+                set_U_prev(pfield, i, U_prev)
             end
         else
             for i in 1:pfield.np
                 Ux, Uy, Uz = get_U(pfield, i)
                 U2 = Ux*Ux + Uy*Uy + Uz*Uz
-                if U2 > 0
-                    set_U_prev(pfield, i, sqrt(U2))
-                else
-                    set_U_prev(pfield, i, zero(U2))
-                end
+                U_prev = U2 > 0 ? sqrt(U2) : zero(U2)
+                set_U_prev(pfield, i, U_prev)
             end
         end
     end
@@ -530,19 +525,6 @@ function _reset_particle(particle)
 end
 
 function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
-    if eltype(pfield.particles) <: ReverseDiff.TrackedReal
-        tp = ReverseDiff.tape(pfield)
-        zeroR = zero(eltype(pfield.particles[1].value))
-        for j=1:3
-            pfield.particles[U_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
-            pfield.particles[VORTICITY_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
-            pfield.particles[PSE_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
-        end
-        for j=1:9
-            pfield.particles[J_INDEX[j], i] = ReverseDiff.track(zeroR, tp)
-        end
-        return nothing
-    end
     pfield.particles[U_INDEX, i] .= zeroVal
     pfield.particles[VORTICITY_INDEX, i] .= zeroVal
     pfield.particles[J_INDEX, i] .= zeroVal
@@ -563,11 +545,52 @@ function _reset_particles_sfs(pfield::ParticleField)
 end
 
 function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
-    pfield.particles[SFS_INDEX, i] .= zeroVal
+    set_SFS(pfield, i, zeroVal)
 end
 
 function _reset_particle_sfs(particle)
     set_SFS(particle, zero(eltype(particle)))
+end
+
+function reset_particles_M(pfield::ParticleField; zeroVal=zero(eltype(pfield.particles)))
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            if !is_static(pfield, i)
+                set_M(pfield, i, zeroVal)
+            end
+        end
+    else
+        for i in 1:pfield.np
+            if !is_static(pfield, i)
+                set_M(pfield, i, zeroVal)
+            end
+        end
+    end
+end
+
+
+function relax_particles(pfield::ParticleField)
+
+    # Resets U and J
+    _reset_particles(pfield)
+
+    # Calculates interactions between particles: U and J
+    pfield.UJ(pfield)
+
+    if pfield.np > MIN_MT_NP
+        Threads.@threads for i in 1:pfield.np
+            if !is_static(pfield, i)
+                pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+            end
+        end
+    else
+        for i in 1:pfield.np
+            if !is_static(pfield, i)
+                pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+            end
+        end
+    end
+
 end
 
 ##### END OF PARTICLE FIELD#####################################################

@@ -95,7 +95,8 @@ end
 function fmm.get_previous_influence(system::ParticleField, i)
     prev_potential = zero(eltype(system))
     gx, gy, gz = get_U(system, i)
-    return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
+    G = gx*gx + gy*gy + gz*gz
+    return prev_potential, G > 0 ? sqrt(G) : zero(eltype(G))
 end
 
 fmm.get_n_bodies(system::ParticleField) = system.np

@@ -153,7 +153,6 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
             ReverseDiff._add_to_deriv!(source_buffer[8, i], σbar)
 
         end
-        
         #for a=1:3
             #ReverseDiff._add_to_deriv!(source_buffer[a+4, i], Γbar[a])
             #ReverseDiff._add_to_deriv!(source_buffer[a, i], -dxbar[a])
@@ -207,7 +206,9 @@ function fmm.source_system_to_buffer!(buffer::AbstractArray{<:ReverseDiff.Tracke
 
     σ = system.particles[SIGMA_INDEX, i_body].value
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
-    Γ = sqrt(Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value)
+    #Γ = sqrt(Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value)
+    Γ2 = Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value
+    Γ = Γ2 > 0 ? sqrt(Γ2) : zero(typeof(Γ2))
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     for i=1:3
         buffer[i, i_buffer].value = system.particles[X_INDEX[i], i_body].value
@@ -280,7 +281,8 @@ function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstr
 
     σ = system.particles[SIGMA_INDEX, i_body].value
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
-    Γ = sqrt(Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value)
+    Γ2 = Γx.value*Γx.value + Γy.value*Γy.value + Γz.value*Γz.value
+    Γ = Γ2 > 0 ? sqrt(Γ2) : zero(typeof(Γ2))
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     for i=1:3
         buffer[i, i_buffer].value = system.particles[X_INDEX[i], i_body].value
@@ -647,10 +649,8 @@ function fmm.get_previous_influence_pullback!(system::ParticleField, i, buffer)
     return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)=#
 
     gx, gy, gz = get_U(system, i)
-    G = ReverseDiff.value(sqrt(gx*gx + gy*gy + gz*gz))
-    if G == 0.0
-        return nothing
-    end
+    G2 = ReverseDiff.value(gx*gx + gy*gy + gz*gz)
+    G2 > 0 ? G = sqrt(G2) : return nothing
     ReverseDiff._add_to_deriv!(system.particles[U_INDEX[1],i], buffer[2].deriv*gx.value/G)
     ReverseDiff._add_to_deriv!(system.particles[U_INDEX[2],i], buffer[2].deriv*gy.value/G)
     ReverseDiff._add_to_deriv!(system.particles[U_INDEX[3],i], buffer[2].deriv*gz.value/G)

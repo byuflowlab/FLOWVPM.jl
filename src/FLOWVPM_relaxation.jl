@@ -43,13 +43,14 @@ function relax_pedrizzetti(rlxf::Real, p)
     J = get_J(p)
     G = get_Gamma(p)
 
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
+    nrmw2 = (J[6]-J[8])*(J[6]-J[8]) +
+            (J[7]-J[3])*(J[7]-J[3]) +
+            (J[2]-J[4])*(J[2]-J[4])
 
-    if !iszero(nrmw)
-    
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+    if nrmw2 > 0
+        nrmw = sqrt(nrmw2)
+        nrmGamma2 = G[1]^2 + G[2]^2 + G[3]^2
+        nrmGamma = nrmGamma2 > 0 ? sqrt(nrmGamma2) : zero(eltype(nrmGamma2))
 
         G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
         G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
@@ -63,27 +64,23 @@ function relax_pedrizzetti(rlxf::Real, pfield, i)
 
     J = get_J(pfield, i)
     G = get_Gamma(pfield, i)
-    
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
+    nrmw2 = (J[6]-J[8])*(J[6]-J[8]) +
+            (J[7]-J[3])*(J[7]-J[3]) +
+            (J[2]-J[4])*(J[2]-J[4])
 
-    if !iszero(nrmw)
-    
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+    if nrmw2 > 0
+
+        nrmw = sqrt(nrmw2)
+        nrmGamma2 = G[1]^2 + G[2]^2 + G[3]^2
+        nrmGamma = nrmGamma2 > 0 ? sqrt(nrmGamma2) : zero(eltype(nrmGamma2))
 
         #G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
         #G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
         #G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
-        if eltype(pfield) <: ReverseDiff.TrackedReal
-            add!(G[1], (-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw)
-            add!(G[2], (-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw)
-            add!(G[3], (-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw)
-        else
-            G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
-            G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
-            G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
-        end
+
+        set_one_field(pfield, i, GAMMA_INDEX[1], (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw)
+        set_one_field(pfield, i, GAMMA_INDEX[2], (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw)
+        set_one_field(pfield, i, GAMMA_INDEX[3], (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw)
     end
 
     return nothing
@@ -101,42 +98,15 @@ function relax_correctedpedrizzetti(rlxf::Real, p)
     J = get_J(p)
     G = get_Gamma(p)
 
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
+    nrmw2 = (J[6]-J[8])*(J[6]-J[8]) +
+            (J[7]-J[3])*(J[7]-J[3]) +
+            (J[2]-J[4])*(J[2]-J[4])
 
-    if !iszero(nrmw)
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+    if nrmw2 > 0
 
-        b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
-                                        G[2]*(J[7]-J[3]) +
-                                        G[3]*(J[2]-J[4])) / (nrmGamma*nrmw))
-
-        G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
-        G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
-        G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
-
-        # Normalize the direction of the new vector to maintain the same strength
-        for Gi in G
-            Gi /= sqrt(b2)
-        end
-        #G ./= sqrt(b2)
-    end
-
-    return nothing
-end
-
-function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
-
-    J = get_J(pfield, i)
-    G = get_Gamma(pfield, i)
-
-    nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
-                (J[7]-J[3])*(J[7]-J[3]) +
-                (J[2]-J[4])*(J[2]-J[4]))
-
-    if !iszero(nrmw)
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+        nrmw = sqrt(nrmw2)
+        nrmGamma2 = G[1]^2 + G[2]^2 + G[3]^2
+        nrmGamma = nrmGamma2 > 0 ? sqrt(nrmGamma2) : zero(eltype(nrmGamma2))
 
         b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
                                         G[2]*(J[7]-J[3]) +
@@ -148,6 +118,40 @@ function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
 
         # Normalize the direction of the new vector to maintain the same strength
         G ./= sqrt(b2)
+    end
+
+    return nothing
+end
+
+function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
+
+    J = get_J(pfield, i)
+    G = get_Gamma(pfield, i)
+
+    nrmw2 = (J[6]-J[8])*(J[6]-J[8]) +
+            (J[7]-J[3])*(J[7]-J[3]) +
+            (J[2]-J[4])*(J[2]-J[4])
+
+    if nrmw2 > 0
+
+        nrmw = sqrt(nrmw2)
+        nrmGamma2 = G[1]^2 + G[2]^2 + G[3]^2
+        nrmGamma = nrmGamma2 > 0 ? sqrt(nrmGamma2) : zero(eltype(nrmGamma2))
+
+        b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
+                                        G[2]*(J[7]-J[3]) +
+                                        G[3]*(J[2]-J[4])) / (nrmGamma*nrmw))
+
+        #G[1] = (1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw
+        #G[2] = (1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw
+        #G[3] = (1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw
+
+        # Normalize the direction of the new vector to maintain the same strength
+        #G ./= sqrt(b2)
+        
+        set_one_field(pfield, i, GAMMA_INDEX[1], ((1-rlxf)*G[1] + rlxf*nrmGamma*(J[6]-J[8])/nrmw)/sqrt(b2))
+        set_one_field(pfield, i, GAMMA_INDEX[2], ((1-rlxf)*G[2] + rlxf*nrmGamma*(J[7]-J[3])/nrmw)/sqrt(b2))
+        set_one_field(pfield, i, GAMMA_INDEX[3], ((1-rlxf)*G[3] + rlxf*nrmGamma*(J[2]-J[4])/nrmw)/sqrt(b2))
     end
 
     return nothing

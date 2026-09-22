@@ -3,7 +3,9 @@
 # Adds a ReverseDiff interface for ParticleField, which allows it to be treated similarly to an array.
 
 # Tape access is used to ensure all saved values on the forwards pass are in the same tape. This is also used internally by ReverseDiff to check if something is tracked.
+ReverseDiff.istracked(pfield::ParticleField) = ReverseDiff.istracked(pfield.particles)
 ReverseDiff.tape(pfield::ParticleField) = ReverseDiff.tape(pfield.particles)
+ReverseDiff.hastape(pfield::ParticleField) = ReverseDiff.hastape(pfield.particles)
 
 # Catch-all implementions of methods for getting the value/derivative of a ParticleField. This supports most operations involving ParticleFields, but there are some special cases handled later.
 function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
@@ -54,7 +56,7 @@ end
 # The main focus is making sure that the memory for new particles is properly allocated (i.e., memory is not shared between particles) and that the instantiated particle count is properly decremented on the reverse pass.
 # We also have to account for particle creation where some but not all input values are tracked. While we can't predict which incoming types will be tracked, we can promote local versions of each input on the forward pass as necessary and only propagate cotangents back to tracked inputs on the reverse pass.
 
-function add_particle(pfield::ParticleField{ReverseDiff.TrackedReal{R, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, X, Gamma, sigma; vol=0, circulation=1, C=0, static=false) where {R, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}
+function add_particle(pfield::ParticleField{ReverseDiff.TrackedReal{R, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, X, Gamma, sigma; vol=0.0, circulation=1.0, C=0.0, static=false) where {R, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}
 
     # we still need the error checking
     if get_np(pfield)==pfield.maxparticles
@@ -191,9 +193,9 @@ for g in ("X", "Gamma", "U", "vorticity", "J", "M", "C", "PSE", "SFS", "MU", "MQ
     _idxs = Symbol(uppercase(g), :_INDEX)
     eval(quote
         #pfield.particles[_idxs, i] .= val
-        @show $_f
+        #@show $_f
         function $_f(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, i::Int, val) where {R<:ReverseDiff.TrackedReal, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR, useGPU}
-            tp = ReverseDiff.tape(pfield, val)
+            tp = ReverseDiff.tape(pfield)
             #println("$($_f) ran!")
             old_val = zeros(ReverseDiff.valtype(R), size($_idxs))
             for j = 1:length($_idxs)
@@ -252,9 +254,9 @@ for g in ("sigma", "vol", "circulation", "static", "U_prev", "MQSGM", "MS1", "MS
     _f = Symbol(:set_, g)
     _idx = Symbol(uppercase(g), :_INDEX)
     eval(quote
-        @show $_f
+        #@show $_f
         function $_f(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, i::Int, val) where {R<:ReverseDiff.TrackedReal, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR, useGPU}
-            tp = ReverseDiff.tape(pfield, val)
+            tp = ReverseDiff.tape(pfield)
             #println("$($_f) ran!")
             old_val = ReverseDiff.value(pfield.particles[$_idx, i])
             pfield.particles[$_idx, i].value = ReverseDiff.value(val)
@@ -289,13 +291,14 @@ end
 #function set_one_field(pfield::ParticleField, i::Int, FIELD_INDEX::Int, val) pfield.particles[FIELD_INDEX, i] = val end
 function set_one_field(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, i::Int, FIELD_INDEX::Int, val) where {R<:ReverseDiff.TrackedReal, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR, useGPU}
 
-    tp = ReverseDiff.tape(pfield, val)
+    tp = ReverseDiff.tape(pfield)
     old_val = ReverseDiff.value(pfield.particles[FIELD_INDEX, i])
     pfield.particles[FIELD_INDEX, i].value = ReverseDiff.value(val)
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
                         set_one_field,
-                        (pfield, i, FIELD_INDEX, val),
+                        #(pfield, i, FIELD_INDEX, val),
+                        (pfield.particles[FIELD_INDEX, i], val),
                         nothing,
                         old_val)
     return nothing
@@ -303,11 +306,11 @@ function set_one_field(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Ti
 end
 
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(set_one_field)})
-    pfield, i, FIELD_INDEX, val = instruction.input
+    pfield_field_index_i, val = instruction.input
     old_val = instruction.cache
-    pfield.particles[FIELD_INDEX, i].value = old_val
-    temp = pfield.particles[FIELD_INDEX, i].deriv
-    ReverseDiff.unseed!(pfield.particles[FIELD_INDEX, i])
+    pfield_field_index_i.value = old_val
+    temp = pfield_field_index_i.deriv
+    ReverseDiff.unseed!(pfield_field_index_i)
     ReverseDiff._add_to_deriv!(val, temp)
     return nothing
 end
@@ -366,3 +369,143 @@ function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstr
     return nothing
 
 end
+
+
+#function function set_one_field(P, idx, val) P[idx] = val end
+function set_one_field(p::AbstractVector{R}, FIELD_INDEX::Int, val) where {R<:ReverseDiff.TrackedReal}
+
+    tp = ReverseDiff.tape(p, val)
+    old_val = ReverseDiff.value(p[FIELD_INDEX])
+    p[FIELD_INDEX].value = ReverseDiff.value(val)
+    ReverseDiff.record!(tp,
+                        ReverseDiff.SpecialInstruction,
+                        set_one_field_particle,
+                        (p, FIELD_INDEX, val),
+                        nothing,
+                        old_val)
+    return nothing
+
+end
+
+set_one_field_particle() = error("dummy function for function input disambiguation")
+function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(set_one_field_particle)})
+    p, FIELD_INDEX, val = instruction.input
+    old_val = instruction.cache
+    p[FIELD_INDEX].value = old_val
+    temp = p[FIELD_INDEX].deriv
+    ReverseDiff.unseed!(p[FIELD_INDEX])
+    ReverseDiff._add_to_deriv!(val, temp)
+    return nothing
+end
+
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(set_one_field_particle)})
+
+    p, FIELD_INDEX, val = instruction.input
+    old_val = instruction.cache
+    old_val = ReverseDiff.value(p[FIELD_INDEX])
+    p[FIELD_INDEX].value = ReverseDiff.value(val)
+    return nothing
+end
+
+function _reset_particle(pfield::ParticleField{R, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TR, useGPU}, i::Int; zeroVal=zero(R)) where {R<:ReverseDiff.TrackedReal, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel, TUJ, Tintegration, TR, useGPU}
+
+
+    tp = ReverseDiff.tape(pfield)
+    old_U = ReverseDiff.value(pfield.particles[U_INDEX, i])
+    old_VORTICITY = ReverseDiff.value(pfield.particles[VORTICITY_INDEX, i])
+    old_J = ReverseDiff.value(pfield.particles[J_INDEX, i])
+    old_PSE = ReverseDiff.value(pfield.particles[PSE_INDEX, i])
+
+    for idxs in (U_INDEX, VORTICITY_INDEX, J_INDEX, PSE_INDEX)
+        for idxs_i in idxs
+            pfield.particles[idxs_i, i].value = ReverseDiff.value(zeroVal)
+        end
+    end
+
+    ReverseDiff.record!(tp,
+                        ReverseDiff.SpecialInstruction,
+                        _reset_particle_full_pfield,
+                        (pfield, i, zeroVal),
+                        nothing,
+                        (old_U, old_VORTICITY, old_J, old_PSE))
+end
+
+_reset_particle_full_pfield() = error("dummy function for disambiguation")
+function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(_reset_particle_full_pfield)})
+    pfield, i, zeroVal = instruction.input
+    old_U, old_VORTICITY, old_J, old_PSE = instruction.cache
+    R = ReverseDiff.valtype(pfield.particles[1])
+
+    for j=1:length(U_INDEX)
+        pfield.particles[U_INDEX[j], i].value = old_U[j]
+        pfield.particles[U_INDEX[j], i].deriv = zero(R)
+    end
+    for j=1:length(VORTICITY_INDEX)
+        pfield.particles[VORTICITY_INDEX[j], i].value = old_VORTICITY[j]
+        pfield.particles[VORTICITY_INDEX[j], i].deriv = zero(R)
+    end
+    for j=1:length(J_INDEX)
+        pfield.particles[J_INDEX[j], i].value = old_J[j]
+        pfield.particles[J_INDEX[j], i].deriv = zero(R)
+    end
+    for j=1:length(PSE_INDEX)
+        pfield.particles[PSE_INDEX[j], i].value = old_PSE[j]
+        pfield.particles[PSE_INDEX[j], i].deriv = zero(R)
+    end
+    
+    return nothing
+end
+
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(_reset_particle_full_pfield)})
+    
+    pfield, i, zeroVal = instruction.input
+    old_U, old_VORTICITY, old_J, old_PSE = instruction.cache
+    
+    old_U = ReverseDiff.value(pfield.particles[U_INDEX, i])
+    old_VORTICITY = ReverseDiff.value(pfield.particles[VORTICITY_INDEX, i])
+    old_J = ReverseDiff.value(pfield.particles[J_INDEX, i])
+    old_PSE = ReverseDiff.value(pfield.particles[PSE_INDEX, i])
+
+    for idxs in (U_INDEX, VORTICITY_INDEX, J_INDEX, PSE_INDEX)
+        for idxs_i in idxs
+            pfield.particles[idxs_i, i].value = ReverseDiff.value(zeroVal)
+        end
+    end
+    return nothing
+end
+
+#=
+# setindex!
+function Base.setindex!(A::ReverseDiff.TrackedArray, v, i::Int)
+
+    tp = ReverseDiff.tape(A[i], v)
+    old_A_i = ReverseDiff.value(A[i])
+    A[i].value = ReverseDiff.value(v)
+
+    ReverseDiff.record!(tp,
+                        ReverseDiff.SpecialInstruction,
+                        setindex!,
+                        (A, v, i),
+                        nothing,
+                        old_A_i)
+    return nothing
+
+end
+
+function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(Base.setindex!)})
+    A, v, i = instruction.input
+    old_A_i = instruction.cache
+    A[i].value = old_A_i
+    temp = A[i].deriv
+    ReverseDiff.unseed!(A[i])
+    ReverseDiff._add_to_deriv!(v, temp)
+    return nothing
+end
+
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(Base.setindex!)})
+
+    A, v, i = instruction.input
+    instruction.cache = ReverseDiff.value(A[i])
+    A[i].value = ReverseDiff.value(v)
+    return nothing
+end=#

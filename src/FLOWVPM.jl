@@ -27,7 +27,6 @@ import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
 using ReverseDiff
 using ImplicitAD
-using Mooncake # currently only for testing purposes.
 using StaticArrays
 # using CUDA
 # using CUDA: i32
@@ -74,7 +73,7 @@ for header_name in ["kernel", "viscous", "formulation",
                     # "particlefield", "gpu_erf", "gpu", "fmm",
                     "gpu_erf",
                     "UJ", "subfilterscale_models", "timeintegration",
-                    "monitors", "utils" , "rrules", "particlefield_rrules", "ImplicitAD", "mooncake", "utils_rrules"]
+                    "monitors", "utils" , "rrules", "particlefield_rrules", "ImplicitAD", "utils_rrules", "subfilterscale_rrules"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 

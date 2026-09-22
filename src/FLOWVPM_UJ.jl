@@ -71,9 +71,6 @@ function UJ_fmm(
         autotune::Bool=true,
     ) where {useGPU}
    
-    #@show ReverseDiff.value(sum(pfield.particles))
-    #check_derivs(pfield.particles; label="after UJ")
-
     # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
@@ -85,7 +82,6 @@ function UJ_fmm(
     # extract FMM options
     fmm_options = pfield.fmm
     #autotune = false # temp... something in autotune is breaking ReverseDiff
-    #@show ReverseDiff.value(sum(pfield.particles))
     if rbf
         # calculate vorticity
         zeta_fmm(pfield)
@@ -128,7 +124,5 @@ function UJ_fmm(
         #       therefore cannot be included in the direct function of the FMM
         sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
     end
-    #@show ReverseDiff.value(sum(pfield.particles))
-    #check_derivs(pfield.particles; label="before UJ")
     return nothing
 end
