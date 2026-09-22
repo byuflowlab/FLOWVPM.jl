@@ -261,6 +261,131 @@ function fmm.sfs_dsigma_to_target!(pfield::GPUField, buf::AnyGPUMatrix,
     return pfield
 end
 
+#------- fused RK3 update and resets (2026-09-22) -------#
+#
+# `update_particle_states_broadcast_reformulated!` is 35 whole-field row-view
+# broadcasts per RK stage and `_reset_particles_broadcast!` four more per
+# evaluation; measured on a 400k Metal field: 130 ms and 44 ms per call, next
+# to 2 ms for the already-fused SFS pass. One thread per particle with the
+# chain in registers, the same cure the SFS pass got. `RK3_FUSED[] = false`
+# falls back to the broadcast chain (the reference these are gated against).
+const RK3_FUSED = Ref(true)          # FLOWVPM_RK3_FUSED=0 in the environment turns it off
+
+@kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, a, b, dt,
+        uinf1, uinf2, uinf3, cfg, cf, inv_zeta0,
+        ix, ig, isig, iu, ij, im, ic, isfs, istat)
+    i = @index(Global)
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        T = eltype(P)
+        g1 = P[ig, i]; g2 = P[ig+1, i]; g3 = P[ig+2, i]
+        j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
+        j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
+        j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
+        s1 = P[isfs, i]; s2 = P[isfs+1, i]; s3 = P[isfs+2, i]
+        c1 = P[ic, i]; sig = P[isig, i]
+        m1n = a * P[im, i]   + dt * (P[iu, i]   + uinf1)
+        m2n = a * P[im+1, i] + dt * (P[iu+1, i] + uinf2)
+        m3n = a * P[im+2, i] + dt * (P[iu+2, i] + uinf3)
+        mm1, mm2, mm3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
+        gn2 = g1*g1 + g2*g2 + g3*g3
+        sdotg = mm1*g1 + mm2*g2 + mm3*g3
+        sig3z = sig*sig*sig * inv_zeta0
+        cepsg = c1 * (s1*g1 + s2*g2 + s3*g3) * sig3z
+        mm4 = gn2 > zero(T) ? (cfg * sdotg - cf * cepsg) / gn2 : zero(T)
+        m4n = a * P[im+3, i] + dt * (mm1 - 3 * mm4 * g1 - c1 * s1 * sig3z)
+        m5n = a * P[im+4, i] + dt * (mm2 - 3 * mm4 * g2 - c1 * s2 * sig3z)
+        m6n = a * P[im+5, i] + dt * (mm3 - 3 * mm4 * g3 - c1 * s3 * sig3z)
+        m8n = a * P[im+7, i] - dt * (sig * mm4)
+        P[ix, i]   += b * m1n; P[ix+1, i] += b * m2n; P[ix+2, i] += b * m3n
+        P[ig, i]   = g1 + b * m4n; P[ig+1, i] = g2 + b * m5n; P[ig+2, i] = g3 + b * m6n
+        P[isig, i] = sig + b * m8n
+        P[im, i] = m1n; P[im+1, i] = m2n; P[im+2, i] = m3n
+        P[im+3, i] = m4n; P[im+4, i] = m5n; P[im+5, i] = m6n
+        P[im+7, i] = m8n
+    end
+end
+
+# the base signature (src/FLOWVPM_timeintegration.jl) narrowed to device storage
+function FLOWVPM.update_particle_states_broadcast_reformulated!(
+        pfield::FLOWVPM.ParticleField{R, <:FLOWVPM.ReformulatedVPM{R2}, V, <:Any, <:FLOWVPM.SubFilterScale,
+                                      <:Any, <:Any, <:Any, <:Any, <:AbstractGPUArray{R}},
+        a, b, dt::R3, Uinf, f, g, zeta0) where {R, R2, V, R3}
+    RK3_FUSED[] || return invoke(FLOWVPM.update_particle_states_broadcast_reformulated!,
+        Tuple{FLOWVPM.ParticleField{R, <:FLOWVPM.ReformulatedVPM{R2}, V, <:Any, <:FLOWVPM.SubFilterScale,
+                                    <:Any, <:Any, <:Any, <:Any, <:Any}, Any, Any, R3, Any, Any, Any, Any},
+        pfield, a, b, dt, Uinf, f, g, zeta0)
+    np = pfield.np
+    np == 0 && return nothing
+    backend = KA.get_backend(pfield.particles)
+    wg = _sfs_wg(backend)
+    fR = R(f); gR = R(g)
+    ka_rk3_update_reformulated_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
+        R(a), R(b), R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]),
+        (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0),
+        first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
+        first(FLOWVPM.U_INDEX), first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX),
+        first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX), FLOWVPM.STATIC_INDEX;
+        ndrange = cld(np, wg) * wg)
+    KA.synchronize(backend)
+    return nothing
+end
+
+# zero a contiguous row block of every non-static particle (U, vorticity, J,
+# PSE are rows 10:27; the SFS rows 40:42): one thread per particle
+@kernel function ka_zero_rows_kernel!(P, np, r0, r1, istat)
+    i = @index(Global)
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        for r in r0:r1
+            P[r, i] = zero(eltype(P))
+        end
+    end
+end
+function _zero_rows!(pfield::GPUField, r0::Int, r1::Int)
+    np = pfield.np
+    np == 0 && return nothing
+    backend = KA.get_backend(pfield.particles)
+    wg = _sfs_wg(backend)
+    ka_zero_rows_kernel!(backend, wg)(pfield.particles, np, r0, r1, FLOWVPM.STATIC_INDEX;
+        ndrange = cld(np, wg) * wg)
+    return nothing
+end
+function FLOWVPM._reset_particles_broadcast!(pfield::GPUField)
+    RK3_FUSED[] || return invoke(FLOWVPM._reset_particles_broadcast!, Tuple{FLOWVPM.ParticleField}, pfield)
+    # U 10:12, vorticity 13:15, J 16:24, PSE 25:27 are contiguous
+    @assert last(FLOWVPM.U_INDEX) + 1 == first(FLOWVPM.VORTICITY_INDEX) &&
+            last(FLOWVPM.VORTICITY_INDEX) + 1 == first(FLOWVPM.J_INDEX) &&
+            last(FLOWVPM.J_INDEX) + 1 == first(FLOWVPM.PSE_INDEX)
+    _zero_rows!(pfield, first(FLOWVPM.U_INDEX), last(FLOWVPM.PSE_INDEX))
+    return nothing
+end
+function FLOWVPM._reset_particles_sfs_broadcast!(pfield::GPUField)
+    RK3_FUSED[] || return invoke(FLOWVPM._reset_particles_sfs_broadcast!, Tuple{FLOWVPM.ParticleField}, pfield)
+    _zero_rows!(pfield, first(FLOWVPM.SFS_INDEX), last(FLOWVPM.SFS_INDEX))
+    return nothing
+end
+
+# core spreading's RK3 register update (two strided broadcasts, 41 ms on a
+# 400k Metal field) as one kernel
+@kernel function ka_corespreading_rk3_kernel!(P, np, nu2dt, aux1, aux2, im7, isig, istat)
+    i = @index(Global)
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        m7 = aux1 * P[im7, i] + nu2dt
+        P[im7, i] = m7
+        s = P[isig, i]
+        P[isig, i] = sqrt(s * s + aux2 * m7)
+    end
+end
+function FLOWVPM._corespreading_rk3_broadcast!(pfield::GPUField{R}, nu, dt, aux1, aux2) where R
+    RK3_FUSED[] || return invoke(FLOWVPM._corespreading_rk3_broadcast!, Tuple{Any,Any,Any,Any,Any}, pfield, nu, dt, aux1, aux2)
+    np = pfield.np
+    np == 0 && return nothing
+    backend = KA.get_backend(pfield.particles)
+    wg = _sfs_wg(backend)
+    ka_corespreading_rk3_kernel!(backend, wg)(pfield.particles, np, R(dt) * 2 * R(nu), R(aux1), R(aux2),
+        FLOWVPM.M_INDEX[7], FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
+    return nothing
+end
+
 #------- core spreading on the device: ζ reconstruction + RBF conjugate gradient -------#
 
 # 3 x maxparticles sorted-order accumulator and global-order delivery buffer,
@@ -525,51 +650,6 @@ function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
     view(P, FLOWVPM.VORTICITY_INDEX, 1:n) .= view(out, 1:3, :)
 
     return nothing
-end
-
-# All-pairs probe velocities (see FLOWVPM.UJ_probes_direct!): one workgroup per
-# probe, lanes stride the particles, a local-memory reduction closes the group.
-@kernel function ka_probes_direct_kernel!(out, @Const(P), @Const(X), n::Int32, ::Val{WG}) where WG
-    t = @index(Group)
-    lane = @index(Local)
-    T = eltype(P)
-    @inbounds begin
-        xp = X[1, t]; yp = X[2, t]; zp = X[3, t]
-        ux = zero(T); uy = zero(T); uz = zero(T)
-        j = lane
-        while j <= n
-            dx = xp - P[1, j]; dy = yp - P[2, j]; dz = zp - P[3, j]
-            r2 = dx * dx + dy * dy + dz * dz
-            if r2 > zero(T)
-                invr = inv(sqrt(r2))
-                sigma = P[7, j]
-                g = sigma > zero(T) ? fmm._gaussianerf_g_h(r2 * invr / sigma)[1] : one(T)
-                _, ax, ay, az = fmm._vortex_pair_ug(dx, dy, dz, invr, P[4, j], P[5, j], P[6, j], g)
-                ux += ax; uy += ay; uz += az
-            end
-            j += WG
-        end
-        # lanes of one target reduce through atomics (a few hundred targets,
-        # WG lanes each: negligible), no local memory or barrier needed
-        KA.@atomic out[1, t] += ux
-        KA.@atomic out[2, t] += uy
-        KA.@atomic out[3, t] += uz
-    end
-end
-
-function FLOWVPM.gpu_probes_direct!(pfield::GPUField{R}, X::AbstractMatrix, out::AbstractMatrix) where R
-    np = pfield.np; nt = size(X, 2)
-    nt == 0 && return out
-    backend = KA.get_backend(pfield.particles)
-    dX = KA.allocate(backend, R, 3, nt); copyto!(dX, Matrix{R}(X))
-    dout = KA.zeros(backend, R, 3, nt)
-    if np > 0
-        WG = 256
-        ka_probes_direct_kernel!(backend, WG)(dout, pfield.particles, dX, Int32(np), Val(WG); ndrange=nt * WG)
-        KA.synchronize(backend)
-    end
-    copyto!(out, Array(dout))
-    return out
 end
 
 # Each thread handles one target and brute-force loops over every source
@@ -840,6 +920,10 @@ function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha:
         FLOWVPM.STATIC_INDEX; ndrange = ndr)
     KA.synchronize(backend)
     return nothing
+end
+
+function __init__()
+    RK3_FUSED[] = get(ENV, "FLOWVPM_RK3_FUSED", "1") == "1"
 end
 
 end # module

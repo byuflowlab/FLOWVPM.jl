@@ -332,8 +332,7 @@ Steps the field forward in time by dt in a third-order low-storage Runge-Kutta
 integration scheme. See Notebook entry 20180105.
 """
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                            dt::R3; relax::Bool=false, custom_UJ=nothing,
-                     relax_reevaluate::Bool=true) where {R, V, R3}
+                            dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
 
@@ -370,11 +369,6 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
-        # `relax_reevaluate = false` (2026-09-22): align with the velocity
-        # gradient of the last RK stage instead of a fourth evaluation at the
-        # updated positions (one substep stale); the caller then evaluates the
-        # updated field once, where it is needed anyway.
-        if relax_reevaluate
         # Resets U and J from previous step
         _reset_particles(pfield)
 
@@ -384,7 +378,6 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       and it worked just fine. So maybe I perhaps I can save computation
         #       by not calculating UJ again.
         pfield.UJ(pfield)
-        end
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
@@ -544,8 +537,7 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
-                     dt::R3; relax::Bool=false, custom_UJ=nothing,
-                     relax_reevaluate::Bool=true) where {R, V, R2, R3}
+                     dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R2, R3}
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
     #                      qsmg <=> get_M(p)[8], Z <=> MM4, S <=> MM[1:3]
@@ -582,17 +574,11 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
-        # `relax_reevaluate = false` (2026-09-22): align with the velocity
-        # gradient of the last RK stage instead of a fourth evaluation at the
-        # updated positions (one substep stale); the caller then evaluates the
-        # updated field once, where it is needed anyway.
-        if relax_reevaluate
         # Resets U and J from previous step
         _reset_particles(pfield)
 
         # Calculates interactions between particles: U and J
         pfield.UJ(pfield)
-        end
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
