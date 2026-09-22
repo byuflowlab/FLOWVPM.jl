@@ -8,7 +8,7 @@
   * Created   : Aug 2020
 =###############################################################################
 
-const nfields = 46
+const nfields = 39   # 2026-09-22: static flag, previous speed and two unnamed rows removed
 const useGPU_default = 0
 
 ################################################################################
@@ -294,8 +294,6 @@ _with_precision(x::CoreSpreading{R0,Tz,Tr}, ::Type{R}) where {R0,Tz,Tr,R} =
     CoreSpreading{R,Tz,Tr}(R(x.nu), R(x.sgm0), x.zeta; beta=R(x.beta), growth_beta=R(x.growth_beta),
         itmax=x.itmax, tol=R(x.tol),
         iterror=x.iterror, verbose=x.verbose, v_lvl=x.v_lvl, debug=x.debug, t_sgm=R(x.t_sgm), rbf=x.rbf)
-_with_precision(x::ParticleStrengthExchange, ::Type{R}) where R =
-    ParticleStrengthExchange{R}(R(x.nu); recalculate_vols=x.recalculate_vols)
 _with_precision(x::Relaxation, ::Type{R}) where R = Relaxation(x.relax, x.nsteps_relax, R(x.rlxf), x.filter)
 _with_precision(x::NoSFS, ::Type{R}) where R = NoSFS{R,typeof(x.model)}(x.model)
 _with_precision(x::ConstantSFS{R0,Tm,Tc,Tcl}, ::Type{R}) where {R0,Tm,Tc,Tcl,R} =
@@ -365,7 +363,7 @@ Add a particle to the field.
 """
 function add_particle(pfield::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
-                                           C=0, static=false)
+                                           C=0)
     # ERROR CASES
     if get_np(pfield)==pfield.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
@@ -388,9 +386,8 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
         set_vol(pfield, i_next, vol)
         set_circulation(pfield, i_next, circulation)
         set_C(pfield, i_next, C)
-        set_static(pfield, i_next, Float64(static))
     else
-        _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C, static)
+        _add_particle_broadcast!(pfield, i_next, X, Gamma, sigma, vol, circulation, C)
     end
 
     _init_particle_slot!(pfield, i_next, sigma)
@@ -474,7 +471,7 @@ _add_particle_gpu_bcast_val(v::AbstractArray, ::Type{R}) where R = Tuple(R.(v))
 _add_particle_gpu_bcast_val(v, ::Type{R}) where R = R(v)
 
 function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma,
-                                                    vol, circulation, C, static)
+                                                    vol, circulation, C)
     R = eltype(pfield.particles)
     view(pfield.particles, X_INDEX, i) .= _add_particle_gpu_bcast_val(X, R)
     view(pfield.particles, GAMMA_INDEX, i) .= _add_particle_gpu_bcast_val(Gamma, R)
@@ -482,7 +479,6 @@ function _add_particle_broadcast!(pfield::ParticleField, i::Int, X, Gamma, sigma
     view(pfield.particles, VOL_INDEX:VOL_INDEX, i) .= R(vol)
     view(pfield.particles, CIRCULATION_INDEX:CIRCULATION_INDEX, i) .= R(circulation)
     view(pfield.particles, C_INDEX, i) .= _add_particle_gpu_bcast_val(C, R)
-    view(pfield.particles, STATIC_INDEX:STATIC_INDEX, i) .= R(static)
     return nothing
 end
 
@@ -494,7 +490,7 @@ Add a copy of Particle `P` to the field.
 function add_particle(pfield::ParticleField, P)
     return add_particle(pfield, get_X(P), get_Gamma(P), get_sigma(P)[];
                         vol=get_vol(P)[], circulation=get_circulation(P)[],
-                        C=get_C(P), static=is_static(P))
+                        C=get_C(P))
 end
 
 """
@@ -537,12 +533,12 @@ const CIRCULATION_INDEX = 9
 const U_INDEX = 10:12
 const VORTICITY_INDEX = 13:15
 const J_INDEX = 16:24
-const PSE_INDEX = 25:27
-const M_INDEX = 28:36
-const C_INDEX = 37:39
-const SFS_INDEX = 40:42
-const STATIC_INDEX = 43
-const U_PREV_INDEX = 44
+# PSE rows (25:27) removed 2026-09-22: particle strength exchange needs an overlapping,
+# remeshed particle distribution and is not compatible with this meshless VPM; core
+# spreading is the viscous scheme (see CHANGELOG 5.0.0).
+const M_INDEX = 25:33
+const C_INDEX = 34:36
+const SFS_INDEX = 37:39
 
 # Generic scratch rows: reusable per-particle storage for named intermediate
 # quantities in vectorized (broadcast) hot-path computations (e.g. RK3's
@@ -574,14 +570,11 @@ get_circulation(P) = view(P, CIRCULATION_INDEX)
 get_U(P) = view(P, U_INDEX)
 get_vorticity(P) = view(P, VORTICITY_INDEX)
 get_J(P) = view(P, J_INDEX)
-get_PSE(P) = view(P, PSE_INDEX)
 get_M(P) = view(P, M_INDEX)
 get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
-get_static(P) = view(P, STATIC_INDEX)
-get_U_prev(P) = view(P, U_PREV_INDEX)
 
-is_static(P) = Bool(P[43])
+is_static(P) = false          # static particles removed (2026-09-22): every particle is active
 
 # This extra function computes the vorticity using the cross-product
 get_W(P) = (get_W1(P), get_W2(P), get_W3(P))
@@ -603,13 +596,11 @@ get_circulation(pfield::ParticleField, i::Int) = view(pfield.particles, CIRCULAT
 get_U(pfield::ParticleField, i::Int) = view(pfield.particles, U_INDEX, i)
 get_vorticity(pfield::ParticleField, i::Int) = view(pfield.particles, VORTICITY_INDEX, i)
 get_J(pfield::ParticleField, i::Int) = view(pfield.particles, J_INDEX, i)
-get_PSE(pfield::ParticleField, i::Int) = view(pfield.particles, PSE_INDEX, i)
 get_W(pfield::ParticleField, i::Int) = get_W(get_particle(pfield, i))
 get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
 get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
-get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
-get_U_prev(pfield::ParticleField, i::Int) = view(pfield.particles, U_PREV_INDEX, i)
+get_static(pfield::ParticleField, i::Int) = false
 
 "Set functions for particles"
 function set_X(P, val) P[X_INDEX] .= val end
@@ -622,10 +613,7 @@ function set_vorticity(P, val) P[VORTICITY_INDEX] .= val end
 function set_J(P, val) P[J_INDEX] .= val end
 function set_M(P, val) P[M_INDEX] .= val end
 function set_C(P, val) P[C_INDEX] .= val end
-function set_static(P, val) P[STATIC_INDEX] = val end
-function set_PSE(P, val) P[PSE_INDEX] .= val end
 function set_SFS(P, val) P[SFS_INDEX] .= val end
-function set_U_prev(P, val) P[U_PREV_INDEX] = val end
 
 
 "Set functions for particles in ParticleField"
@@ -639,10 +627,7 @@ function set_vorticity(pfield::ParticleField, i::Int, val) pfield.particles[VORT
 function set_J(pfield::ParticleField, i::Int, val) pfield.particles[J_INDEX, i] .= val end
 function set_M(pfield::ParticleField, i::Int, val) pfield.particles[M_INDEX, i] .= val end
 function set_C(pfield::ParticleField, i::Int, val) pfield.particles[C_INDEX, i] .= val end
-function set_static(pfield::ParticleField, i::Int, val) pfield.particles[STATIC_INDEX, i] = val end
-function set_PSE(pfield::ParticleField, i::Int, val) pfield.particles[PSE_INDEX, i] .= val end
 function set_SFS(pfield::ParticleField, i::Int, val) pfield.particles[SFS_INDEX, i] .= val end
-function set_U_prev(pfield::ParticleField, i::Int, val) pfield.particles[U_PREV_INDEX, i] = val end
 
 
 """
@@ -681,7 +666,7 @@ function get_particleiterator(args...; include_static=false, optargs...)
     if include_static
         return _get_particleiterator(args...; optargs...)
     else
-        return (P for P in _get_particleiterator(args...; optargs...) if !is_static(P))
+        return _get_particleiterator(args...; optargs...)
     end
 end
 
@@ -807,7 +792,7 @@ Steps the particle field in time by a step `dt`. Modifies the pfield in place.
 # Returns
 - The time step number of the particle field.
 """
-function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs...)
+function nextstep(pfield::ParticleField, dt::Real; update_U_prev=false, optargs...)   # update_U_prev is ignored (row removed 2026-09-22)
 
     # Step in time
     if get_np(pfield)!=0
@@ -815,24 +800,6 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     end
 
     # update U_prev
-    if update_U_prev
-        if pfield.particles isa Array
-            if pfield.np > MIN_MT_NP
-                Threads.@threads for i in 1:pfield.np
-                    Ux, Uy, Uz = get_U(pfield, i)
-                    set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
-                end
-            else
-                for i in 1:pfield.np
-                    Ux, Uy, Uz = get_U(pfield, i)
-                    set_U_prev(pfield, i, sqrt(Ux*Ux + Uy*Uy + Uz*Uz))
-                end
-            end
-        else
-            _update_U_prev_broadcast!(pfield)
-        end
-    end
-
     # Accumulate H_chi exposure for split triggers (no-op unless
     # pfield.track_H_chi is set by a SeparationTrigger)
     accumulate_H_chi!(pfield, dt)
@@ -849,11 +816,11 @@ function _reset_particles(pfield::ParticleField)
         zeroVal = zero(eltype(pfield.particles))
         if pfield.np > MIN_MT_NP
             Threads.@threads for i in 1:pfield.np
-                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+                _reset_particle(pfield, i; zeroVal)
             end
         else
             for i in 1:pfield.np
-                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle(pfield, i; zeroVal)
+                _reset_particle(pfield, i; zeroVal)
             end
         end
     else
@@ -861,25 +828,6 @@ function _reset_particles(pfield::ParticleField)
     end
 end
 
-"""
-    `_update_U_prev_broadcast!(pfield)`
-
-GPU-safe equivalent of `nextstep`'s U_prev bookkeeping loop, used when
-`pfield.particles` is not a plain `Array` (task 049). The loop version's
-per-particle `get_U`/`set_U_prev` is disallowed scalar indexing on a
-`CuArray`; a single fused broadcast writes `|U|` into `U_PREV_INDEX` for the
-live prefix instead.
-"""
-function _update_U_prev_broadcast!(pfield::ParticleField)
-    np = pfield.np
-    np == 0 && return nothing
-    Ux = view(pfield.particles, U_INDEX[1]:U_INDEX[1], 1:np)
-    Uy = view(pfield.particles, U_INDEX[2]:U_INDEX[2], 1:np)
-    Uz = view(pfield.particles, U_INDEX[3]:U_INDEX[3], 1:np)
-    view(pfield.particles, U_PREV_INDEX:U_PREV_INDEX, 1:np) .=
-        sqrt.(Ux .* Ux .+ Uy .* Uy .+ Uz .* Uz)
-    return nothing
-end
 
 """
     `_reset_particles_broadcast!(pfield)`
@@ -892,11 +840,8 @@ untouched, zero everything else" behavior as a whole-array broadcast.
 """
 function _reset_particles_broadcast!(pfield::ParticleField)
     np = pfield.np
-    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
-    view(pfield.particles, U_INDEX, 1:np) .*= is_static
-    view(pfield.particles, VORTICITY_INDEX, 1:np) .*= is_static
-    view(pfield.particles, J_INDEX, 1:np) .*= is_static
-    view(pfield.particles, PSE_INDEX, 1:np) .*= is_static
+    zeroR = zero(eltype(pfield.particles))
+    view(pfield.particles, first(U_INDEX):last(J_INDEX), 1:np) .= zeroR
     return nothing
 end
 
@@ -905,14 +850,12 @@ function _reset_particle(particle)
     set_U(particle, zeroVal)
     set_vorticity(particle, zeroVal)
     set_J(particle, zeroVal)
-    set_PSE(particle, zeroVal)
 end
 
 function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
     pfield.particles[U_INDEX, i] .= zeroVal
     pfield.particles[VORTICITY_INDEX, i] .= zeroVal
     pfield.particles[J_INDEX, i] .= zeroVal
-    pfield.particles[PSE_INDEX, i] .= zeroVal
 end
 
 function _reset_particles_sfs(pfield::ParticleField)
@@ -920,11 +863,11 @@ function _reset_particles_sfs(pfield::ParticleField)
         zeroVal = zero(eltype(pfield.particles))
         if pfield.np > MIN_MT_NP
             Threads.@threads for i in 1:pfield.np
-                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+                _reset_particle_sfs(pfield, i; zeroVal)
             end
         else
             for i in 1:pfield.np
-                (pfield.particles[STATIC_INDEX, i] == 0) && _reset_particle_sfs(pfield, i; zeroVal)
+                _reset_particle_sfs(pfield, i; zeroVal)
             end
         end
     else
@@ -941,8 +884,7 @@ broadcast technique as `_reset_particles_broadcast!`, applied to `SFS_INDEX`.
 """
 function _reset_particles_sfs_broadcast!(pfield::ParticleField)
     np = pfield.np
-    is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
-    view(pfield.particles, SFS_INDEX, 1:np) .*= is_static
+    view(pfield.particles, SFS_INDEX, 1:np) .= zero(eltype(pfield.particles))
     return nothing
 end
 

@@ -343,27 +343,6 @@ const F = FLOWVPM
             @test n2 == 0
         end
 
-        # --- static particles are skipped ---
-        @testset "static particles excluded from inference" begin
-            N = 5
-            σ = 0.5
-            pf = F.ParticleField(N)
-            for i in 1:N
-                F.add_particle(pf, (Float64(i), 0.0, 0.0),
-                               (1.0, 0.0, 0.0), σ;
-                               static = (i == 3))
-            end
-            n_added = F.infer_filament_edges!(pf)
-            g = pf.filament_edge_graph
-            # Static particle has no edges.
-            @test F.up_count(g, 3) == 0
-            @test F.down_count(g, 3) == 0
-            # Adjacent pairs (1,2) and (4,5) still wire up.
-            @test F.down_count(g, 1) == 1
-            @test F.up_count(g, 2)   == 1
-            @test F.down_count(g, 4) == 1
-            @test F.up_count(g, 5)   == 1
-        end
 
     end
 
@@ -1494,14 +1473,6 @@ const F = FLOWVPM
             @test obs.counts.merged == 0
         end
 
-        @testset "static particles skipped" begin
-            pf = F.ParticleField(4)
-            F.add_particle(pf, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.5; static=true)
-            F.add_particle(pf, (0.05, 0.0, 0.0), (1.0, 0.0, 0.0), 0.5)
-            removed = F.merge_filament_bundles!(pf; r_merge=0.5)
-            @test removed == 0
-            @test pf.np == 2
-        end
     end
 
 end

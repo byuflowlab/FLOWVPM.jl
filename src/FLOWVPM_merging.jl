@@ -175,11 +175,9 @@ function _finalize_merged_particle!(
     set_U(pfield, representative, zeroR)
     set_vorticity(pfield, representative, zeroR)
     set_J(pfield, representative, zeroR)
-    set_PSE(pfield, representative, zeroR)
     set_M(pfield, representative, zeroR)
     set_SFS(pfield, representative, zeroR)
-    set_U_prev(pfield, representative, zeroR)
-
+    
     return nothing
 end
 

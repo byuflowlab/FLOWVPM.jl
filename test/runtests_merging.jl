@@ -48,18 +48,6 @@ end
         @test p[FLOWVPM.SIGMA_INDEX][] ≈ cbrt(1.0^3 + 2.0^3 + 3.0^3)
     end
 
-    @testset "Static particles are skipped" begin
-        pfield = FLOWVPM.ParticleField(4)
-        FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0; static=true)
-        FLOWVPM.add_particle(pfield, (0.1, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)
-
-        removed = FLOWVPM.merge_particles!(pfield; r_merge=0.5, sigma_relative=false)
-
-        @test removed == 0
-        @test FLOWVPM.get_np(pfield) == 2
-        @test FLOWVPM.get_static(pfield, 1) == true
-    end
-
     @testset "No merge when particles are distant" begin
         pfield = FLOWVPM.ParticleField(4)
         FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1.0)

@@ -14,8 +14,6 @@ For more advanced examples please see the examples folder.
 - `J`: velocity gradient
 - `M`: auxiliary computational storage
 - `C`: SFS model parameters
-- `static`: tag indicating whether this particle's states should evolve in time or not (sometimes used to represent solid bodies)
-- `PSE`: Storage needed for `ParticleStrengthExchange`
 - `SFS`: Storage of SFS values
 
 ## Particle Field Settings
@@ -32,7 +30,12 @@ The VPM formulation to be used. Options include:
 The viscous model used when propagating particles.
 - [`Inviscid`](@ref FLOWVPM.Inviscid): Uses no viscous modeling for the particles (default).
 - [`CoreSpreading`](@ref FLOWVPM.CoreSpreading): Uses a core spreading viscous model in which particles grow in size at each step. After a defined amount of time the particle size is reset and the particle strength recalculated to maintain the vorticity field strength.
-- [`ParticleStrengthExchange`](@ref FLOWVPM.ParticleStrengthExchange): Uses particle strength exchange to simulate viscosity.
+
+!!! note "Particle strength exchange (PSE) removed"
+    PSE (Degond & Mas-Gallic) approximates the viscous Laplacian by exchanging strength between
+    overlapping neighbours, which is only consistent on a regular, periodically remeshed particle
+    distribution. FLOWVPM is meshless and never remeshes, so PSE was removed (2026-09-22) together
+    with its three per-particle storage rows. Core spreading is the viscous scheme.
 
 ### `kernel::Kernel`
 Regularization scheme used to de-singularize the vorticity and velocity fields.

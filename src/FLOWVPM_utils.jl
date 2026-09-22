@@ -216,7 +216,7 @@ function save(
     h5["vol"] = _tohost(self.particles[VOL_INDEX, 1:np])
     # h5["vol"] = temp
     # temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
-    h5["static"] = _tohost(self.particles[STATIC_INDEX, 1:np])
+    h5["static"] = zeros(eltype(self.particles), np)
     # h5["static"] = temp
     h5["velocity"] = _tohost(self.particles[U_INDEX, 1:np])
     # h5["velocity"] = view(self.particles, U_INDEX, 1:np)
@@ -567,7 +567,6 @@ function read!(pfield::ParticleField{R, F, V, <:Any, <:Any, <:Any, <:Any, <:Any,
         pfield.particles[SIGMA_INDEX, i] = sigma[j]
         pfield.particles[VOL_INDEX, i] = vol[j]
         pfield.particles[CIRCULATION_INDEX, i] = circulation[j]
-        pfield.particles[STATIC_INDEX, i] = static_bool ? Float64(static[j]) : Float64(false)
         if C_bool
             pfield.particles[C_INDEX[1], i] = C[1, j]
             pfield.particles[C_INDEX[2], i] = C[2, j]

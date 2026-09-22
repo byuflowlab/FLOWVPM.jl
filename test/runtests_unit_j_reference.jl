@@ -79,7 +79,7 @@ end
 function jref_add!(field, positions, gammas, sigmas; static_index=0)
     for i in axes(positions, 2)
         vpm_jref.add_particle(field, view(positions, :, i),
-            view(gammas, :, i), sigmas[i]; static=(i == static_index))
+            view(gammas, :, i), sigmas[i])
     end
     return field
 end
@@ -174,32 +174,21 @@ end
               -0.09  0.04  0.19 -0.07  0.16 -0.14;
                0.07  0.12 -0.15  0.10  0.03  0.18]
     sigmas = [0.22, 0.31, 0.27, 0.35, 0.24, 0.29]
-    field = jref_add!(jref_pfield(6), positions, gammas, sigmas;
-        static_index=3)
+    field = jref_add!(jref_pfield(6), positions, gammas, sigmas)
 
     jad = [ForwardDiff.jacobian(
         x -> jref_field_velocity(x, positions, gammas, sigmas; skip=i),
         positions[:, i]) for i in axes(positions, 2)]
 
-    # Static targets retain their prior U/J during reset, then receive the new
-    # direct contribution. Non-static targets are reset to exactly the field.
-    sentinel_u = [0.7, -0.2, 0.4]
-    sentinel_j = reshape(collect(0.01:0.01:0.09), 3, 3)
+    # Every target is reset to exactly the field (static particles removed 2026-09-22).
     field.particles[vpm_jref.U_INDEX, :] .= 9.0
     field.particles[vpm_jref.J_INDEX, :] .= 9.0
-    field.particles[vpm_jref.U_INDEX, 3] .= sentinel_u
-    field.particles[vpm_jref.J_INDEX, 3] .= vec(sentinel_j)
     vpm_jref.UJ_direct(field; reset=true)
 
     for i in axes(positions, 2)
         expected_u = jref_field_velocity(positions[:, i], positions,
             gammas, sigmas; skip=i)
-        if i == 3
-            expected_u .+= sentinel_u
-            expected_j = jad[i] + sentinel_j
-        else
-            expected_j = jad[i]
-        end
+        expected_j = jad[i]
         @test isapprox(field.particles[vpm_jref.U_INDEX, i], expected_u;
             rtol=2e-10, atol=2e-12)
         @test isapprox(jref_matrix(field, i), expected_j;

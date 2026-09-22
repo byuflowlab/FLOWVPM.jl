@@ -231,7 +231,7 @@ function _corespreading_euler_broadcast!(pfield, nu, dt)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    active = view(Sc, 1, :); active .= one(R)
     sigma = view(P, SIGMA_INDEX, :)
 
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ 2*nu*dt), sigma)
@@ -246,7 +246,7 @@ function _corespreading_rk3_broadcast!(pfield, nu, dt, aux1, aux2)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    active = view(Sc, 1, :); active .= one(R)
     M7 = view(P, M_INDEX[7], :)
     sigma = view(P, SIGMA_INDEX, :)
 
@@ -263,7 +263,7 @@ function _corespreading_reset_broadcast!(pfield, sgm0)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
+    active = view(Sc, 1, :); active .= one(R)
 
     for i in 1:3
         M = view(P, M_INDEX[6+i], :)
@@ -281,141 +281,11 @@ end
 
 
 ################################################################################
-# PARTICLE STRENGTH EXCHANGE SCHEME TYPE
+# NOTE 2026-09-22: the ParticleStrengthExchange scheme was removed. PSE approximates
+# the Laplacian by exchanging strength between overlapping neighbours and is only
+# consistent on a regular (remeshed) particle distribution; this VPM is meshless and
+# never remeshes, so PSE was never usable here. CoreSpreading is the viscous scheme.
 ################################################################################
-mutable struct ParticleStrengthExchange{R} <: ViscousScheme{R}
-    # User inputs
-    nu::R                                 # Kinematic viscosity
-
-    # Optional inputs
-    recalculate_vols::Bool                # Whether to recalculate volumes
-
-    ParticleStrengthExchange{R}(
-                                    nu; recalculate_vols=true
-                                ) where {R} = new(
-                                    nu, recalculate_vols
-                                )
-end
-
-"""
-    ParticleStrengthExchange(nu; <keyword arguments>)
-
-Creates a particle strength exchange viscous scheme with the given parameters.
-
-# Arguments
-- `nu`::Real Kinematic viscosity.
-- `recalculate_vols::Bool = true` Whether to recalculate particle volumes.
-"""
-ParticleStrengthExchange(nu, args...; optargs...
-                        ) = ParticleStrengthExchange{FLOAT_TYPE}(FLOAT_TYPE(nu), args...; optargs...)
-
-function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
-
-    if pfield.UJ != UJ_fmm
-        # NOTE: PSE has only been implemented with FMM so far
-        error("PSE with UJ function $(pfield.UJ) has not been implemented yet!")
-    end
-
-    # Recalculate particle volume from current particle smoothing
-    if scheme.recalculate_vols
-        if pfield.particles isa Array
-            for p in iterator(pfield)
-                get_vol(p)[] = 4/3*pi*get_sigma(p)[]^3
-            end
-        else
-            _pse_recalcvols_broadcast!(pfield)
-        end
-    end
-
-    # ------------------ EULER SCHEME ------------------------------------------
-    if pfield.integration == euler
-
-        # Update Gamma
-        if pfield.particles isa Array
-            for p in iterator(pfield)
-                for i in 1:3
-                    get_Gamma(p)[i] += dt * scheme.nu*get_PSE(p)[i]
-                end
-            end
-        else
-            _pse_euler_broadcast!(pfield, scheme.nu, dt)
-        end
-
-        # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
-    elseif pfield.integration == rungekutta3
-
-        # Update Gamma
-        if pfield.particles isa Array
-            for p in iterator(pfield)
-                for i in 1:3
-                    get_M(p)[3+i] += dt * scheme.nu*get_PSE(p)[i]
-                    get_Gamma(p)[i] += aux2 * dt * scheme.nu*get_PSE(p)[i]
-                end
-            end
-        else
-            _pse_rk3_broadcast!(pfield, scheme.nu, dt, aux2)
-        end
-
-        # ------------------ DEFAULT -----------------------------------------------
-    else
-        error("Time integration scheme $(pfield.integration) not"*
-              " implemented in PSE viscous scheme yet!")
-    end
-
-end
-
-"GPU-compatible broadcast path for `ParticleStrengthExchange`'s volume recalculation."
-function _pse_recalcvols_broadcast!(pfield)
-    R = eltype(pfield.particles)
-    P = pfield.particles
-    Sc = pfield.scratch
-
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
-    vol = view(P, VOL_INDEX, :)
-    sigma = view(P, SIGMA_INDEX, :)
-
-    vol .= ifelse.(active .> 0, R(4/3*pi) .* sigma.^3, vol)
-
-    return nothing
-end
-
-"GPU-compatible broadcast path for `ParticleStrengthExchange`'s Euler Gamma update."
-function _pse_euler_broadcast!(pfield, nu, dt)
-    R = eltype(pfield.particles)
-    nu = R(nu); dt = R(dt)
-    P = pfield.particles
-    Sc = pfield.scratch
-
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
-
-    for i in 1:3
-        G = view(P, GAMMA_INDEX[i], :)
-        PSE = view(P, PSE_INDEX[i], :)
-        G .= ifelse.(active .> 0, G .+ dt*nu .* PSE, G)
-    end
-
-    return nothing
-end
-
-"GPU-compatible broadcast path for `ParticleStrengthExchange`'s RK3 Gamma update."
-function _pse_rk3_broadcast!(pfield, nu, dt, aux2)
-    R = eltype(pfield.particles)
-    nu = R(nu); dt = R(dt); aux2 = R(aux2)
-    P = pfield.particles
-    Sc = pfield.scratch
-
-    active = view(Sc, 1, :); active .= 1 .- view(P, STATIC_INDEX, :)
-
-    for i in 1:3
-        M = view(P, M_INDEX[3+i], :)
-        G = view(P, GAMMA_INDEX[i], :)
-        PSE = view(P, PSE_INDEX[i], :)
-        M .= ifelse.(active .> 0, M .+ dt*nu .* PSE, M)
-        G .= ifelse.(active .> 0, G .+ aux2*dt*nu .* PSE, G)
-    end
-
-    return nothing
-end
 ##### END OF PARTICLE STRENGTH EXCHANGE SCHEME ###################################
 
 
@@ -485,22 +355,19 @@ function corespreading_reset_subset!(pfield, scheme::CoreSpreading, idx::Vector{
     _radix_oversize_mask_rows!(P, idx, grows)
     scheme.zeta(pfield)
     Wrest = _radix_oversize_gather(P, idx, VORTICITY_INDEX)
-    # freeze the rest: zero strength (contributes nothing to A·p), static (out of the CG)
+    # freeze the rest: zero strength (contributes nothing to A·p) and out of the CG
+    # through the explicit active mask (the static flag was removed 2026-09-22)
     Grest = copy(view(P, grows, 1:np))
-    Srest = copy(view(P, STATIC_INDEX:STATIC_INDEX, 1:np))
     view(P, grows, 1:np) .= zero(R)
-    view(P, STATIC_INDEX:STATIC_INDEX, 1:np) .= one(R)
     K = length(idx)
-    _radix_oversize_scatter!(P, idx, STATIC_INDEX:STATIC_INDEX, zeros(R, 1, K))
     _radix_oversize_scatter!(P, idx, SIGMA_INDEX:SIGMA_INDEX, fill(R(scheme.sgm0), 1, K))
     _radix_oversize_scatter!(P, idx, M_INDEX[7]:M_INDEX[9], Matrix{R}(Wtot .- Wrest))
     _radix_oversize_scatter!(P, idx, grows, Matrix{R}(Gsub))      # initial search direction: old strengths
-    scheme.rbf(pfield, scheme)
+    active = falses(np); active[idx] .= true
+    rbf_conjugategradient(pfield, scheme; active)
     Gnew = _radix_oversize_gather(P, idx, grows)
     # restore the rest, keep the subset's new strengths
     copyto!(view(P, grows, 1:np), Grest)
-    copyto!(view(P, STATIC_INDEX:STATIC_INDEX, 1:np), Srest)
-    _radix_oversize_scatter!(P, idx, grows, Matrix{R}(Gnew))
     println("  core reset (subset of $K): RBF residual ",
         join((Printf.@sprintf("%.2e", sqrt(scheme.rrs[i] / max(scheme.rr0s[i], eps()))) for i in 1:3), " "),
         " (tol $(scheme.tol), itmax $(scheme.itmax))")
@@ -520,7 +387,9 @@ radius sigma.
 
 See 20180818 notebook and https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_resulting_algorithm
 """
-function rbf_conjugategradient(pfield, cs::CoreSpreading)
+# `active`: optional Bool vector (length np); particles with `false` keep their rows
+# untouched and drop out of every dot product (used by corespreading_reset_subset!).
+function rbf_conjugategradient(pfield, cs::CoreSpreading; active=nothing)
 
     #= NOTES
     * The target vorticity (`omega_targ`) is expected to be stored in P.M[7:9]
@@ -535,7 +404,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     if cs.debug
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
                 "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1)[4:6], digits=8))\n"*
-                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1)[34:36], digits=8))\n")
+                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1)[M_INDEX[7:9]], digits=8))\n")
     end
 
     # Initialize memory
@@ -543,7 +412,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     cs.rrs .= 0
     cs.flags .= false
 
-    for P in iterator(pfield)
+    for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
         for i in 1:3
             # Initial guess: Γ_i ≈ ω_i⋅vol_i
             get_M(P)[i] = get_M(P)[6+i]*get_vol(P)[]
@@ -555,7 +425,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Current vorticity: evaluate basis functions into the vorticity field.
     cs.zeta(pfield)
 
-    for P in iterator(pfield)
+    for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
         for i in 1:3
             # Residual of initial guess (r0=b-Ax0)
             get_M(P)[3+i] = get_M(P)[6+i] - get_vorticity(P)[i]    # r = omega_targ - omega_cur
@@ -584,7 +455,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         # Calculate pAp product on each dimension
         cs.pAps .= 0
-        for P in iterator(pfield)
+        for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
             for i in 1:3
                 cs.pAps[i] += get_Gamma(P)[i] .* get_vorticity(P)[i]
             end
@@ -598,7 +470,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.prev_rrs .= cs.rrs
         cs.rrs .= 0
 
-        for P in iterator(pfield)
+        for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
             for i in 1:3
                 get_M(P)[i] += cs.alphas[i]*get_Gamma(P)[i]   # x = x + alpha*p
                 get_M(P)[i+3] -= cs.alphas[i].*get_vorticity(P)[i] # r = r - alpha*Ap
@@ -616,7 +489,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             end
         end
 
-        for P in iterator(pfield)
+        for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
             for i in 1:3
                 get_Gamma(P)[i] = get_M(P)[i+3] + cs.betas[i]*get_Gamma(P)[i]
             end
@@ -653,7 +527,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     end
 
     # Save final solution
-    for P in iterator(pfield)
+    for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
         for i in 1:3
             get_Gamma(P)[i] = get_M(P)[i]
         end
@@ -669,7 +544,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
         rms_ini, rms_resend = zeros(3), zeros(3)
 
-        for P in iterator(pfield)
+        for (ip, P) in enumerate(iterator(pfield))
+        (active === nothing || active[ip]) || continue
             for i in 1:3
                 rms_ini[i] += get_M(P)[i+6]^2
                 rms_resend[i] += (get_vorticity(P)[i] - get_M(P)[i+6])^2

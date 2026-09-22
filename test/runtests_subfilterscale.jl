@@ -20,7 +20,7 @@ end
 function sfs_consistency_field(; static_first=false, transposed=true)
     pfield = FLOWVPM.ParticleField(4; transposed, fmm=sfs_consistency_fmm())
 
-    FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.2, -0.1), 0.50; static=static_first)
+    FLOWVPM.add_particle(pfield, (0.0, 0.0, 0.0), (1.0, 0.2, -0.1), 0.50)
     FLOWVPM.add_particle(pfield, (0.2, 0.1, 0.0), (-0.2, 1.1, 0.3), 0.45)
     FLOWVPM.add_particle(pfield, (1.5, 0.2, 0.1), (0.5, -0.4, 0.8), 0.55)
     FLOWVPM.add_particle(pfield, (-0.3, 1.0, 0.4), (-0.7, 0.3, 1.2), 0.60)
@@ -114,10 +114,6 @@ end
     @testset "Estr_fmm direct list matches Estr_direct" begin
         test_Estr_consistency(; transposed=true)
         test_Estr_consistency(; transposed=false)
-    end
-
-    @testset "Estr_fmm direct list matches Estr_direct for static targets" begin
-        test_Estr_consistency(; static_first=true)
     end
 
     @testset "Estr_fmm threaded direct list is race-free" begin

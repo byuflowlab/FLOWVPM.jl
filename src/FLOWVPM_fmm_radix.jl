@@ -712,7 +712,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         bounds=(SVector{3,TF}(bounds[1]),
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
         hessian=true, sfs=true, sfs_transposed=pfield.transposed,
-        sfs_active_row=9,
+        sfs_active_row=0,     # no static particles: the SFS sweeps filter nothing (2026-09-22)
         near_radius2=q,
         level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)

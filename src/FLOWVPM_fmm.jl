@@ -93,7 +93,7 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     buffer[8, i_buffer] = σ
     # Radix SFS active mask: one for non-static, zero for static. Legacy FMM
     # kernels ignore this extra packed row.
-    buffer[9, i_buffer] = is_static(get_particle(system, i_body)) ? 0 : 1
+    buffer[9, i_buffer] = 1          # every particle is active (static particles removed 2026-09-22)
 end
 
 function fmm.data_per_body(system::ParticleField)

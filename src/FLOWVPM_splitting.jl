@@ -511,7 +511,7 @@ A particle `i` is considered if (a) it is not static (when
 the parent) and appends child B via `add_particle`. By default both
 children have `Γ_parent / 2`, are offset by `±a · e_split` with
 `2a = opts.kappa_split · σ_p`, and share the parent's `σ`. Resolved
-field state (U, J, SFS, M, PSE, vorticity, U_prev, C) is zeroed on
+field state (U, J, SFS, M, vorticity, C) is zeroed on
 both children so that noisy parent transients are not inherited.
 """
 function split_particles!(pfield::ParticleField,
@@ -601,7 +601,6 @@ function _do_split!(pfield::ParticleField{R},
     gz = pfield.particles[GAMMA_INDEX.start + 2, i]
     vol = pfield.particles[VOL_INDEX, i]
     circ = pfield.particles[CIRCULATION_INDEX, i]
-    is_stat = get_static(pfield, i)
 
     # Child positions
     xA = x0 - a*ex; yA = y0 - a*ey; zA = z0 - a*ez
@@ -624,12 +623,9 @@ function _do_split!(pfield::ParticleField{R},
     set_U(pfield, i, zeroR)
     set_vorticity(pfield, i, zeroR)
     set_J(pfield, i, zeroR)
-    set_PSE(pfield, i, zeroR)
     set_M(pfield, i, zeroR)
     set_C(pfield, i, zeroR)
     set_SFS(pfield, i, zeroR)
-    set_U_prev(pfield, i, zeroR)
-    set_static(pfield, i, Float64(is_stat))
 
     # Reset splitting-state for parent slot to a fresh child
     state.sigma_0[i] = σ_c
@@ -639,7 +635,7 @@ function _do_split!(pfield::ParticleField{R},
 
     # ---- Child B appended via add_particle ----
     add_particle(pfield, (xB, yB, zB), (halfgx, halfgy, halfgz), σ_c;
-                 vol=half_vol, circulation=circ, C=zeroR, static=is_stat)
+                 vol=half_vol, circulation=circ, C=zeroR)
     j = get_np(pfield)
     # add_particle initialized sigma_0=σ_c, H_chi=0, counters=0;
     # apply cooldown to the freshly appended child too.
@@ -1269,7 +1265,7 @@ function refine_filament_edges!(pfield::ParticleField{R};
 
             # Append m. add_particle zeros m's edge-graph adjacency.
             add_particle(pfield, (xm1, xm2, xm3), (gm1, gm2, gm3), σm;
-                         vol = volm, circulation = circm, static = false)
+                         vol = volm, circulation = circm)
             m = get_np(pfield)
 
             # Rewire: drop the old edge, add the two replacements.

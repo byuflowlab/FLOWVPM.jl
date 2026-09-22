@@ -13,7 +13,7 @@ function gpu_test_build_cpu_pfield(n, R=Float64; seed=1, static_frac=0.0)
         X = rand(R, 3) .* 2 .- 1
         Gamma = rand(R, 3) .* 2 .- 1
         sigma = R(0.1) + R(0.05) * rand(R)
-        vpm.add_particle(pfield, X, Gamma, sigma; static=(rand() < static_frac))
+        vpm.add_particle(pfield, X, Gamma, sigma)
     end
     return pfield
 end
@@ -64,7 +64,7 @@ function gpu_test_build_gpu_pfield_directly(n, R=Float64; seed=1, static_frac=0.
         X = rand(R, 3) .* 2 .- 1
         Gamma = rand(R, 3) .* 2 .- 1
         sigma = R(0.1) + R(0.05) * rand(R)
-        vpm.add_particle(pfield, X, Gamma, sigma; static=(rand() < static_frac))
+        vpm.add_particle(pfield, X, Gamma, sigma)
     end
     return pfield
 end
@@ -80,7 +80,6 @@ end
         @test gpu_test_relerr(view(cpu.particles, vpm.X_INDEX, :), view(gpu.particles, vpm.X_INDEX, :)) < tol
         @test gpu_test_relerr(view(cpu.particles, vpm.GAMMA_INDEX, :), view(gpu.particles, vpm.GAMMA_INDEX, :)) < tol
         @test gpu_test_relerr(view(cpu.particles, vpm.SIGMA_INDEX:vpm.SIGMA_INDEX, :), view(gpu.particles, vpm.SIGMA_INDEX:vpm.SIGMA_INDEX, :)) < tol
-        @test Array(view(gpu.particles, vpm.STATIC_INDEX:vpm.STATIC_INDEX, :)) == view(cpu.particles, vpm.STATIC_INDEX:vpm.STATIC_INDEX, :)
 
         # and the physics on a directly-built GPU field still matches the CPU reference
         vpm.UJ_direct(cpu)

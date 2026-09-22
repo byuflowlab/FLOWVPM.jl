@@ -98,7 +98,7 @@ After the representative is written, scratch and derived fields are reset to
 zero:
 
 ```text
-U, J, vorticity, PSE, M, SFS, U_prev
+U, J, vorticity, M, SFS
 ```
 
 These fields cache quantities from the previous particle layout or time-step
@@ -266,9 +266,8 @@ it only accidentally.
 
 Other fields follow the same interpretation as in `## Merged Quantities`.
 $\mathbf{C}$ is a strength-weighted representative value, not a conserved sum.
-`U`, `J`, `vorticity`, `PSE`, `M`, `SFS`, and `U_prev` are derived or scratch
-state and are deliberately reset rather than conserved. Static particles are
-excluded from candidate clusters by default, so their properties are unaffected.
+`U`, `J`, `vorticity`, `M`, and `SFS` are derived or scratch
+state and are deliberately reset rather than conserved.
 
 ## Alternative Conserving Formulations
 

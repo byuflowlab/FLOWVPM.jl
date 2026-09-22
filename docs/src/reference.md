@@ -17,7 +17,6 @@ FLOWVPM.formulation_tube_momentum
 ```@docs
 FLOWVPM.Inviscid
 FLOWVPM.CoreSpreading
-FLOWVPM.ParticleStrengthExchange
 ```
 
 ## FMM

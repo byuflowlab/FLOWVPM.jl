@@ -129,42 +129,6 @@ end
 
 const FMM034_U_GATE = 1e-3   # fixed Integration Phase velocity tolerance
 
-# =========================================================================
-# Task 049: U_prev bookkeeping — CPU loop vs broadcast equivalence
-# =========================================================================
-# `nextstep`'s U_prev update forks on storage type (Matrix keeps the scalar
-# loop verbatim; CuArray takes `_update_U_prev_broadcast!`). Assert the two
-# implementations agree bit-for-bit on a Matrix field, above and below the
-# MIN_MT_NP multithreading threshold. Needs neither radix nor CUDA.
-@testset "nextstep U_prev: loop vs broadcast equivalence" begin
-    for n in (200, 1500)   # single-thread and multi-thread loop branches
-        rng = MersenneTwister(49000 + n)
-        pfield = fmm034_build_cube(n)
-        pfield.particles[vpm_fmm.U_INDEX, 1:n] .= randn(rng, 3, n)
-
-        # reference: the loop implementation exactly as nextstep runs it
-        ref = copy(pfield.particles)
-        for i in 1:n
-            Ux, Uy, Uz = ref[vpm_fmm.U_INDEX, i]
-            ref[vpm_fmm.U_PREV_INDEX, i] = sqrt(Ux*Ux + Uy*Uy + Uz*Uz)
-        end
-
-        # broadcast implementation on the same Matrix field
-        FLOWVPM._update_U_prev_broadcast!(pfield)
-        @test pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] ==
-              ref[vpm_fmm.U_PREV_INDEX, 1:n]
-
-        # nextstep's Array branch still runs the loop: after a dt=0 step the
-        # U_prev row must equal |U| of the post-integration U rows
-        pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] .= 0
-        vpm_fmm.nextstep(pfield, 0.0)
-        @test all(isfinite, pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n])
-        expected = [sqrt(sum(abs2, pfield.particles[vpm_fmm.U_INDEX, i]))
-                    for i in 1:n]
-        @test pfield.particles[vpm_fmm.U_PREV_INDEX, 1:n] == expected
-    end
-end
-
 @testset "euler sigma_guard: dt*Z cap + floor (052c trial 1)" begin
     # Reproduces the 052c acceptance step-1015 failure mode in miniature:
     # a strained outlier with dt*Z > 1 flips sigma's sign under the
@@ -719,11 +683,9 @@ function fmm034_sfs_bruteforce(pfield, np; transposed=true,
     rc2 = eltype(pfield.particles) === Float32 ? 42.25 : 81.0
     E = zeros(3, np)
     for i in 1:np
-        honor_static && P[vpm_fmm.STATIC_INDEX, i] != 0 && continue
         Ji = view(P, vpm_fmm.J_INDEX, i)
         for j in 1:np
             i == j && continue
-            honor_static && P[vpm_fmm.STATIC_INDEX, j] != 0 && continue
             dx = P[1, i] - P[1, j]; dy = P[2, i] - P[2, j]; dz = P[3, i] - P[3, j]
             sig = Float64(P[vpm_fmm.SIGMA_INDEX, j])
             rho2 = (dx^2 + dy^2 + dz^2) / sig^2
@@ -870,37 +832,7 @@ fmm034_matrix_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
     vpm_fmm.UJ_fmm_gpu!(pfield_eq; reset=true, reset_sfs=true, sfs=true)
     @test fmm034_sfs_relrms(pfield_cap.particles, pfield_eq.particles, n) < 1e-12
 
-    # CPU Estr semantics: static particles are neither SFS sources nor SFS
-    # targets. Their pre-existing SFS rows remain untouched.
-    pfield_static = fmm034_build_cube(n)
-    ref_static = fmm034_build_cube(n; UJ=vpm_fmm.UJ_direct)
-    for i in (2, 17, 201)
-        vpm_fmm.set_static(pfield_static, i, 1.0)
-        vpm_fmm.set_static(ref_static, i, 1.0)
-    end
-    sentinel = [3.0, -2.0, 1.0]
-    for i in (2, 17, 201)
-        pfield_static.particles[vpm_fmm.SFS_INDEX, i] .= sentinel
-        ref_static.particles[vpm_fmm.SFS_INDEX, i] .= sentinel
-    end
-    S_static_before = copy(pfield_static.particles[vpm_fmm.SFS_INDEX, 1:n])
-    FLOWVPM.radix_fmm_settings!(pfield_static; expansion_order=4, ell=2,
-        near_radius2=20)
-    vpm_fmm.UJ_fmm_gpu!(pfield_static; reset=true, reset_sfs=false, sfs=true)
-    vpm_fmm.UJ_direct(ref_static)
-    vpm_fmm.Estr_direct!(ref_static)
-    static_indices = [2, 17, 201]
-    active_indices = setdiff(collect(1:n), static_indices)
-    S_static_delta = pfield_static.particles[vpm_fmm.SFS_INDEX, 1:n] .-
-        S_static_before
-    E_masked = fmm034_sfs_bruteforce(pfield_static, n)
-    E_all_active = fmm034_sfs_bruteforce(pfield_static, n;
-        honor_static=false)
-    @test all(iszero, S_static_delta[:, static_indices])
-    @test fmm034_matrix_relrms(S_static_delta[:, active_indices],
-                               E_masked[:, active_indices]) < 1e-6
-    # Explicitly proves static SOURCE removal matters, not just target masking.
-    @test E_masked[:, active_indices] != E_all_active[:, active_indices]
+    # (static-particle SFS semantics removed 2026-09-22: the static flag no longer exists)
 end
 
 # =========================================================================

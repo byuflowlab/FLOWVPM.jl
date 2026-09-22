@@ -81,7 +81,6 @@ function Estr_direct_multithreaded(pfield::ParticleField)
         # Calculate SFS contributions for the assigned particles
         for i_target in start_idx:end_idx
             target_particle = get_particle(pfield, i_target)
-            is_static(target_particle) && continue
             tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
             for source_particle in iterator(pfield)
@@ -98,7 +97,6 @@ end
 
 function Estr_direct_singlethreaded(pfield::ParticleField)
     for target_particle in iterator(pfield)
-        is_static(target_particle) && continue
         tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
         for source_particle in iterator(pfield)
@@ -155,7 +153,6 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
             # loop over source particles
             for i_source in source_index
                 source_particle = get_particle(source_pfield, source_tree.sort_index_list[i_source_system][i_source])
-                is_static(source_particle) && continue
 
                 # source position
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
@@ -163,7 +160,6 @@ function Estr_fmm_multithread!(target_pfield::ParticleField, source_pfield::Part
                 # loop over target particles
                 for i_target in target_index
                     target_particle = get_particle(target_pfield, target_tree.sort_index_list[i_target_system][i_target])
-                    is_static(target_particle) && continue
 
                     # target position
                     tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
@@ -192,7 +188,6 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
         # loop over source particles
         for i_source in source_index
             source_particle = get_particle(source_pfield, source_tree.sort_index_list[i_source_system][i_source])
-            is_static(source_particle) && continue
 
             # source position
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
@@ -200,7 +195,6 @@ function Estr_fmm_singlethread!(target_pfield::ParticleField, source_pfield::Par
             # loop over target particles
             for i_target in target_index
                 target_particle = get_particle(target_pfield, target_tree.sort_index_list[i_target_system][i_target])
-                is_static(target_particle) && continue
 
                 # target position
                 tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
@@ -226,80 +220,7 @@ function Estr_fmm(pfield::ParticleField; reset_sfs=true, optargs...)
                             transposed_sfs=pfield.transposed, optargs...)
 end
 
-"""
-    SFS model wrapper that hides the static particles from the model in order
-to avoid potential numerical instabilities encountered at solid surfaces.
-"""
-function E_nostaticparticles(pfield, args...; E=Estr_fmm, optargs...)
-
-    @assert pfield.np < pfield.maxparticles "Sorting of particles is needed"*
-        " but all pre-allocated memory is already in use"
-
-    org_np = pfield.np
-    iaux = pfield.np + 1
-
-    # Fetch auxiliary memory
-    paux = get_particle(pfield, iaux; emptyparticle=true)
-
-    # Iterate over particles
-    for pi in pfield.np:-1:1
-
-        # Fetch target particles
-        p = get_particle(pfield, pi)
-
-        # Case that we found a static particle
-        if p.static[1]
-
-            if pi==pfield.np
-                nothing
-
-            # Swap this particle with last particle
-            else
-
-                # Fetch last particle
-                pnp = get_particle(pfield, pfield.np)
-
-                # Store static particle in auxiliary memory
-                fmm.overwriteBody(pfield.bodies, iaux-1, pi-1)
-                paux.circulation .= p.circulation
-                paux.C .= p.C
-                paux.static .= p.static
-
-                # Move last particle into the static particle's memory
-                fmm.overwriteBody(pfield.bodies, pi-1, pfield.np-1)
-                p.circulation .= pnp.circulation
-                p.C .= pnp.C
-                p.static .= pnp.static
-
-                # Move static particle into the last particle's memory
-                fmm.overwriteBody(pfield.bodies, pfield.np-1, iaux-1)
-                pnp.circulation .= paux.circulation
-                pnp.C .= paux.C
-                pnp.static .= paux.static
-
-            end
-
-            # Move "end of array" pointer to hide the static particle
-            pfield.np -= 1
-        end
-    end
-
-    # Call SFS model without the static particles
-    E(pfield, args...; optargs...)
-
-    # Restore static particles back to the field
-    # pfield.np = org_np
-
-    # NOTE: Here we add the auxiliary memory to the field and then remove it.
-    #       This is to make sure that the memory is cleaned and avoid potential
-    #       bugs
-    pfield.np = org_np + 1
-    remove_particle(pfield, pfield.np)
-
-    # # Sort particles to restore the original indexing
-    # sort!(iterator(pfield), by = p->p.index[1])
-
-end
+# E_nostaticparticles removed 2026-09-22 (static particles no longer exist)
 
 ################################################################################
 # ANALYTIC CORE-SCALING DERIVATIVES (two-level dynamic procedure), all-pairs
@@ -331,7 +252,6 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
     x0 = first(X_INDEX); g0 = first(GAMMA_INDEX); j0 = first(J_INDEX); m0 = first(M_INDEX)
     # ∂J/∂α
     Threads.@threads for i in 1:np
-        P[STATIC_INDEX, i] != 0 && continue
         xi, yi, zi = P[x0, i], P[x0 + 1, i], P[x0 + 2, i]
         acc = ntuple(_ -> zero(R), 9)
         for j in 1:np
@@ -354,7 +274,6 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
     end
     # L = op(∂J)Γ, then ∂E = Σ_j [∂ζ op(J_i − J_j)Γ_j + ζ op(∂J_i − ∂J_j)Γ_j]
     Threads.@threads for i in 1:np
-        P[STATIC_INDEX, i] != 0 && continue
         gi = (P[g0, i], P[g0 + 1, i], P[g0 + 2, i])
         L = fmm._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
             dJ[7, i], dJ[8, i], dJ[9, i], gi..., transposed)
@@ -362,7 +281,6 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
         e1 = zero(R); e2 = zero(R); e3 = zero(R)
         for j in 1:np
             j == i && continue
-            P[STATIC_INDEX, j] != 0 && continue
             sigma = P[SIGMA_INDEX, j]
             dx = xi - P[x0, j]; dy = yi - P[x0 + 1, j]; dz = zi - P[x0 + 2, j]
             rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
@@ -417,7 +335,7 @@ function dsigma_fmm!(pfield::ParticleField{R}, target_tree, source_tree, direct_
                 sx, sy, sz = P[x0, j], P[x0 + 1, j], P[x0 + 2, j]
                 for i_target in target_tree.branches[it].bodies_index[i_target_system]
                     i = tsort[i_target]
-                    (i == j || P[STATIC_INDEX, i] != 0) && continue
+                    i == j && continue
                     dx = P[x0, i] - sx; dy = P[x0 + 1, i] - sy; dz = P[x0 + 2, i] - sz
                     r2 = dx * dx + dy * dy + dz * dz
                     r2 == 0 && continue
@@ -446,13 +364,12 @@ function dsigma_fmm!(pfield::ParticleField{R}, target_tree, source_tree, direct_
             it, is = direct_list[i_interaction]
             for i_source in source_tree.branches[is].bodies_index[i_source_system]
                 j = ssort[i_source]
-                P[STATIC_INDEX, j] != 0 && continue
                 sigma = P[SIGMA_INDEX, j]
                 gj = (P[g0, j], P[g0 + 1, j], P[g0 + 2, j])
                 sx, sy, sz = P[x0, j], P[x0 + 1, j], P[x0 + 2, j]
                 for i_target in target_tree.branches[it].bodies_index[i_target_system]
                     i = tsort[i_target]
-                    (i == j || P[STATIC_INDEX, i] != 0) && continue
+                    i == j && continue
                     dx = P[x0, i] - sx; dy = P[x0 + 1, i] - sy; dz = P[x0 + 2, i] - sz
                     rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
                     z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)

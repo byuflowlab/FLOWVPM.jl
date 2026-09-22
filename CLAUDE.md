@@ -75,8 +75,10 @@ time (the last parameter, `AT`, is the array type backing `pfield.particles`
   `FLOWVPM.jl` as `cVPM`, `rVPM`, `formulation_tube_continuity`, etc.
 - **Kernel** (`FLOWVPM_kernel.jl`): regularization function + its derivatives
   (`singular`, `gaussian`, `gaussianerf` (default), `winckelmans`).
-- **ViscousScheme** (`FLOWVPM_viscous.jl`): `Inviscid`, `CoreSpreading`,
-  `ParticleStrengthExchange`. `_kernel_compatibility` in `FLOWVPM.jl` enforces
+- **ViscousScheme** (`FLOWVPM_viscous.jl`): `Inviscid`, `CoreSpreading`.
+  `ParticleStrengthExchange` was removed 2026-09-22: PSE needs a remeshed,
+  overlapping particle distribution and is not compatible with this meshless
+  VPM. `_kernel_compatibility` in `FLOWVPM.jl` enforces
   which kernels are valid with which viscous scheme — check/update this when
   adding either.
 - **SubFilterScale (SFS)** (`FLOWVPM_subfilterscale.jl` +
