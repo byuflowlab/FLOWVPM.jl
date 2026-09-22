@@ -527,6 +527,51 @@ function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
     return nothing
 end
 
+# All-pairs probe velocities (see FLOWVPM.UJ_probes_direct!): one workgroup per
+# probe, lanes stride the particles, a local-memory reduction closes the group.
+@kernel function ka_probes_direct_kernel!(out, @Const(P), @Const(X), n::Int32, ::Val{WG}) where WG
+    t = @index(Group)
+    lane = @index(Local)
+    T = eltype(P)
+    @inbounds begin
+        xp = X[1, t]; yp = X[2, t]; zp = X[3, t]
+        ux = zero(T); uy = zero(T); uz = zero(T)
+        j = lane
+        while j <= n
+            dx = xp - P[1, j]; dy = yp - P[2, j]; dz = zp - P[3, j]
+            r2 = dx * dx + dy * dy + dz * dz
+            if r2 > zero(T)
+                invr = inv(sqrt(r2))
+                sigma = P[7, j]
+                g = sigma > zero(T) ? fmm._gaussianerf_g_h(r2 * invr / sigma)[1] : one(T)
+                _, ax, ay, az = fmm._vortex_pair_ug(dx, dy, dz, invr, P[4, j], P[5, j], P[6, j], g)
+                ux += ax; uy += ay; uz += az
+            end
+            j += WG
+        end
+        # lanes of one target reduce through atomics (a few hundred targets,
+        # WG lanes each: negligible), no local memory or barrier needed
+        KA.@atomic out[1, t] += ux
+        KA.@atomic out[2, t] += uy
+        KA.@atomic out[3, t] += uz
+    end
+end
+
+function FLOWVPM.gpu_probes_direct!(pfield::GPUField{R}, X::AbstractMatrix, out::AbstractMatrix) where R
+    np = pfield.np; nt = size(X, 2)
+    nt == 0 && return out
+    backend = KA.get_backend(pfield.particles)
+    dX = KA.allocate(backend, R, 3, nt); copyto!(dX, Matrix{R}(X))
+    dout = KA.zeros(backend, R, 3, nt)
+    if np > 0
+        WG = 256
+        ka_probes_direct_kernel!(backend, WG)(dout, pfield.particles, dX, Int32(np), Val(WG); ndrange=nt * WG)
+        KA.synchronize(backend)
+    end
+    copyto!(out, Array(dout))
+    return out
+end
+
 # Each thread handles one target and brute-force loops over every source
 # directly from global memory. Mirrors FLOWVPMCUDAExt.jl's
 # gpu_estr_direct_kernel!.
