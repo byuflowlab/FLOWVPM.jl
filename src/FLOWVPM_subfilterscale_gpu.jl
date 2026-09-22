@@ -101,7 +101,7 @@ in the host loop's operation order). Called from that function when
 `pfield.particles` is not a plain `Array`.
 """
 function _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha::Real, rlxf::Real,
-        minC::Real, maxC::Real; force_positive::Bool=false)
+        minC::Real, maxC::Real; force_positive::Bool=false, twolevel::Bool=false)
     R = eltype(pfield.particles)
     np = pfield.np
     np == 0 && return nothing
@@ -122,19 +122,22 @@ function _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha::Real, rlxf::Real,
     S1, S2, S3 = row(SFS_INDEX[1]), row(SFS_INDEX[2]), row(SFS_INDEX[3])
 
     # subtract domain-filter stretching / SFS from the test-filter values
-    # stored under M[1:3] / M[4:6]
-    if pfield.transposed
-        M1 .-= act .* (J1 .* G1 .+ J2 .* G2 .+ J3 .* G3)
-        M2 .-= act .* (J4 .* G1 .+ J5 .* G2 .+ J6 .* G3)
-        M3 .-= act .* (J7 .* G1 .+ J8 .* G2 .+ J9 .* G3)
-    else
-        M1 .-= act .* (J1 .* G1 .+ J4 .* G2 .+ J7 .* G3)
-        M2 .-= act .* (J2 .* G1 .+ J5 .* G2 .+ J8 .* G3)
-        M3 .-= act .* (J3 .* G1 .+ J6 .* G2 .+ J9 .* G3)
+    # stored under M[1:3] / M[4:6] (the two-level procedure holds the
+    # derivatives themselves there: nothing to subtract)
+    if !twolevel
+        if pfield.transposed
+            M1 .-= act .* (J1 .* G1 .+ J2 .* G2 .+ J3 .* G3)
+            M2 .-= act .* (J4 .* G1 .+ J5 .* G2 .+ J6 .* G3)
+            M3 .-= act .* (J7 .* G1 .+ J8 .* G2 .+ J9 .* G3)
+        else
+            M1 .-= act .* (J1 .* G1 .+ J4 .* G2 .+ J7 .* G3)
+            M2 .-= act .* (J2 .* G1 .+ J5 .* G2 .+ J8 .* G3)
+            M3 .-= act .* (J3 .* G1 .+ J6 .* G2 .+ J9 .* G3)
+        end
+        M4 .-= act .* S1
+        M5 .-= act .* S2
+        M6 .-= act .* S3
     end
-    M4 .-= act .* S1
-    M5 .-= act .* S2
-    M6 .-= act .* S3
 
     # ---- model coefficient ----
     zeta0 = R(pfield.kernel.zeta(zero(R)))
@@ -148,7 +151,7 @@ function _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha::Real, rlxf::Real,
     deno = view(Sc, 6:6, :)
     big  = view(Sc, 7:7, :)
 
-    fac = R(3 * alpha - 2)
+    fac = twolevel ? one(R) : R(3 * alpha - 2)
     rlxfR = R(rlxf)
     minCR, maxCR = R(minC), R(maxC)
 

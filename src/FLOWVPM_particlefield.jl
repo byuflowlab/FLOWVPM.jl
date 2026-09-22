@@ -291,7 +291,8 @@ _with_precision(x::ClassicVPM, ::Type{R}) where R = ClassicVPM{R}()
 _with_precision(x::ReformulatedVPM, ::Type{R}) where R = ReformulatedVPM{R}(R(x.f), R(x.g); h=R(x.h))
 _with_precision(x::Inviscid, ::Type{R}) where R = Inviscid{R}(; nu=R(x.nu))
 _with_precision(x::CoreSpreading{R0,Tz,Tr}, ::Type{R}) where {R0,Tz,Tr,R} =
-    CoreSpreading{R,Tz,Tr}(R(x.nu), R(x.sgm0), x.zeta; beta=R(x.beta), itmax=x.itmax, tol=R(x.tol),
+    CoreSpreading{R,Tz,Tr}(R(x.nu), R(x.sgm0), x.zeta; beta=R(x.beta), growth_beta=R(x.growth_beta),
+        itmax=x.itmax, tol=R(x.tol),
         iterror=x.iterror, verbose=x.verbose, v_lvl=x.v_lvl, debug=x.debug, t_sgm=R(x.t_sgm), rbf=x.rbf)
 _with_precision(x::ParticleStrengthExchange, ::Type{R}) where R =
     ParticleStrengthExchange{R}(R(x.nu); recalculate_vols=x.recalculate_vols)

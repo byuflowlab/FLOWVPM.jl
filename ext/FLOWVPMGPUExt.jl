@@ -92,6 +92,129 @@ end
     end
 end
 
+# Oversize selection on the device (FLOWVPM._radix_oversize_top): a histogram
+# of the core row over [lo, hi] finds the bin holding the K-th largest core, a
+# compaction collects every particle at or above that bin's lower edge.
+@kernel function _sigma_hist_kernel!(hist, @Const(P), row, np, lo, inv_w, nb)
+    i = @index(Global)
+    @inbounds if i <= np
+        b = clamp(floor(Int32, (P[row, i] - lo) * inv_w) + Int32(1), Int32(1), Int32(nb))
+        KernelAbstractions.@atomic hist[b] += Int32(1)
+    end
+end
+@kernel function _sigma_collect_kernel!(idx, counter, @Const(P), row, np, thr, cap)
+    i = @index(Global)
+    @inbounds if i <= np && P[row, i] >= thr
+        k = KernelAbstractions.@atomic counter[1] += Int32(1)
+        k <= cap && (idx[k] = Int32(i))
+    end
+end
+function FLOWVPM._radix_oversize_top(P::AnyGPUMatrix, np::Int, K::Int)
+    backend = KA.get_backend(P)
+    T = eltype(P); row = FLOWVPM.SIGMA_INDEX; nb = 2048
+    lo, hi = fmm._device_row_extrema(P, row, np)
+    hi > lo * (1 + 1e-6) || return Int[]                 # all cores equal: nothing to mask
+    hist = KA.zeros(backend, Int32, nb)
+    inv_w = T(nb) / (T(hi) - T(lo))
+    _sigma_hist_kernel!(backend, 256)(hist, P, row, np, T(lo), inv_w, nb; ndrange=np)
+    KA.synchronize(backend)
+    h = Array(hist)
+    # walk the bins from the top until K particles are covered
+    acc = 0; b = nb
+    while b > 1 && acc + h[b] < K
+        acc += h[b]; b -= 1
+    end
+    b == nb && acc + h[b] <= 1 && return Int[]           # only the maximum itself: skip
+    thr = T(lo) + T(b - 1) / inv_w
+    cap = acc + h[b]
+    idx = KA.zeros(backend, Int32, cap); counter = KA.zeros(backend, Int32, 1)
+    _sigma_collect_kernel!(backend, 256)(idx, counter, P, row, np, thr, Int32(cap); ndrange=np)
+    KA.synchronize(backend)
+    n = min(Int(Array(counter)[1]), cap)
+    return Int.(Array(view(idx, 1:n)))
+end
+
+# adaptive oversize mask: every particle with sigma > thr, at most cap (one
+# collect kernel, no row download)
+function FLOWVPM._radix_oversize_above(P::AnyGPUMatrix, np::Int, thr, cap::Int)
+    backend = KA.get_backend(P)
+    T = eltype(P); row = FLOWVPM.SIGMA_INDEX
+    idx = KA.zeros(backend, Int32, cap); counter = KA.zeros(backend, Int32, 1)
+    _sigma_collect_kernel!(backend, 256)(idx, counter, P, row, np, nextfloat(T(thr)), Int32(cap); ndrange=np)
+    KA.synchronize(backend)
+    n = min(Int(Array(counter)[1]), cap)
+    return Int.(Array(view(idx, 1:n)))
+end
+
+# SFS repass: the particles' current U/J into the resident output in sorted order
+@kernel function _output_from_particles_kernel!(output, @Const(P), @Const(perm), @Const(body_system),
+                                                @Const(body_index), isys, u0, j0, n)
+    sorted_i = @index(Global)
+    @inbounds if sorted_i <= n
+        g = perm[sorted_i]
+        if body_system[g] == isys
+            i = body_index[g]
+            output[2, sorted_i] = P[u0, i]; output[3, sorted_i] = P[u0 + 1, i]; output[4, sorted_i] = P[u0 + 2, i]
+            for k in 0:8
+                output[5 + k, sorted_i] = P[j0 + k, i]
+            end
+        end
+    end
+end
+function fmm.output_from_target!(pfield::GPUField, output::AnyGPUMatrix, perm, body_system,
+                                 body_index, isys, n)
+    backend = KA.get_backend(output)
+    _output_from_particles_kernel!(backend, 256)(output, pfield.particles, perm, body_system, body_index,
+        isys, first(FLOWVPM.U_INDEX), first(FLOWVPM.J_INDEX), n; ndrange=n)
+    KA.synchronize(backend)
+    return output
+end
+
+# Oversize-core masking (FLOWVPM_fmm_radix.jl): one kernel per operation over
+# the K masked columns, the index list uploaded once per call.
+@kernel function _oversize_gather_kernel!(out, @Const(P), @Const(idx), r0, nr, K)
+    k = @index(Global)
+    @inbounds if k <= K
+        i = idx[k]
+        for q in 1:nr
+            out[q, k] = P[r0 + q - 1, i]
+        end
+    end
+end
+@kernel function _oversize_scatter_kernel!(P, @Const(vals), @Const(idx), r0, nr, K, zero_only)
+    k = @index(Global)
+    @inbounds if k <= K
+        i = idx[k]
+        for q in 1:nr
+            P[r0 + q - 1, i] = zero_only ? zero(eltype(P)) : vals[q, k]
+        end
+    end
+end
+function FLOWVPM._radix_oversize_gather(P::AnyGPUMatrix, idx::Vector{Int}, rows)
+    backend = KA.get_backend(P); K = length(idx); nr = length(rows)
+    d_idx = KA.allocate(backend, Int32, K); copyto!(d_idx, Int32.(idx))
+    out = KA.allocate(backend, eltype(P), nr, K)
+    _oversize_gather_kernel!(backend, 64)(out, P, d_idx, first(rows), nr, K; ndrange=K)
+    KA.synchronize(backend)
+    return Array(out)
+end
+function FLOWVPM._radix_oversize_mask_rows!(P::AnyGPUMatrix, idx::Vector{Int}, rows)
+    backend = KA.get_backend(P); K = length(idx); nr = length(rows)
+    d_idx = KA.allocate(backend, Int32, K); copyto!(d_idx, Int32.(idx))
+    vals = KA.allocate(backend, eltype(P), nr, K)
+    _oversize_scatter_kernel!(backend, 64)(P, vals, d_idx, first(rows), nr, K, true; ndrange=K)
+    KA.synchronize(backend)
+    return nothing
+end
+function FLOWVPM._radix_oversize_scatter!(P::AnyGPUMatrix, idx::Vector{Int}, rows, vals::Matrix)
+    backend = KA.get_backend(P); K = length(idx); nr = length(rows)
+    d_idx = KA.allocate(backend, Int32, K); copyto!(d_idx, Int32.(idx))
+    d_vals = KA.allocate(backend, eltype(P), nr, K); copyto!(d_vals, eltype(P).(vals))
+    _oversize_scatter_kernel!(backend, 64)(P, d_vals, d_idx, first(rows), nr, K, false; ndrange=K)
+    KA.synchronize(backend)
+    return nothing
+end
+
 # Framework-owned per-system device output buffer, switch-relative rows, in
 # global (unsorted) particle order. ACCUMULATE (.+=): FLOWVPM zeroes U/J in
 # `_reset_particles` at the top of each evaluation and the framework delivers
@@ -121,6 +244,20 @@ function fmm.sfs_to_target!(pfield::GPUField, buf::AnyGPUMatrix,
     size(buf, 2) == np || error(
         "unexpected device SFS buffer shape $(size(buf)) for np=$np")
     view(pfield.particles, FLOWVPM.SFS_INDEX, 1:np) .+= buf
+    return pfield
+end
+
+# sfs_dsigma channel (two-level dynamic procedure): rows 1:3 L = (Γ⋅∇)∂U/∂α into
+# M[1:3], rows 4:6 ∂E/∂α into M[4:6]; REPLACE (the procedure owns those rows
+# between its beforeUJ and afterUJ)
+function fmm.sfs_dsigma_to_target!(pfield::GPUField, buf::AnyGPUMatrix,
+        sort_index=1:pfield.np)
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected device SFS derivative buffer shape $(size(buf)) for np=$np")
+    m0 = first(FLOWVPM.M_INDEX)
+    view(pfield.particles, m0:m0+5, 1:np) .= buf
+    FLOWVPM._sfs_dsigma_delivered!(pfield, true)
     return pfield
 end
 
@@ -526,7 +663,7 @@ end
 
 # Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
 @kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
-        fac, rlxf, minC, maxC, zeta0, epsv, ::Val{FP},
+        fac, rlxf, minC, maxC, zeta0, epsv, ::Val{FP}, subtract::Bool,
         ig, isig, ij, im, ic, isfs, istat) where {FP}
     i = @index(Global)
     @inbounds if i <= np
@@ -542,7 +679,7 @@ end
 
         # subtract the domain-filter stretching / SFS from the test-filter values
         d1, d2, d3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
-        if act
+        if act && subtract      # the two-level procedure holds the derivatives themselves
             m1 -= d1; m2 -= d2; m3 -= d3
             m4 -= s1; m5 -= s2; m6 -= s3
         end
@@ -614,10 +751,11 @@ end
 _sfs_wg(backend) = 256
 
 function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
-        alpha::Real, rlxf::Real, minC::Real, maxC::Real; force_positive::Bool=false)
+        alpha::Real, rlxf::Real, minC::Real, maxC::Real; force_positive::Bool=false,
+        twolevel::Bool=false)
     SFS_FUSED[] || return invoke(FLOWVPM._pseudo3level_afterUJ_broadcast!,
         Tuple{Any,Any,Real,Real,Real,Real}, pfield, SFS, alpha, rlxf, minC, maxC;
-        force_positive)
+        force_positive, twolevel)
     np = pfield.np
     np == 0 && return nothing
     R = eltype(pfield.particles)
@@ -626,8 +764,8 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
     wg = _sfs_wg(backend)
     kern = ka_sfs_afterUJ_kernel!(backend, wg)
     kern(pfield.particles, flag, np, pfield.transposed,
-         R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
-         R(pfield.kernel.zeta(zero(R))), R(eps()), Val(force_positive),
+         twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
+         R(pfield.kernel.zeta(zero(R))), R(eps()), Val(force_positive), !twolevel,
          first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX, first(FLOWVPM.J_INDEX),
          first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX),
          FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)

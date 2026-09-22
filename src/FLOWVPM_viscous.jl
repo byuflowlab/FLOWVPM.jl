@@ -70,6 +70,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
 
     # Optional inputs
     beta::R                               # Maximum core size growth σ/σ_0
+    growth_beta::R                        # Reset also when max σ/σ_0 over the field reaches this (0: off)
     itmax::Int                            # Maximum number of RBF iterations
     tol::R                                # RBF interpolation tolerance
     iterror::Bool                         # Throw error if RBF didn't converge
@@ -90,7 +91,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
 
     CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta::Tzeta=zeta_fmm;
-                        beta=R(1.5),
+                        beta=R(1.5), growth_beta=R(0),
                         itmax=R(15), tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
@@ -100,7 +101,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         flags=zeros(Bool, 3)
                     ) where {R,Tzeta,Trbf} = new(
                         nu, sgm0, zeta,
-                        beta,
+                        beta, growth_beta,
                         itmax, tol,
                         iterror, verbose, v_lvl, debug,
                         t_sgm,
@@ -206,35 +207,18 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
                     "\tCritical:$(round(scheme.beta, digits=7))")
         end
 
-        # Reset core sizes if cores have overgrown
-        if beta_cur >= scheme.beta
-            # Calculate approximated vorticity into the dedicated vorticity field.
-            # NOTE: zeta (direct or FMM tree sum) is not GPU-broadcastable --
-            # same class of CPU-only iterative/reduction logic as
-            # `dynamicprocedure_sensorfunction`. Left as a follow-up, not
-            # force-masked.
-            scheme.zeta(pfield)
-
-            if pfield.particles isa Array
-                for p in iterator(pfield)
-                    # Use approximated vorticity as target vorticity (stored under P.M[7:9]).
-                    for i in 1:3
-                        get_M(p)[6+i] = get_vorticity(p)[i]
-                    end
-                    # Reset core sizes
-                    get_sigma(p)[] = scheme.sgm0
-                end
-            else
-                _corespreading_reset_broadcast!(pfield, scheme.sgm0)
-            end
-
-            # Calculate new strengths through RBF to preserve original vorticity
-            # NOTE: RBF conjugate-gradient is a scalar-reduction iterative
-            # solver -- CPU-only, same rationale as `scheme.zeta` above.
-            scheme.rbf(pfield, scheme)
-
-            # Reset core growth timer
-            scheme.t_sgm = 0
+        # Reset core sizes if cores have overgrown: by viscous spreading
+        # (the time criterion) or, with `growth_beta` set, by the field's
+        # actual largest core (the rVPM stretching grows cores too, and a
+        # tail of runaway cores sizes the FMM grid; Alvarez 2022 §4.6 CS-RBF
+        # applied to the measured growth, 2026-09-21)
+        growth = scheme.growth_beta > 0 ? _corespreading_sigma_max(pfield) / scheme.sgm0 : zero(scheme.sgm0)
+        growth_reset = scheme.growth_beta > 0 && growth >= scheme.growth_beta
+        if beta_cur >= scheme.beta || growth_reset
+            growth_reset &&
+                println("  core reset: max sigma/sigma0 = $(round(growth; digits=2)) >= " *
+                        "$(scheme.growth_beta) at t = $(pfield.t), np = $(pfield.np)")
+            _corespreading_reset!(pfield, scheme)
         end
 
     end
@@ -437,6 +421,95 @@ end
 
 
 
+
+# The CS-RBF reset: ζ-reconstructed vorticity as the target, every core back
+# to `sgm0`, strengths re-solved by conjugate gradient (host and device
+# `rbf_conjugategradient`, `zeta_fmm` methods), growth timer restarted.
+function _corespreading_reset!(pfield, scheme::CoreSpreading)
+    # Calculate approximated vorticity into the dedicated vorticity field.
+    scheme.zeta(pfield)
+
+    if pfield.particles isa Array
+        for p in iterator(pfield)
+            # Use approximated vorticity as target vorticity (stored under P.M[7:9]).
+            for i in 1:3
+                get_M(p)[6+i] = get_vorticity(p)[i]
+            end
+            # Reset core sizes
+            get_sigma(p)[] = scheme.sgm0
+        end
+    else
+        _corespreading_reset_broadcast!(pfield, scheme.sgm0)
+    end
+
+    # Calculate new strengths through RBF to preserve original vorticity
+    scheme.rbf(pfield, scheme)
+    scheme.growth_beta > 0 && println("  core reset: RBF residual ",
+        join((Printf.@sprintf("%.2e", sqrt(scheme.rrs[i] / max(scheme.rr0s[i], eps()))) for i in 1:3), " "),
+        " (tol $(scheme.tol), itmax $(scheme.itmax))")
+
+    # The radix geometry was derived for the old cores: with every core back
+    # at sgm0 the sigma-limited depth is far too shallow (HVAB 2026-09-21:
+    # 40 s/step on the depth-4 grid after the reset). Drop the coupling so the
+    # next evaluation re-derives it; the rebuild costs one build, the reset is rare.
+    clear_radix_fmm_cache!(pfield)
+
+    # Reset core growth timer
+    scheme.t_sgm = 0
+    return nothing
+end
+
+"""
+    corespreading_reset_subset!(pfield, scheme, idx) -> nothing
+
+The CS-RBF reset restricted to the particles `idx` (global indices): their cores
+go to `scheme.sgm0` and their strengths are re-solved so that the ζ-vorticity
+at their positions is preserved, with every other particle held fixed. The
+target is ω_total(x_S) − ζ_rest(x_S) (two ζ evaluations), the conjugate
+gradient runs over the subset only (the rest is flagged static and carries
+zero strength during the solve, so A·p is linear in p), then the rest is
+restored. Meant for the OVERGROWN tail: a reset of contracted cores cannot be
+represented at sgm0 (2026-09-22, see notes) and this never touches them.
+Host and device fields (the gather/scatter helpers of the oversize mask).
+"""
+function corespreading_reset_subset!(pfield, scheme::CoreSpreading, idx::Vector{Int})
+    isempty(idx) && return nothing
+    P = pfield.particles; np = pfield.np
+    R = eltype(P)
+    grows = first(GAMMA_INDEX):last(GAMMA_INDEX)
+    # ω_total at the subset
+    scheme.zeta(pfield)
+    Wtot = _radix_oversize_gather(P, idx, VORTICITY_INDEX)
+    # ζ of the rest at the subset: zero the subset's strength, evaluate again
+    Gsub = _radix_oversize_gather(P, idx, grows)
+    _radix_oversize_mask_rows!(P, idx, grows)
+    scheme.zeta(pfield)
+    Wrest = _radix_oversize_gather(P, idx, VORTICITY_INDEX)
+    # freeze the rest: zero strength (contributes nothing to A·p), static (out of the CG)
+    Grest = copy(view(P, grows, 1:np))
+    Srest = copy(view(P, STATIC_INDEX:STATIC_INDEX, 1:np))
+    view(P, grows, 1:np) .= zero(R)
+    view(P, STATIC_INDEX:STATIC_INDEX, 1:np) .= one(R)
+    K = length(idx)
+    _radix_oversize_scatter!(P, idx, STATIC_INDEX:STATIC_INDEX, zeros(R, 1, K))
+    _radix_oversize_scatter!(P, idx, SIGMA_INDEX:SIGMA_INDEX, fill(R(scheme.sgm0), 1, K))
+    _radix_oversize_scatter!(P, idx, M_INDEX[7]:M_INDEX[9], Matrix{R}(Wtot .- Wrest))
+    _radix_oversize_scatter!(P, idx, grows, Matrix{R}(Gsub))      # initial search direction: old strengths
+    scheme.rbf(pfield, scheme)
+    Gnew = _radix_oversize_gather(P, idx, grows)
+    # restore the rest, keep the subset's new strengths
+    copyto!(view(P, grows, 1:np), Grest)
+    copyto!(view(P, STATIC_INDEX:STATIC_INDEX, 1:np), Srest)
+    _radix_oversize_scatter!(P, idx, grows, Matrix{R}(Gnew))
+    println("  core reset (subset of $K): RBF residual ",
+        join((Printf.@sprintf("%.2e", sqrt(scheme.rrs[i] / max(scheme.rr0s[i], eps()))) for i in 1:3), " "),
+        " (tol $(scheme.tol), itmax $(scheme.itmax))")
+    return nothing
+end
+
+_corespreading_sigma_max(pfield) = pfield.np == 0 ? zero(eltype(pfield.particles)) :
+    (pfield.particles isa Array ? maximum(view(pfield.particles, SIGMA_INDEX, 1:pfield.np)) :
+                                  _radix_sigma_max(pfield))
 
 ##### COMMON FUNCTIONS #########################################################
 

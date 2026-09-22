@@ -220,6 +220,12 @@ const pseudo3level_afterUJ = dynamicprocedure_pseudo3level_afterUJ
 const pseudo3level_positive_afterUJ(args...; optargs...) = pseudo3level_afterUJ(args...; force_positive=true, optargs...)
 const pseudo3level = (pseudo3level_beforeUJ, pseudo3level_afterUJ)
 const pseudo3level_positive = (pseudo3level_beforeUJ, pseudo3level_positive_afterUJ)
+# two-level procedure with analytic filter-width derivatives (no test-width pass)
+const twolevel_beforeUJ = dynamicprocedure_twolevel_beforeUJ
+const twolevel_afterUJ = dynamicprocedure_twolevel_afterUJ
+const twolevel_positive_afterUJ(args...; optargs...) = twolevel_afterUJ(args...; force_positive=true, optargs...)
+const twolevel = (twolevel_beforeUJ, twolevel_afterUJ)
+const twolevel_positive = (twolevel_beforeUJ, twolevel_positive_afterUJ)
 const sensorfunction = dynamicprocedure_sensorfunction
 
 # SFS Schemes
@@ -239,6 +245,18 @@ Alias for the Dynamic SFS model with two levels and no backscatter.
 This is the recommended SFS model for high fidelity modeling.
 """
 const SFS_Cd_twolevel_nobackscatter = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, clippings=(clipping_backscatter,))
+
+"""
+    `SFS_Cd_twolevel_analytic_nobackscatter = DynamicSFS(Estr_fmm, twolevel_beforeUJ, twolevel_positive_afterUJ; maxC=1.0, clippings=(clipping_backscatter,))`
+
+Alias for the Dynamic SFS model with the two-level procedure evaluated through
+analytic filter-width derivatives (no test-width pass; the pseudo-three-level
+`SFS_Cd_twolevel_nobackscatter` is the finite-difference approximation of it).
+No backscatter, |C| <= 1. Requires the radix FMM path or a host field.
+`analyticSFS` is a short alias.
+"""
+const SFS_Cd_twolevel_analytic_nobackscatter = DynamicSFS(Estr_fmm, twolevel_beforeUJ, twolevel_positive_afterUJ; maxC=1.0, clippings=(clipping_backscatter,))
+const analyticSFS = SFS_Cd_twolevel_analytic_nobackscatter
 
 """
     `SFS_Cd_twolevel_nobackscatter_projection = DynamicSFS(Estr_fmm, pseudo3level_beforeUJ, pseudo3level_positive_afterUJ; alpha=0.999, controls=(control_no_backscatter_projection,))`
@@ -354,6 +372,7 @@ export rVPM, cVPM,
        pedrizzetti, correctedpedrizzetti, norelaxation, relax_filter_all,
        Inviscid, CoreSpreading, ParticleStrengthExchange,
        noSFS, SFS_Cs_nobackscatter, SFS_Cd_twolevel_nobackscatter,
+       SFS_Cd_twolevel_analytic_nobackscatter, analyticSFS,
        SFS_Cd_twolevel_nobackscatter_projection,
        SFS_Cd_twolevel_backscatter_signed,
        SFS_Cd_threelevel_nobackscatter, FMM

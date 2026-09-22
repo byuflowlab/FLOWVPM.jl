@@ -871,11 +871,12 @@ end
 function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
                                        alpha::Real, rlxf::Real,
                                        minC::Real, maxC::Real;
-                                       force_positive::Bool=false) where {R}
+                                       force_positive::Bool=false,
+                                       twolevel::Bool=false) where {R}
     # GPU/CuArray-backed field: whole-field broadcast port (task 052).
     if !(pfield.particles isa Array)
         return _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha, rlxf,
-            minC, maxC; force_positive)
+            minC, maxC; force_positive, twolevel)
     end
 
     # Storage terms: (Γ⋅∇)dUdσ <=> p.M[:, 1], dEdσ <=> p.M[:, 2],
@@ -890,8 +891,9 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
         error("Invalid C bounds: minC > maxC ($(minC) > $(maxC))")
     end
 
-    # Calculate stretching and SFS
-    Threads.@threads for i in 1:pfield.np
+    # Calculate stretching and SFS (the two-level procedure receives the
+    # derivatives themselves in M[1:6]: nothing to subtract)
+    twolevel || Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
         # Skip static particles
         is_static(p) && continue
@@ -935,7 +937,7 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
         # Calculate numerator and denominator
         nume = M[1]*Gamma[1] + M[2]*Gamma[2] + M[3]*Gamma[3]
-        nume *= 3*alpha - 2
+        twolevel || (nume *= 3*alpha - 2)
         deno = M[4]*Gamma[1] + M[5]*Gamma[2] + M[6]*Gamma[3]
         deno /= zeta0/get_sigma(p)[]^3
 
@@ -1025,6 +1027,62 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
 
     return nothing
 end
+
+##### TWO-LEVEL PROCEDURE WITH ANALYTIC DERIVATIVES #############################
+"""
+    dynamicprocedure_twolevel_beforeUJ / dynamicprocedure_twolevel_afterUJ
+
+Two-level dynamic procedure (Alvarez 2022 §4.7.1, Eq. 4.12) with the filter-width
+derivatives computed analytically: C = <Γ⋅L>/<Γ⋅m>, L = (Γ⋅∇)∂U/∂α and
+m = σ³/ζ(0) ∂E_str/∂α, the derivatives with respect to a uniform scaling
+σ → ασ of every core at α = 1. The pseudo-three-level procedure above
+approximates them by a finite difference over a second full evaluation at
+`alpha`σ (and its 3α − 2 factor is that approximation's own artifact, → 1 as
+α → 1); here the radix FMM accumulates them exactly over its direct pairs
+(`fmm!(...; sfs=true, sfs_dsigma=true)`, FastMultipole) and delivers L into
+M[1:3] and ∂E/∂α into M[4:6] through [`FastMultipole.sfs_dsigma_to_target!`](@ref),
+so no test-width evaluation, no 4th-digit cancellation, and `alpha` is unused.
+Off the radix path (host `UJ_direct`/octree `UJ_fmm`) the derivatives come
+from the all-pairs reference [`dsigma_direct!`](@ref). The coefficient logic
+(Lagrangian average `rlxf`, `minC`/`maxC` clipping) is shared with the
+pseudo-three-level procedure.
+"""
+function dynamicprocedure_twolevel_beforeUJ(pfield, SFS::SubFilterScale{R},
+                                       alpha::Real, rlxf::Real,
+                                       minC::Real, maxC::Real) where {R}
+    # the evaluation that follows delivers the derivatives
+    _sfs_dsigma_request!(pfield, true)
+    _sfs_dsigma_delivered!(pfield, false)
+    return nothing
+end
+
+function dynamicprocedure_twolevel_afterUJ(pfield, SFS::SubFilterScale{R},
+                                       alpha::Real, rlxf::Real,
+                                       minC::Real, maxC::Real;
+                                       force_positive::Bool=false) where {R}
+    _sfs_dsigma_request!(pfield, false)
+    if !_sfs_dsigma_delivered(pfield)
+        pfield.particles isa Array || error("two-level dynamic procedure: the " *
+            "evaluation delivered no core-scaling derivatives; a device field " *
+            "needs the radix FMM path (UJ_fmm_gpu!)")
+        dsigma_direct!(pfield)
+    end
+    return dynamicprocedure_pseudo3level_afterUJ(pfield, SFS, alpha, rlxf, minC, maxC;
+        force_positive, twolevel=true)
+end
+
+# Per-field request/delivery flags of the derivative channel (keyed by identity,
+# like the radix couplings): set by the two-level beforeUJ, read by the radix
+# evaluation (`_radix_fmm_evaluate!`, `sfs_repass!`) to ask FastMultipole for
+# the channel, cleared by the afterUJ.
+const _SFS_DSIGMA_REQUEST = IdDict{Any,Bool}()
+const _SFS_DSIGMA_DELIVERED = IdDict{Any,Bool}()
+_sfs_dsigma_request!(pfield, on::Bool) = (_SFS_DSIGMA_REQUEST[pfield] = on; nothing)
+_sfs_dsigma_requested(pfield) = get(_SFS_DSIGMA_REQUEST, pfield, false)
+_sfs_dsigma_delivered!(pfield, on::Bool) = (_SFS_DSIGMA_DELIVERED[pfield] = on; nothing)
+_sfs_dsigma_delivered(pfield) = get(_SFS_DSIGMA_DELIVERED, pfield, false)
+_sfs_twolevel(pfield) = pfield.SFS isa DynamicSFS &&
+    pfield.SFS.procedure_beforeUJ === dynamicprocedure_twolevel_beforeUJ
 
 
 """

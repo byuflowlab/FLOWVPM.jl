@@ -215,7 +215,44 @@ Base.@kwdef struct RadixFMMSettings
     # grows faster than `np` does (the box grows too as a wake convects), so a
     # long epoch is expensive: on the NREL 5MW production run one epoch ran
     # 779 steps from 215k to 687k particles with the step going 1.8 s -> 89.3 s.
-    rebuild_growth::Float64 = 2.0
+    # 1.5 since 2026-09-21: with the oversize masking the sigma-triggered
+    # rebuilds no longer fire, so the growth check is the only trigger, and the
+    # box of a convecting wake grows ~1.8x between doublings. A check costs
+    # 0.02 s; it rebuilds only when (ell, q) would change.
+    rebuild_growth::Float64 = 1.5
+    # Oversize-core handling (2026-09-21). The near-field stencil is sized by the
+    # largest core in the field, so a handful of stretched far-wake particles
+    # (0.3% above 1.5x the shed core on the NREL 5MW at rev 21, one at 2.5x)
+    # forced a coarser grid on a million: the step cost per particle rose 40%
+    # over a run. With `oversize_count = K > 0`, every evaluation takes the K
+    # particles with the largest cores OUT of the tree (their strength and core
+    # are masked to zero while the field is packed, so the geometry, the
+    # adequacy gate, the near field and the SFS sweep see the (K+1)-th largest
+    # core) and evaluates them all-pairs onto every target instead (the extra-
+    # source arm, K x np pairs: negligible at K = 32). Their strength and core
+    # are restored before the call returns. Dropped: their contribution to the
+    # other particles' SFS estimator. `oversize_count = 0` (default) uses
+    # `oversize_fraction` of the live count, clamped to [32, 4096]; a negative
+    # count disables the handling. Measured on the NREL 5MW rev-15 state (705k,
+    # largest core 10.45 m, auto grid 4.9 s/step): K 256 -> 4.2 s, K 1024 ->
+    # 2.55 s (grid one level deeper, near field 50% -> 31% of the pass, the
+    # all-pairs arm 0.7%), K 4096 -> 3.05 s (host overhead before the
+    # vectorized masking). The core tail is a continuum, not a few outliers, so
+    # a few dozen masked particles achieve nothing.
+    # `oversize_count = 0` (default) is ADAPTIVE (2026-09-22): the mask takes
+    # every core the occupancy-chosen grid cannot admit. The geometry the field
+    # would pick if its core tail stopped at the (K_max+1)-th largest core is
+    # derived (K_max = `oversize_fraction` of the live count), and every core
+    # above THAT geometry's adequacy limit is masked -- so the grid depth is set
+    # by the particle count, never by the tail, as long as the tail is smaller
+    # than the fraction. The threshold is re-derived when the count grows 5% or
+    # every 60 evaluations. Measured: the HVAB hover at 540k particles ran at
+    # 36 s/step with the old fixed 0.15% (clamped to 4096) rule and 1.3 s/step
+    # with 4096 masked; the tail is a continuum (the 0.15% remainder still
+    # tracked the runaway) so a count-free rule is needed. The all-pairs arm
+    # costs K x np pairs: 2% of 540k is 6e9, under 0.3 s on the H200.
+    oversize_count::Int = 0
+    oversize_fraction::Float64 = 0.02
 end
 
 # Deepest radix level the dense per-level node table allows (8^ell Int32).
@@ -375,6 +412,7 @@ end
 "Drop the cached `RadixFMMCache` (if any) for `pfield`."
 function clear_radix_fmm_cache!(pfield::ParticleField)
     delete!(_radix_fmm_couplings, pfield)
+    delete!(_radix_oversize_thr, pfield)
     return nothing
 end
 
@@ -653,6 +691,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     if settings.bounds === nothing && settings.rectangular
         bounds = _radix_center_snapped_bounds(bounds, ell)
     end
+    _radix_built_q[pfield] = q          # the depth check compares (ell, q), not ell alone
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
@@ -698,7 +737,14 @@ geometry exists at the grown shape the existing cache is kept.
 function _radix_depth_outgrown!(pfield::ParticleField, st)
     st.settings.ell === nothing || return false
     np = pfield.np
-    np > st.settings.rebuild_growth * st.np_checked[] || return false
+    # Two triggers: the count has grown by `rebuild_growth`, or 60 evaluations
+    # (~10 RK3 steps) have passed -- the box of a convecting wake grows without
+    # the count doubling (NREL 5MW: L 1417 -> 1840 m between 531k and 705k, the
+    # 705k geometry one level deeper and 25% faster; 2026-09-21). The check
+    # itself costs ~0.02 s and rebuilds only when (ell, q) would change.
+    st.evals[] += 1
+    (np > st.settings.rebuild_growth * st.np_checked[] || st.evals[] >= 60) || return false
+    st.evals[] = 0
     st.np_checked[] = np
     verbose = get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1"
     t0 = time()
@@ -715,17 +761,21 @@ function _radix_depth_outgrown!(pfield::ParticleField, st)
     t1 = time()
     occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)
     t2 = time()
-    ell = try
-        first(_radix_auto_geometry(L_geo, sigma_max, np,
+    ell, q = try
+        _radix_auto_geometry(L_geo, sigma_max, np,
             st.settings.near_radius2, _radix_primary_reach(kernel),
-            st.settings.accuracy_margin; occupancy))
+            st.settings.accuracy_margin; occupancy)
     catch
         verbose && (println("radix depth check: no admissible geometry, cache kept ($(round(time() - t0; digits=2)) s)"); flush(stdout))
         return false
     end
     verbose && (println("radix depth check: L=$(round(L_geo; sigdigits=4)) sigma_max=$(round(sigma_max; sigdigits=4)) -> ell=$ell (bounds+sigma $(round(t1 - t0; digits=2)) s, occupancy $(round(t2 - t1; digits=2)) s, total $(round(time() - t0; digits=2)) s)"); flush(stdout))
-    # the cheapest depth can move either way as the wake spreads
-    return ell != st.cache.ell
+    # The cheapest geometry can move either way as the wake spreads, and the
+    # stencil radius matters as much as the depth: a box that grew 1.8x at the
+    # same depth kept a q sized for the old, smaller cells (NREL 5MW, 2026-09-21,
+    # the step doubled until the sigma-triggered rebuilds -- now absent with the
+    # oversize masking -- happened to re-derive it). Compare both.
+    return ell != st.cache.ell || q != st.q
 end
 
 """
@@ -792,6 +842,7 @@ auto-derived geometry rebuilds when the live field outgrows it in either
 direction: particle count vs grid depth ([`_radix_depth_outgrown!`](@ref))
 or `sigma_max` vs the adequacy limit ([`_radix_sigma_outgrown!`](@ref)).
 """
+const _radix_built_q = Dict{Any,Int}()      # stencil radius the last build chose, per field
 function _radix_fmm_coupling!(pfield::ParticleField)
     st = get(_radix_fmm_couplings, pfield, nothing)
     if st !== nothing && (_radix_depth_outgrown!(pfield, st) ||
@@ -804,7 +855,8 @@ function _radix_fmm_coupling!(pfield::ParticleField)
         settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
         cache = _build_radix_fmm_cache(pfield, settings)
         st = (; cache, settings, np_checked=Ref(pfield.np),
-                sigma_limit=_radix_sigma_limit(cache, settings))
+                sigma_limit=_radix_sigma_limit(cache, settings),
+                q=get(_radix_built_q, pfield, settings.near_radius2), evals=Ref(0))
         _radix_fmm_couplings[pfield] = st
     end
     return st
@@ -823,45 +875,289 @@ cache's fixed box. With derived bounds the coupling recenters once
 (`fmm.recenter!`, derived padded bounds, no reallocation) and retries; with
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
+#--- SFS repass (FastMultipole.radix_sfs_repass!) ---#
+
+# The particles' current U (rows 10:12) and J (16:24) into the resident output
+# (rows 2:4 and 5:13) in sorted body order. Host arrays here; the GPU extension
+# overloads it with one kernel.
+function fmm.output_from_target!(pfield::ParticleField, output::Matrix, perm, body_system,
+                                 body_index, isys, n)
+    P = pfield.particles
+    u0 = first(U_INDEX); j0 = first(J_INDEX)
+    @inbounds for sorted_i in 1:n
+        g = perm[sorted_i]
+        body_system[g] == isys || continue
+        i = body_index[g]
+        output[2, sorted_i] = P[u0, i]; output[3, sorted_i] = P[u0 + 1, i]; output[4, sorted_i] = P[u0 + 2, i]
+        for k in 0:8
+            output[5 + k, sorted_i] = P[j0 + k, i]
+        end
+    end
+    return output
+end
+
+"""
+    sfs_repass!(pfield)
+
+Recompute the SFS estimator (`SFS_INDEX`) from the particles' CURRENT velocity
+gradient over the direct pairs of the last radix evaluation. For a caller that
+reused that evaluation's U/J and then added another source's field to them.
+"""
+function sfs_repass!(pfield::ParticleField)
+    st = get(_radix_fmm_couplings, pfield, nothing)
+    st === nothing && error("sfs_repass!: no radix evaluation on record for this field")
+    _reset_particles_sfs(pfield)
+    fmm.radix_sfs_repass!(st.cache, (pfield,); dsigma=_sfs_dsigma_requested(pfield))
+    return nothing
+end
+
+# sfs_dsigma channel (two-level dynamic procedure): rows 1:3 L = (Γ⋅∇)∂U/∂α into
+# M[1:3], rows 4:6 ∂E/∂α into M[4:6]; REPLACE (the procedure owns those rows
+# between its beforeUJ and afterUJ). Host-Matrix method; the device one lives
+# in ext/FLOWVPMGPUExt.jl.
+function fmm.sfs_dsigma_to_target!(pfield::ParticleField,
+        buf::Union{Matrix,SubArray{<:Any,2,<:Matrix}},
+        sort_index=1:pfield.np)
+    np = pfield.np
+    size(buf, 2) == np || error(
+        "unexpected SFS derivative buffer shape $(size(buf)) for np=$np")
+    m0 = first(M_INDEX)
+    view(pfield.particles, m0:m0+5, 1:np) .= buf
+    _sfs_dsigma_delivered!(pfield, true)
+    return pfield
+end
+
+#--- oversize cores (see RadixFMMSettings.oversize_count) ---#
+
+"""
+    OversizeParticles
+
+The masked particles of one evaluation as an all-pairs extra source: a host
+buffer in the particle source layout (rows 1:3 position, 4 MAC radius, 5:7
+strength, 8 core, 9 active flag) and the field's direct kernel.
+"""
+struct OversizeParticles{TF,K}
+    buffer::Matrix{TF}
+    kernel::K
+end
+fmm.get_n_bodies(o::OversizeParticles) = size(o.buffer, 2)
+fmm.data_per_body(::OversizeParticles) = 9
+fmm.get_position(o::OversizeParticles, i) = SVector{3}(o.buffer[1, i], o.buffer[2, i], o.buffer[3, i])
+fmm.strength_dims(::OversizeParticles) = 3
+fmm.direct_kernel(o::OversizeParticles) = o.kernel
+function fmm.source_system_to_buffer!(buffer, i_buffer, o::OversizeParticles, i_body)
+    @inbounds for r in 1:9
+        buffer[r, i_buffer] = o.buffer[r, i_body]
+    end
+    return nothing
+end
+
+# The K particles with the largest cores when they stand clear of the rest:
+# global (unsorted) indices, or an empty list. Cores are read once through a
+# host copy of the live sigma row.
+function _radix_oversize_count(settings, np::Int)
+    settings.oversize_count < 0 && return 0
+    settings.oversize_count > 0 && return settings.oversize_count
+    return clamp(round(Int, settings.oversize_fraction * np), 32, 4096)
+end
+function _radix_oversize_select(pfield::ParticleField, K::Int)
+    np = pfield.np
+    (K > 0 && np > 8 * K) || return Int[]
+    return _radix_oversize_top(pfield.particles, np, K)
+end
+
+# The evaluation's mask: a fixed count (`oversize_count > 0`), nothing (< 0),
+# or the adaptive threshold (0, see RadixFMMSettings).
+function _radix_oversize_select(pfield::ParticleField, settings::RadixFMMSettings)
+    settings.oversize_count < 0 && return Int[]
+    settings.oversize_count > 0 && return _radix_oversize_select(pfield, settings.oversize_count)
+    thr = _radix_oversize_threshold!(pfield, settings)
+    isfinite(thr) || return Int[]
+    K_max = _radix_oversize_kmax(settings, pfield.np)
+    idx = _radix_oversize_above(pfield.particles, pfield.np, thr, K_max + 64)
+    # more than the cap above the threshold: the tail outgrew it, re-derive next time
+    length(idx) > K_max && (_radix_oversize_thr[pfield] = nothing)
+    return idx
+end
+_radix_oversize_kmax(settings, np::Int) = max(32, round(Int, settings.oversize_fraction * np))
+
+# per-field adaptive threshold: (; thr, np, evals) or nothing
+const _radix_oversize_thr = IdDict{Any,Any}()
+
+"""
+    _radix_oversize_threshold!(pfield, settings) -> sigma threshold (Inf: nothing to mask)
+
+The core size above which particles leave the tree. Derived from the field:
+take the (K_max+1)-th largest core as the "sigma_max the field would have
+without its tail", ask the auto-geometry rule (occupancy included) which
+(ell, q) it would choose, and return that geometry's adequacy limit
+g_min(q) * L/2^ell / (margin * rho_t). Every core above it is masked, at most
+K_max of them by construction. Refreshed when the live count has grown 5% or
+after 60 evaluations; a field whose largest core already fits returns Inf.
+"""
+function _radix_oversize_threshold!(pfield::ParticleField, settings::RadixFMMSettings)
+    np = pfield.np
+    np > 256 || return Inf
+    rec = get(_radix_oversize_thr, pfield, nothing)
+    if rec !== nothing && np <= 1.05 * rec.np && rec.evals[] < 60
+        rec.evals[] += 1
+        return rec.thr
+    end
+    K_max = _radix_oversize_kmax(settings, np)
+    sig = Array(view(pfield.particles, SIGMA_INDEX, 1:np))
+    sigma_top = Float64(maximum(sig))
+    sigma_q = Float64(partialsort(sig, K_max + 1; rev=true))
+    thr = Inf
+    if sigma_q < sigma_top
+        bounds = settings.bounds === nothing ?
+            _radix_derive_bounds(pfield, settings.padding; rectangular=settings.rectangular) :
+            settings.bounds
+        L_geo = bounds[2] isa Real ? Float64(bounds[2]) : Float64(maximum(bounds[2]))
+        kernel = _radix_direct_kernel(settings)
+        rho_t = _radix_primary_reach(kernel)
+        ell, q = try
+            _radix_auto_geometry(L_geo, sigma_q, np, settings.near_radius2, rho_t,
+                settings.accuracy_margin; ell_fixed=settings.ell,
+                occupancy=_radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL))
+        catch
+            (0, 0)
+        end
+        if ell > 0
+            lim = fmm._ball_stencil_min_gap(q) * (L_geo / 2^ell) / (settings.accuracy_margin * rho_t)
+            # mask only when the tail actually binds the geometry
+            lim < sigma_top && (thr = max(lim, sigma_q))
+        end
+        get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println(
+            "radix oversize threshold: np=$np K_max=$K_max sigma_q=$(round(sigma_q; sigdigits=4)) " *
+            "sigma_max=$(round(sigma_top; sigdigits=4)) -> ell=$ell q=$q thr=$(round(thr; sigdigits=4))"); flush(stdout))
+    end
+    _radix_oversize_thr[pfield] = (; thr, np, evals=Ref(0))
+    return thr
+end
+
+# global indices of the particles with sigma > thr (host; the GPU extension
+# overloads it with the histogram/collect kernel), at most `cap` of them
+function _radix_oversize_above(P::Matrix, np::Int, thr, cap::Int)
+    sig = view(P, SIGMA_INDEX, 1:np)
+    idx = findall(>(thr), sig)
+    length(idx) > cap && (idx = idx[partialsortperm(view(sig, idx), 1:cap; rev=true)])
+    return idx
+end
+# Host matrix: exact K largest by a partial sort of the core row. The GPU
+# extension overloads this with a device histogram + compaction (no row
+# download, no host sort): it returns every particle above the histogram bin
+# holding the K-th largest core, so between K and K + (bin population)
+# particles, all of them the largest cores in the field.
+function _radix_oversize_top(P::Matrix, np::Int, K::Int)
+    sig = view(P, SIGMA_INDEX, 1:np)
+    top = partialsortperm(sig, 1:(K + 1); rev=true)
+    sigma_ref = sig[top[K + 1]]
+    return [i for i in view(top, 1:K) if sig[i] > 1.02 * sigma_ref]
+end
+
+# Column gather / mask / scatter over the oversize index list. Matrix fields
+# index directly; the GPU extension overloads all three with one kernel each
+# (K can be in the thousands: per-column device writes would be K launches).
+_radix_oversize_gather(P::Matrix, idx::Vector{Int}, rows) = P[rows, idx]
+function _radix_oversize_mask_rows!(P::Matrix, idx::Vector{Int}, rows)
+    @inbounds for i in idx, r in rows
+        P[r, i] = zero(eltype(P))
+    end
+    return nothing
+end
+function _radix_oversize_scatter!(P::Matrix, idx::Vector{Int}, rows, vals::Matrix)
+    @inbounds for (k, i) in enumerate(idx), (q, r) in enumerate(rows)
+        P[r, i] = vals[q, k]
+    end
+    return nothing
+end
+
+# Mask the oversize particles in place (strength and core to zero) and return
+# the extra-source system carrying their saved state; `_radix_oversize_restore!`
+# writes the saved columns back.
+function _radix_oversize_mask!(pfield::ParticleField, idx::Vector{Int}, settings)
+    P = pfield.particles
+    TF = eltype(P)
+    K = length(idx)
+    rows = first(X_INDEX):SIGMA_INDEX      # 1:7 -- X, Gamma, sigma
+    col = _radix_oversize_gather(P, idx, rows)           # host 7 x K
+    buf = zeros(TF, 9, K)
+    rho = TF(pfield.fmm.default_rho_over_sigma)
+    @inbounds for k in 1:K
+        buf[1, k] = col[1, k]; buf[2, k] = col[2, k]; buf[3, k] = col[3, k]
+        buf[5, k] = col[4, k]; buf[6, k] = col[5, k]; buf[7, k] = col[6, k]
+        sig = col[7, k]
+        buf[4, k] = rho * sig
+        buf[8, k] = sig
+        buf[9, k] = one(TF)
+    end
+    _radix_oversize_mask_rows!(P, idx, first(GAMMA_INDEX):SIGMA_INDEX)   # 4:7
+    return OversizeParticles(buf, _radix_direct_kernel(settings))
+end
+function _radix_oversize_restore!(pfield::ParticleField, idx::Vector{Int}, o::OversizeParticles)
+    _radix_oversize_scatter!(pfield.particles, idx, first(GAMMA_INDEX):SIGMA_INDEX, o.buffer[5:8, :])
+    return nothing
+end
+
 function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         extra_targets::Tuple=(), extra_sources::Tuple=(), tree_sources::Tuple=(),
         self_induce::Bool=true,
         extra_hessian::Tuple=ntuple(_ -> false, length(extra_targets)))
-    st = _radix_fmm_coupling!(pfield)
-    # extra targets (probes, ring nodes) and extra sources (bound segments,
-    # ring filaments) ride the same call as direct rectangular evaluations
-    # (FastMultipole src/radix_extra_systems.jl); the particles keep their
-    # hessian, the extra targets take velocity only unless `extra_hessian`
-    # asks for their velocity gradient too (fluid-domain probes).
-    #
-    # `self_induce=false` drops the particles from the source tuple: the
-    # lifecycle is skipped and the call delivers the extra sources alone, which
-    # is the "body on wake" direction of a coupled solve (the self-induction
-    # was evaluated earlier in the step, over a field that has since changed).
-    targets = (pfield, extra_targets...)
-    sources = self_induce ? (pfield, extra_sources...) : extra_sources
-    length(extra_hessian) == length(extra_targets) ||
-        throw(ArgumentError("one extra_hessian flag per extra target is required"))
-    # The particles take U AND J from every source, the extra sources included:
-    # a sources-only call (bound segments and rings onto the wake between the
-    # RK3 stages) must deliver the filaments' velocity gradient too, or the
-    # reformulated VPM stretches the wake with part of the field missing.
-    # (`self_induce` used to sit here, which dropped J on exactly that call.)
-    hessian = (true, extra_hessian...)
+    # oversize cores out of the tree BEFORE the coupling looks at the field, so
+    # the geometry and its gates see the (K+1)-th largest core
+    # ... on EVERY call, the sources-only ones included: a sources-only call
+    # (bodies onto the wake between RK stages) that saw the unmasked cores judged
+    # the cached geometry outgrown and rebuilt it one level shallower for all the
+    # passes that followed (2026-09-21, 5MW rev 15: 2.3 -> 4.9 s/step). The masked
+    # particles ride as an extra source only when the particles are sources.
+    settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
+    oversize = _radix_oversize_select(pfield, settings)
+    ov = isempty(oversize) ? nothing : _radix_oversize_mask!(pfield, oversize, settings)
     try
-        fmm.fmm!(targets, sources, st.cache;
-            scalar_potential=false, gradient=true, hessian, sfs, tree_sources)
-    catch err
-        (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
-        # out-of-box (or other geometry) rejection: recenter and retry once;
-        # a second failure (e.g. adequacy gate on the grown box) propagates
-        bounds = _radix_derive_bounds(pfield, st.settings.padding;
-            rectangular=st.settings.rectangular)
-        st.settings.rectangular &&
-            (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
-        fmm.recenter!(st.cache, pfield; bounds)
-        fmm.fmm!(targets, sources, st.cache;
-            scalar_potential=false, gradient=true, hessian, sfs, tree_sources)
+        st = _radix_fmm_coupling!(pfield)
+        # extra targets (probes, ring nodes) and extra sources (bound segments,
+        # ring filaments) ride the same call as direct rectangular evaluations
+        # (FastMultipole src/radix_extra_systems.jl); the particles keep their
+        # hessian, the extra targets take velocity only unless `extra_hessian`
+        # asks for their velocity gradient too (fluid-domain probes).
+        #
+        # `self_induce=false` drops the particles from the source tuple: the
+        # lifecycle is skipped and the call delivers the extra sources alone, which
+        # is the "body on wake" direction of a coupled solve (the self-induction
+        # was evaluated earlier in the step, over a field that has since changed).
+        targets = (pfield, extra_targets...)
+        ov_sources = (ov === nothing || !self_induce) ? () : (ov,)
+        sources = self_induce ? (pfield, ov_sources..., extra_sources...) : extra_sources
+        length(extra_hessian) == length(extra_targets) ||
+            throw(ArgumentError("one extra_hessian flag per extra target is required"))
+        # The particles take U AND J from every source, the extra sources included:
+        # a sources-only call (bound segments and rings onto the wake between the
+        # RK3 stages) must deliver the filaments' velocity gradient too, or the
+        # reformulated VPM stretches the wake with part of the field missing.
+        # (`self_induce` used to sit here, which dropped J on exactly that call.)
+        hessian = (true, extra_hessian...)
+        # the two-level dynamic procedure asks for the analytic core-scaling
+        # derivatives of the SFS pass (see dynamicprocedure_twolevel_beforeUJ)
+        sfs_dsigma = sfs && _sfs_dsigma_requested(pfield)
+        try
+            fmm.fmm!(targets, sources, st.cache;
+                scalar_potential=false, gradient=true, hessian, sfs, sfs_dsigma,
+                tree_sources)
+        catch err
+            (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
+            # out-of-box (or other geometry) rejection: recenter and retry once;
+            # a second failure (e.g. adequacy gate on the grown box) propagates
+            bounds = _radix_derive_bounds(pfield, st.settings.padding;
+                rectangular=st.settings.rectangular)
+            st.settings.rectangular &&
+                (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
+            fmm.recenter!(st.cache, pfield; bounds)
+            fmm.fmm!(targets, sources, st.cache;
+                scalar_potential=false, gradient=true, hessian, sfs, sfs_dsigma,
+                tree_sources)
+        end
+    finally
+        ov === nothing || _radix_oversize_restore!(pfield, oversize, ov)
     end
     return nothing
 end

@@ -159,6 +159,8 @@ function UJ_fmm(
     # NOTE: this must be performed after velocity gradients are calculated, and
     #       therefore cannot be included in the direct function of the FMM
     sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
+    # two-level dynamic procedure: its filter-width derivatives over the same list
+    sfs && _sfs_dsigma_requested(pfield) && dsigma_fmm!(pfield, target_tree, source_tree, direct_list)
 
     return nothing
 end

@@ -300,3 +300,190 @@ function E_nostaticparticles(pfield, args...; E=Estr_fmm, optargs...)
     # sort!(iterator(pfield), by = p->p.index[1])
 
 end
+
+################################################################################
+# ANALYTIC CORE-SCALING DERIVATIVES (two-level dynamic procedure), all-pairs
+# host reference. See FastMultipole/src/translate_batched_resident.jl
+# ("analytic core-scaling derivative") for the derivation; this is the
+# O(N²) reference the radix sweeps are gated against, and the fallback of
+# `dynamicprocedure_twolevel_afterUJ` off the radix path.
+################################################################################
+"""
+    dsigma_direct!(pfield)
+
+Derivatives with respect to a uniform scaling σ → ασ of every particle core,
+at α = 1, of the resolved stretching L = (Γ⋅∇)∂U/∂α (into `M[1:3]`) and of the
+SFS vortex-stretching estimator ∂E_str/∂α (into `M[4:6]`), by direct
+particle-to-particle sums over the whole field (no cutoff). Requires the
+current velocity gradient in `J_INDEX`; gaussianerf kernel only. Sources of
+∂J include the static particles; the ζ sums follow the radix SFS sweep
+(non-static sources, self pair skipped).
+"""
+function dsigma_direct!(pfield::ParticleField{R}) where R
+    pfield.particles isa Array || error("dsigma_direct! is a host (Array) reference")
+    pfield.kernel.zeta === zeta_gauserf || error("dsigma_direct!: gaussianerf kernel only")
+    np = pfield.np
+    P = pfield.particles
+    transposed = pfield.transposed
+    A = R(sqrt(2 / pi))
+    K1 = R((2pi)^(-1.5))
+    dJ = zeros(R, 9, np)
+    x0 = first(X_INDEX); g0 = first(GAMMA_INDEX); j0 = first(J_INDEX); m0 = first(M_INDEX)
+    # ∂J/∂α
+    Threads.@threads for i in 1:np
+        P[STATIC_INDEX, i] != 0 && continue
+        xi, yi, zi = P[x0, i], P[x0 + 1, i], P[x0 + 2, i]
+        acc = ntuple(_ -> zero(R), 9)
+        for j in 1:np
+            j == i && continue
+            sigma = P[SIGMA_INDEX, j]
+            sigma > 0 || continue
+            dx = xi - P[x0, j]; dy = yi - P[x0 + 1, j]; dz = zi - P[x0 + 2, j]
+            r2 = dx * dx + dy * dy + dz * dz
+            r2 == 0 && continue
+            rho2 = r2 / (sigma * sigma)
+            invr = inv(sqrt(r2))
+            G = A * rho2 * sqrt(rho2) * exp(-rho2 / 2)
+            h = fmm._vortex_pair_ugh(dx, dy, dz, r2, invr, P[g0, j], P[g0 + 1, j],
+                P[g0 + 2, j], -G, rho2 * G)
+            acc = ntuple(k -> acc[k] + h[4 + k], 9)
+        end
+        for k in 1:9
+            dJ[k, i] = acc[k]
+        end
+    end
+    # L = op(∂J)Γ, then ∂E = Σ_j [∂ζ op(J_i − J_j)Γ_j + ζ op(∂J_i − ∂J_j)Γ_j]
+    Threads.@threads for i in 1:np
+        P[STATIC_INDEX, i] != 0 && continue
+        gi = (P[g0, i], P[g0 + 1, i], P[g0 + 2, i])
+        L = fmm._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
+            dJ[7, i], dJ[8, i], dJ[9, i], gi..., transposed)
+        xi, yi, zi = P[x0, i], P[x0 + 1, i], P[x0 + 2, i]
+        e1 = zero(R); e2 = zero(R); e3 = zero(R)
+        for j in 1:np
+            j == i && continue
+            P[STATIC_INDEX, j] != 0 && continue
+            sigma = P[SIGMA_INDEX, j]
+            dx = xi - P[x0, j]; dy = yi - P[x0 + 1, j]; dz = zi - P[x0 + 2, j]
+            rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
+            z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
+            dz_ = z * (rho2 - 3)
+            gj = (P[g0, j], P[g0 + 1, j], P[g0 + 2, j])
+            s = fmm._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)...,
+                gj..., transposed)
+            ds = fmm._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
+            e1 += dz_ * s[1] + z * ds[1]
+            e2 += dz_ * s[2] + z * ds[2]
+            e3 += dz_ * s[3] + z * ds[3]
+        end
+        P[m0, i] = L[1]; P[m0 + 1, i] = L[2]; P[m0 + 2, i] = L[3]
+        P[m0 + 3, i] = e1; P[m0 + 4, i] = e2; P[m0 + 5, i] = e3
+    end
+    _sfs_dsigma_delivered!(pfield, true)
+    return nothing
+end
+
+"""
+    dsigma_fmm!(pfield, target_tree, source_tree, direct_list)
+
+`dsigma_direct!` over the octree FMM's direct interaction list (the CPU
+`UJ_fmm` path): same sums, restricted to the near-field pairs, which is where
+all the σ dependence lives. Called by `UJ_fmm` when the two-level dynamic
+procedure has requested the derivatives. ∂J is staged in `pfield.scratch`
+rows 1:9 (sorted by particle index), L lands in `M[1:3]`, ∂E in `M[4:6]`.
+"""
+function dsigma_fmm!(pfield::ParticleField{R}, target_tree, source_tree, direct_list;
+        i_target_system::Int=1, i_source_system::Int=1) where R
+    pfield.kernel.zeta === zeta_gauserf || error("dsigma_fmm!: gaussianerf kernel only")
+    np = pfield.np
+    P = pfield.particles
+    dJ = view(pfield.scratch, 1:9, 1:np)
+    fill!(dJ, zero(R))
+    x0 = first(X_INDEX); g0 = first(GAMMA_INDEX); j0 = first(J_INDEX); m0 = first(M_INDEX)
+    A = R(sqrt(2 / pi)); K1 = R((2pi)^(-1.5))
+    transposed = pfield.transposed
+    tsort = target_tree.sort_index_list[i_target_system]
+    ssort = source_tree.sort_index_list[i_source_system]
+    assignments = _dsigma_assignments(target_tree, source_tree, direct_list)
+    # pass 1: ∂J/∂α (static sources included, static targets skipped)
+    Threads.@threads for i_task in eachindex(assignments)
+        @inbounds for i_interaction in assignments[i_task]
+            it, is = direct_list[i_interaction]
+            for i_source in source_tree.branches[is].bodies_index[i_source_system]
+                j = ssort[i_source]
+                sigma = P[SIGMA_INDEX, j]
+                sigma > 0 || continue
+                gx, gy, gz = P[g0, j], P[g0 + 1, j], P[g0 + 2, j]
+                sx, sy, sz = P[x0, j], P[x0 + 1, j], P[x0 + 2, j]
+                for i_target in target_tree.branches[it].bodies_index[i_target_system]
+                    i = tsort[i_target]
+                    (i == j || P[STATIC_INDEX, i] != 0) && continue
+                    dx = P[x0, i] - sx; dy = P[x0 + 1, i] - sy; dz = P[x0 + 2, i] - sz
+                    r2 = dx * dx + dy * dy + dz * dz
+                    r2 == 0 && continue
+                    rho2 = r2 / (sigma * sigma)
+                    G = A * rho2 * sqrt(rho2) * exp(-rho2 / 2)
+                    h = fmm._vortex_pair_ugh(dx, dy, dz, r2, inv(sqrt(r2)), gx, gy, gz, -G, rho2 * G)
+                    for k in 1:9
+                        dJ[k, i] += h[4 + k]
+                    end
+                end
+            end
+        end
+    end
+    # L = op(∂J)Γ into M[1:3]; ∂E accumulators zeroed
+    Threads.@threads for i in 1:np
+        @inbounds begin
+            L = fmm._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
+                dJ[7, i], dJ[8, i], dJ[9, i], P[g0, i], P[g0 + 1, i], P[g0 + 2, i], transposed)
+            P[m0, i] = L[1]; P[m0 + 1, i] = L[2]; P[m0 + 2, i] = L[3]
+            P[m0 + 3, i] = 0; P[m0 + 4, i] = 0; P[m0 + 5, i] = 0
+        end
+    end
+    # pass 2: ∂E = Σ_j [∂ζ op(J_i − J_j)Γ_j + ζ op(∂J_i − ∂J_j)Γ_j] (non-static pairs, as Estr_fmm!)
+    Threads.@threads for i_task in eachindex(assignments)
+        @inbounds for i_interaction in assignments[i_task]
+            it, is = direct_list[i_interaction]
+            for i_source in source_tree.branches[is].bodies_index[i_source_system]
+                j = ssort[i_source]
+                P[STATIC_INDEX, j] != 0 && continue
+                sigma = P[SIGMA_INDEX, j]
+                gj = (P[g0, j], P[g0 + 1, j], P[g0 + 2, j])
+                sx, sy, sz = P[x0, j], P[x0 + 1, j], P[x0 + 2, j]
+                for i_target in target_tree.branches[it].bodies_index[i_target_system]
+                    i = tsort[i_target]
+                    (i == j || P[STATIC_INDEX, i] != 0) && continue
+                    dx = P[x0, i] - sx; dy = P[x0 + 1, i] - sy; dz = P[x0 + 2, i] - sz
+                    rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
+                    z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
+                    dz_ = z * (rho2 - 3)
+                    s = fmm._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)..., gj..., transposed)
+                    ds = fmm._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
+                    P[m0 + 3, i] += dz_ * s[1] + z * ds[1]
+                    P[m0 + 4, i] += dz_ * s[2] + z * ds[2]
+                    P[m0 + 5, i] += dz_ * s[3] + z * ds[3]
+                end
+            end
+        end
+    end
+    _sfs_dsigma_delivered!(pfield, true)
+    return nothing
+end
+
+# the interaction ranges of `Estr_fmm_multithread!` (each thread owns whole
+# target branches, so the accumulations above never race); one range when
+# single-threaded
+function _dsigma_assignments(target_tree, source_tree, direct_list)
+    n_threads = Threads.nthreads()
+    n_threads == 1 && return [1:length(direct_list)]
+    n_interactions = FastMultipole.get_n_interactions(1, target_tree.branches, 1, source_tree.branches, direct_list)
+    n_per_thread, rem = divrem(n_interactions, n_threads)
+    rem > 0 && (n_per_thread += 1)
+    n_per_thread < 100 && (n_per_thread = 100)
+    assignments = Vector{UnitRange{Int64}}(undef, n_threads)
+    for i in eachindex(assignments)
+        assignments[i] = 1:0
+    end
+    FastMultipole.make_direct_assignments!(assignments, 1, target_tree.branches, 1, source_tree.branches, direct_list, n_threads, n_per_thread, nothing)
+    return assignments
+end
