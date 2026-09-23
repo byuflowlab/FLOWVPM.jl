@@ -453,7 +453,7 @@ function update_particle_states_broadcast_classic!(pfield::ParticleField{R, <:Cl
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= one(R)  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
+    active = view(Sc, 8, :); active .= one(eltype(active))  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)
@@ -677,7 +677,7 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 11, :); active .= one(R)
+    active = view(Sc, 11, :); active .= one(eltype(active))
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)

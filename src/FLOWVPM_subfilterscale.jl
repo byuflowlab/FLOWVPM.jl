@@ -252,7 +252,7 @@ function _constantsfs_coefficient_broadcast!(pfield, Cs)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     C1 = view(P, C_INDEX[1], :)
 
     C1 .= ifelse.(active .> 0, Cs, C1)
@@ -463,7 +463,7 @@ function _clip_broadcast!(::typeof(clipping_backscatter), pfield)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     C1 = view(P, C_INDEX[1], :)
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
     S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
@@ -577,7 +577,7 @@ function _control_broadcast!(::typeof(control_directional), pfield)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
     S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
 
@@ -666,7 +666,7 @@ function _control_broadcast!(::typeof(control_magnitude), pfield)
     f = R(pfield.formulation.f)
     zeta0 = R(pfield.kernel.zeta(0))
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     C1 = view(P, C_INDEX[1], :)
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
     S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)

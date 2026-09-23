@@ -197,7 +197,7 @@ function _relax_broadcast!(::typeof(relax_pedrizzetti), rlxf::Real, pfield)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= one(R)
+    active = view(Sc, 8, :); active .= one(eltype(active))
 
     J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)
@@ -228,7 +228,7 @@ function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfi
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= one(R)
+    active = view(Sc, 8, :); active .= one(eltype(active))
 
     J2,J3,J4,J6,J7,J8 = (view(P, J_INDEX[k], :) for k in (2,3,4,6,7,8))
     G1, G2, G3 = view(P, GAMMA_INDEX[1], :), view(P, GAMMA_INDEX[2], :), view(P, GAMMA_INDEX[3], :)

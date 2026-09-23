@@ -231,7 +231,7 @@ function _corespreading_euler_broadcast!(pfield, nu, dt)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     sigma = view(P, SIGMA_INDEX, :)
 
     sigma .= ifelse.(active .> 0, sqrt.(sigma.^2 .+ 2*nu*dt), sigma)
@@ -246,7 +246,7 @@ function _corespreading_rk3_broadcast!(pfield, nu, dt, aux1, aux2)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
     M7 = view(P, M_INDEX[7], :)
     sigma = view(P, SIGMA_INDEX, :)
 
@@ -263,7 +263,7 @@ function _corespreading_reset_broadcast!(pfield, sgm0)
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 1, :); active .= one(R)
+    active = view(Sc, 1, :); active .= one(eltype(active))
 
     for i in 1:3
         M = view(P, M_INDEX[6+i], :)
