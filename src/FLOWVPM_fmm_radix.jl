@@ -171,10 +171,12 @@ to automatic derivation:
   per-pair cutoff; task 048 production selection, 2026-08-22 — see
   `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and `:twopass` default to
   their shipped constructor values.
-- `m2l_strategy`: `:dense` (default since task 035 cycle 1,
-  `DenseTranslationM2L` — FastMultipole's own measured auto rule at P <= 4;
-  the 035 sweep measured concat 1.6-2.8x slower at matched geometry),
-  `:concat` (`ConcatenatedFixedZM2L`), or `:precomputed_y`
+- `m2l_strategy`: `:concat` (default since 2026-09-23, `ConcatenatedFixedZM2L`:
+  on the H200 at 800k particles the 5MW M2L stage took 7.9 s vs 19.6 s for
+  `:dense` over 72 steps, job 13869555, and locally at 22k concat was 2.7x
+  faster; identical CP), `:dense` (`DenseTranslationM2L`, the task-035 default
+  whose sweep had measured concat 1.6-2.8x slower at matched geometry — no
+  longer true on the KA lifecycle), or `:precomputed_y`
   (`PrecomputedFactoredYM2L`).
 - `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
   non-increasing, ending at the leaf radius); `nothing` = uniform.
@@ -201,7 +203,7 @@ Base.@kwdef struct RadixFMMSettings
     direct_kernel::Symbol = :partitioned
     rho_t::Union{Nothing,Float64} = nothing
     rho_c::Union{Nothing,Float64} = nothing
-    m2l_strategy::Symbol = :dense
+    m2l_strategy::Symbol = :concat
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
     # The radix depth is always the DEEPEST the adequacy gate admits, capped
