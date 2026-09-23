@@ -385,6 +385,49 @@ function FLOWVPM._corespreading_rk3_broadcast!(pfield::GPUField{R}, nu, dt, aux1
     return nothing
 end
 
+# Fused relaxation (one thread per particle), mirroring `_relax_broadcast!` in
+# FLOWVPM_relaxation.jl operation for operation so the result is bit-identical to
+# the 13-row-view broadcast chain it replaces (that chain cost 153 ms at 400k on
+# Metal; strided row views, one launch each). `RK3_FUSED[]` gates it like the
+# other fused kernels. CORRECTED selects the corrected-Pedrizzetti form.
+@kernel function ka_relax_kernel!(P, np, rlxf, ig, ij, ::Val{CORRECTED}) where {CORRECTED}
+    i = @index(Global)
+    @inbounds if i <= np
+        T = eltype(P)
+        J2 = P[ij + 1, i]; J3 = P[ij + 2, i]; J4 = P[ij + 3, i]
+        J6 = P[ij + 5, i]; J7 = P[ij + 6, i]; J8 = P[ij + 7, i]
+        G1 = P[ig, i]; G2 = P[ig + 1, i]; G3 = P[ig + 2, i]
+        w1 = J6 - J8; w2 = J7 - J3; w3 = J2 - J4
+        nrmw = sqrt(w1^2 + w2^2 + w3^2)
+        nrmGamma = sqrt(G1^2 + G2^2 + G3^2)
+        apply = nrmw > zero(T)
+        safenrmw = ifelse(nrmw > zero(T), nrmw, one(T))
+        omr = 1 - rlxf
+        if CORRECTED
+            sqrtb2 = sqrt(1 - 2 * omr * rlxf * (1 - (G1*w1 + G2*w2 + G3*w3) / (nrmGamma * safenrmw)))
+            P[ig, i]     = ifelse(apply, (omr*G1 + rlxf*nrmGamma*w1/safenrmw) / sqrtb2, G1)
+            P[ig + 1, i] = ifelse(apply, (omr*G2 + rlxf*nrmGamma*w2/safenrmw) / sqrtb2, G2)
+            P[ig + 2, i] = ifelse(apply, (omr*G3 + rlxf*nrmGamma*w3/safenrmw) / sqrtb2, G3)
+        else
+            P[ig, i]     = ifelse(apply, omr*G1 + rlxf*nrmGamma*w1/safenrmw, G1)
+            P[ig + 1, i] = ifelse(apply, omr*G2 + rlxf*nrmGamma*w2/safenrmw, G2)
+            P[ig + 2, i] = ifelse(apply, omr*G3 + rlxf*nrmGamma*w3/safenrmw, G3)
+        end
+    end
+end
+for (fn, corrected) in ((FLOWVPM.relax_pedrizzetti, false), (FLOWVPM.relax_correctedpedrizzetti, true))
+    @eval function FLOWVPM._relax_broadcast!(::typeof($fn), rlxf::Real, pfield::GPUField{R}) where R
+        RK3_FUSED[] || return invoke(FLOWVPM._relax_broadcast!, Tuple{typeof($fn), Real, Any}, $fn, rlxf, pfield)
+        np = pfield.np
+        np == 0 && return nothing
+        backend = KA.get_backend(pfield.particles)
+        wg = _sfs_wg(backend)
+        ka_relax_kernel!(backend, wg)(pfield.particles, np, R(rlxf), first(FLOWVPM.GAMMA_INDEX),
+            first(FLOWVPM.J_INDEX), Val($corrected); ndrange = cld(np, wg) * wg)
+        return nothing
+    end
+end
+
 #------- core spreading on the device: ζ reconstruction + RBF conjugate gradient -------#
 
 # 3 x maxparticles sorted-order accumulator and global-order delivery buffer,
