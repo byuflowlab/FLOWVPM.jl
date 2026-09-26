@@ -17,6 +17,9 @@ include("runtests_filament_calibration.jl")
 include("runtests_subfilterscale.jl")
 include("runtests_vorticity_storage.jl")
 include("runtests_relaxation_filter.jl")
+include("runtests_classic_euler.jl")
+include("runtests_stepping.jl")
+include("runtests_sfs_repass.jl")
 
 # Also run the GPU direct-sum kernel tests, if a functional CUDA-capable GPU
 # is available. CUDA is an optional (weak) dependency of FLOWVPM -- it must
