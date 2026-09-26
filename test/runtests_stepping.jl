@@ -72,3 +72,23 @@ end
     @test_throws ErrorException vpm.remove_particle(pf, 10)
     @test_throws ErrorException vpm.remove_particle(pf, 0)
 end
+
+@testset "removal drains every incident edge; a reused slot starts from zeros" begin
+    # remove_edge! compacts slot 2 into slot 1, so a loop over the two slots
+    # skipped the moved edge and left it dangling; add_particle left a reused
+    # slot's M and SFS rows as the removed particle had them (2026-09-26)
+    pf = random_field(vpm.formulation_rVPM; n = 6)
+    g = pf.filament_edge_graph
+    vpm.add_edge!(g, 2, 3); vpm.add_edge!(g, 2, 4); vpm.add_edge!(g, 1, 2); vpm.add_edge!(g, 5, 2)
+    vpm.remove_particle(pf, 2)                    # particle 6 moves into slot 2
+    np = vpm.get_np(pf)
+    for i in 1:np, k in 1:2
+        @test g.down_neighbor[k, i] in 0:np && g.up_neighbor[k, i] in 0:np
+    end
+    @test all(g.down_neighbor[:, 1] .== 0) && all(g.down_neighbor[:, 5] .== 0)      # 1->2 and 5->2 gone
+    @test all(g.up_neighbor[:, 3] .== 0) && all(g.up_neighbor[:, 4] .== 0)          # 2->3 and 2->4 gone
+    pf.particles[vpm.M_INDEX, np + 1] .= 7.0; pf.particles[vpm.SFS_INDEX, np + 1] .= 7.0   # stale scratch in the free slot
+    vpm.add_particle(pf, SVector(0.0, 0.0, 0.0), SVector(0.0, 0.0, 1.0), 0.1)
+    @test all(iszero, pf.particles[vpm.M_INDEX, np + 1]) && all(iszero, pf.particles[vpm.SFS_INDEX, np + 1])
+    @test all(iszero, pf.particles[vpm.U_INDEX, np + 1]) && all(iszero, pf.particles[vpm.J_INDEX, np + 1])
+end

@@ -378,6 +378,9 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     # Add particle to the field
     pfield.np += 1
 
+    # a reused slot keeps the removed particle's U, J, M and SFS rows (removal
+    # clears only some of them): start every new particle from zeros (2026-09-26)
+    fill!(view(pfield.particles, :, i_next), zero(eltype(pfield.particles)))
     if pfield.particles isa Array
         # Populate the empty particle
         set_X(pfield, i_next, X)
@@ -711,13 +714,13 @@ function remove_particle(pfield::ParticleField, i::Int)
     # Phase A: drop slot i's incident edges. Each remove_edge! clears the
     # matching slot on the other endpoint via a size-2 mirror scan, so this
     # is bounded local work (≤4 edges total).
-    @inbounds for k in 1:2
-        d = g.down_neighbor[k, i]
-        d != 0 && remove_edge!(g, i, d)
+    # remove_edge! compacts slot 2 into slot 1, so drain slot 1 until empty (a
+    # loop over k = 1:2 skipped the moved edge and left it dangling, 2026-09-26)
+    @inbounds while (d = g.down_neighbor[1, i]) != 0
+        remove_edge!(g, i, d) || break
     end
-    @inbounds for k in 1:2
-        u = g.up_neighbor[k, i]
-        u != 0 && remove_edge!(g, u, i)
+    @inbounds while (u = g.up_neighbor[1, i]) != 0
+        remove_edge!(g, u, i) || break
     end
 
     if i != np
