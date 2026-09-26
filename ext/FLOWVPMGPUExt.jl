@@ -400,7 +400,8 @@ end
         w1 = J6 - J8; w2 = J7 - J3; w3 = J2 - J4
         nrmw = sqrt(w1^2 + w2^2 + w3^2)
         nrmGamma = sqrt(G1^2 + G2^2 + G3^2)
-        apply = nrmw > zero(T)
+        # the corrected form divides by |Gamma| (the scalar host guards it; 2026-09-26)
+        apply = CORRECTED ? (nrmw > zero(T)) & (nrmGamma > zero(T)) : nrmw > zero(T)
         safenrmw = ifelse(nrmw > zero(T), nrmw, one(T))
         omr = 1 - rlxf
         if CORRECTED
@@ -491,7 +492,8 @@ function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpre
         cs.zeta(pfield)                          # A p -> W
         cs.pAps .= dots(G, W)
         for i in 1:3
-            cs.alphas[i] = cs.rrs[i] / cs.pAps[i] * cs.flags[i]
+            # an inactive component may have pAps = 0: 0/0 * false is NaN (host fix mirrored, 2026-09-26)
+            cs.alphas[i] = cs.flags[i] ? cs.rrs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
         end
         cs.prev_rrs .= cs.rrs
         al = _rowvec(P, cs.alphas)
@@ -861,7 +863,7 @@ end
         # deno, deno is then updated, and nume re-tested against the NEW one
         big = abs(nume / deno) > maxC
         if big && abs(deno) < abs(c3i)
-            deno = sign(deno) * abs(c3i)
+            deno = copysign(abs(c3i), iszero(deno) ? c3i : deno)     # sign(0) kept a zero denominator (host fix mirrored)
         end
         if big && abs(nume / deno) >= maxC
             nume = sign(nume) * abs(deno) * maxC

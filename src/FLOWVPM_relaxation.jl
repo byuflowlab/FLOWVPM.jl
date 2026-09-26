@@ -245,7 +245,7 @@ function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfi
     nrmw = view(Sc, 4, :); nrmw .= sqrt.(w1.^2 .+ w2.^2 .+ w3.^2)
     nrmGamma = view(Sc, 5, :); nrmGamma .= sqrt.(G1.^2 .+ G2.^2 .+ G3.^2)
 
-    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0)
+    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0) .* (nrmGamma .> 0)   # the scalar form guards |Gamma| too (2026-09-26)
     safenrmw = view(Sc, 7, :); safenrmw .= ifelse.(nrmw .> 0, nrmw, one(eltype(nrmw)))
 
     # sqrtb2 reuses nrmw's row: its RHS reads only w1/w2/w3/G1/G2/G3/nrmGamma/safenrmw
