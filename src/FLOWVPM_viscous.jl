@@ -463,7 +463,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading; active=nothing)
         end
 
         for i in 1:3
-            cs.alphas[i] = cs.rrs[i] / cs.pAps[i] * cs.flags[i]
+            # an inactive component may have pAps = 0: 0/0 * false is NaN (2026-09-26)
+            cs.alphas[i] = cs.flags[i] ? cs.rrs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
             # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
         end
 

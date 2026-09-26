@@ -505,8 +505,10 @@ function control_directional(pfield, i::Int)
     S2 = pfield.particles[SFS_INDEX[2], i]
     S3 = pfield.particles[SFS_INDEX[3], i]
 
+    g2 = G1*G1 + G2*G2 + G3*G3
+    iszero(g2) && return nothing            # a zero-strength particle: 0/0 (2026-09-26)
     aux = S1*G1 + S2*G2 + S3*G3
-    aux /= (G1*G1 + G2*G2 + G3*G3)
+    aux /= g2
 
     # Replaces old SFS with the direcionally controlled SFS
     pfield.particles[SFS_INDEX[1], i] = aux*G1
@@ -582,7 +584,8 @@ function _control_broadcast!(::typeof(control_directional), pfield)
     S1, S2, S3 = view(P, SFS_INDEX[1], :), view(P, SFS_INDEX[2], :), view(P, SFS_INDEX[3], :)
 
     aux = view(Sc, 2, :)
-    aux .= (S1.*G1 .+ S2.*G2 .+ S3.*G3) ./ (G1.^2 .+ G2.^2 .+ G3.^2)
+    g2 = G1.^2 .+ G2.^2 .+ G3.^2
+    aux .= ifelse.(g2 .> 0, (S1.*G1 .+ S2.*G2 .+ S3.*G3) ./ ifelse.(g2 .> 0, g2, one.(g2)), zero.(g2))   # zero-strength: 0/0 (2026-09-26)
 
     S1 .= ifelse.(active .> 0, aux .* G1, S1)
     S2 .= ifelse.(active .> 0, aux .* G2, S2)
@@ -645,11 +648,13 @@ function control_magnitude(pfield, i::Int)
         aux /= (G1*G1 + G2*G2 + G3*G3)
         aux -= (1+3*f)*(zeta0/pfield.particles[SIGMA_INDEX, i]^3) / deltat / C
 
-        # f_p filter criterion
+        # f_p filter criterion: remove the component along Gamma, as the
+        # particle overload and upstream FLOWVPM do (this port replaced the
+        # whole SFS, dropping the perpendicular component, 2026-09-26)
         if aux > 0
-            pfield.particles[SFS_INDEX[1], i] = -aux*G1
-            pfield.particles[SFS_INDEX[2], i] = -aux*G2
-            pfield.particles[SFS_INDEX[3], i] = -aux*G3
+            pfield.particles[SFS_INDEX[1], i] = S1 - aux*G1
+            pfield.particles[SFS_INDEX[2], i] = S2 - aux*G2
+            pfield.particles[SFS_INDEX[3], i] = S3 - aux*G3
         end
     end
 end
@@ -681,9 +686,9 @@ function _control_broadcast!(::typeof(control_magnitude), pfield)
 
     apply = view(Sc, 5, :); apply .= nonzeroC .* (aux .> 0)
 
-    S1 .= ifelse.(apply .> 0, -aux .* G1, S1)
-    S2 .= ifelse.(apply .> 0, -aux .* G2, S2)
-    S3 .= ifelse.(apply .> 0, -aux .* G3, S3)
+    S1 .= ifelse.(apply .> 0, S1 .- aux .* G1, S1)
+    S2 .= ifelse.(apply .> 0, S2 .- aux .* G2, S2)
+    S3 .= ifelse.(apply .> 0, S3 .- aux .* G3, S3)
 
     return nothing
 end
@@ -952,7 +957,8 @@ function dynamicprocedure_pseudo3level_afterUJ(pfield, SFS::SubFilterScale{R},
             clamp_path = 1
             # Avoid case of denominator becoming zero
             if abs(deno) < abs(C_p[3])
-                deno = sign(deno) * abs(C_p[3])
+                # sign(0) = 0 kept a zero denominator: take the previous one's sign (2026-09-26)
+                deno = copysign(abs(C_p[3]), iszero(deno) ? C_p[3] : deno)
                 clamp_path = 2
             end
 

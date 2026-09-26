@@ -365,7 +365,7 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
                                            vol=0, circulation=1,
                                            C=0)
     # ERROR CASES
-    if get_np(pfield)==pfield.maxparticles
+    if get_np(pfield) >= pfield.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
                                                             " has been reached")
     # elseif circulation<=0

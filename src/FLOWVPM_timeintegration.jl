@@ -112,16 +112,19 @@ function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
         ## Vortex stretching contributions
         J = get_J(p)
         G = get_Gamma(p)
+        # all three components from the pre-step Gamma (updating G[1] first fed
+        # the new value into G[2] and G[3]: an O(dt^2) error, 2026-09-26)
+        G1, G2, G3 = G[1], G[2], G[3]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
-            G[1] += dt*(J[1]*G[1]+J[2]*G[2]+J[3]*G[3])
-            G[2] += dt*(J[4]*G[1]+J[5]*G[2]+J[6]*G[3])
-            G[3] += dt*(J[7]*G[1]+J[8]*G[2]+J[9]*G[3])
+            G[1] += dt*(J[1]*G1+J[2]*G2+J[3]*G3)
+            G[2] += dt*(J[4]*G1+J[5]*G2+J[6]*G3)
+            G[3] += dt*(J[7]*G1+J[8]*G2+J[9]*G3)
         else
             # Classic scheme (Γ⋅∇)U
-            G[1] += dt*(J[1]*G[1]+J[4]*G[2]+J[7]*G[3])
-            G[2] += dt*(J[2]*G[1]+J[5]*G[2]+J[8]*G[3])
-            G[3] += dt*(J[3]*G[1]+J[6]*G[2]+J[9]*G[3])
+            G[1] += dt*(J[1]*G1+J[4]*G2+J[7]*G3)
+            G[2] += dt*(J[2]*G1+J[5]*G2+J[8]*G3)
+            G[3] += dt*(J[3]*G1+J[6]*G2+J[9]*G3)
         end
 
         ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
@@ -150,17 +153,19 @@ function _euler_broadcast_classic!(pfield::ParticleField, dt, Uinf, zeta0)
     SFS_all = view(pfield.particles, SFS_INDEX, :)  # (3, np)
     sigma3 = pfield.particles[SIGMA_INDEX, :] .^ 3  # (np,)
 
+    # all three components from the pre-step Gamma (a sequential read-after-write
+    # fed the new G[1] into G[2] and G[3]: an O(dt^2) error, 2026-09-26)
+    G1 = G[1, :]; G2 = G[2, :]; G3 = G[3, :]
     if pfield.transposed
         # Transposed scheme (Γ⋅∇')U
-        # Sequential read-after-write: G[1] updated, then used in computing G[2], etc.
-        G[1, :] .+= dt .* active .* (J[1, :] .* G[1, :] .+ J[2, :] .* G[2, :] .+ J[3, :] .* G[3, :])
-        G[2, :] .+= dt .* active .* (J[4, :] .* G[1, :] .+ J[5, :] .* G[2, :] .+ J[6, :] .* G[3, :])
-        G[3, :] .+= dt .* active .* (J[7, :] .* G[1, :] .+ J[8, :] .* G[2, :] .+ J[9, :] .* G[3, :])
+        G[1, :] .+= dt .* active .* (J[1, :] .* G1 .+ J[2, :] .* G2 .+ J[3, :] .* G3)
+        G[2, :] .+= dt .* active .* (J[4, :] .* G1 .+ J[5, :] .* G2 .+ J[6, :] .* G3)
+        G[3, :] .+= dt .* active .* (J[7, :] .* G1 .+ J[8, :] .* G2 .+ J[9, :] .* G3)
     else
         # Classic scheme (Γ⋅∇)U
-        G[1, :] .+= dt .* active .* (J[1, :] .* G[1, :] .+ J[4, :] .* G[2, :] .+ J[7, :] .* G[3, :])
-        G[2, :] .+= dt .* active .* (J[2, :] .* G[1, :] .+ J[5, :] .* G[2, :] .+ J[8, :] .* G[3, :])
-        G[3, :] .+= dt .* active .* (J[3, :] .* G[1, :] .+ J[6, :] .* G[2, :] .+ J[9, :] .* G[3, :])
+        G[1, :] .+= dt .* active .* (J[1, :] .* G1 .+ J[4, :] .* G2 .+ J[7, :] .* G3)
+        G[2, :] .+= dt .* active .* (J[2, :] .* G1 .+ J[5, :] .* G2 .+ J[8, :] .* G3)
+        G[3, :] .+= dt .* active .* (J[3, :] .* G1 .+ J[6, :] .* G2 .+ J[9, :] .* G3)
     end
 
     # Subfilter-scale contributions: -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
