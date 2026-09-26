@@ -327,6 +327,11 @@ integration scheme. See Notebook entry 20180105.
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
                             dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
 
+    # the classic updaters share the reformulated signature and ignore its two
+    # coefficients; they were never bound here, so a classic RK3 step threw
+    # UndefVarError (2026-09-26)
+    f = zero(R); g = zero(R)
+
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
 
     # Calculate freestream

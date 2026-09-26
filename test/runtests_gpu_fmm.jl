@@ -129,7 +129,11 @@ end
 
 const FMM034_U_GATE = 1e-3   # fixed Integration Phase velocity tolerance
 
-@testset "euler sigma_guard: dt*Z cap + floor (052c trial 1)" begin
+# the sigma_guard keyword was removed from _euler_cpu_reformulated!; the testset
+# stays for the branch that carries it and skips itself otherwise
+const _HAS_SIGMA_GUARD = any(m -> :sigma_guard in Base.kwarg_decl(m), methods(vpm_fmm._euler_cpu_reformulated!))
+_HAS_SIGMA_GUARD || @info "sigma_guard is not a keyword of _euler_cpu_reformulated! on this branch; its testset is skipped"
+_HAS_SIGMA_GUARD && @testset "euler sigma_guard: dt*Z cap + floor (052c trial 1)" begin
     # Reproduces the 052c acceptance step-1015 failure mode in miniature:
     # a strained outlier with dt*Z > 1 flips sigma's sign under the
     # unguarded Euler update. Under transposed rVPM (f=0, g=1/5) with

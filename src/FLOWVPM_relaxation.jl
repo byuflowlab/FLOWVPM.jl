@@ -143,9 +143,11 @@ function relax_correctedpedrizzetti(rlxf::Real, p)
     nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
                 (J[7]-J[3])*(J[7]-J[3]) +
                 (J[2]-J[4])*(J[2]-J[4]))
+    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
 
-    if !iszero(nrmw)
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+    # a zero-strength particle has no direction to align (the cosine below
+    # divides by |Gamma|): leave it
+    if !iszero(nrmw) && !iszero(nrmGamma)
 
         b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
                                         G[2]*(J[7]-J[3]) +
@@ -170,9 +172,11 @@ function relax_correctedpedrizzetti(rlxf::Real, pfield, i)
     nrmw = sqrt((J[6]-J[8])*(J[6]-J[8]) +
                 (J[7]-J[3])*(J[7]-J[3]) +
                 (J[2]-J[4])*(J[2]-J[4]))
+    nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
 
-    if !iszero(nrmw)
-        nrmGamma = sqrt(G[1]^2 + G[2]^2 + G[3]^2)
+    # a zero-strength particle has no direction to align (the cosine below
+    # divides by |Gamma|): leave it
+    if !iszero(nrmw) && !iszero(nrmGamma)
 
         b2 =  1 - 2*(1-rlxf)*rlxf*(1 - (G[1]*(J[6]-J[8]) +
                                         G[2]*(J[7]-J[3]) +
