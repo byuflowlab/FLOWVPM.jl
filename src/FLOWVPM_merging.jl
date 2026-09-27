@@ -47,6 +47,10 @@ end
 @inline _pack_cell_key(ix::Int, iy::Int, iz::Int) =
     ix | (iy << CELL_COORD_BITS) | (iz << (2 * CELL_COORD_BITS))
 
+# the cell itself and the 13 neighbours with a positive lexicographic offset:
+# every unordered pair of cells exactly once
+const _FORWARD_STENCIL = Tuple((ox, oy, oz) for oz in -1:1 for oy in -1:1 for ox in -1:1 if (oz, oy, ox) >= (0, 0, 0))
+
 """
 Bin `candidate_indices` into cells of size `cell_size` anchored at `origin`.
 On return `sorted_indices` holds the candidates grouped by cell (ascending
@@ -437,10 +441,12 @@ function merge_particles!(
     verbose::Bool=false,
     gamma_align_cos::Real=-1.0,
     on_representative::Union{Nothing,Function}=nothing,
+    max_cluster::Int=4,
 )
     np = get_np(pfield)
     np <= 1 && return 0
     r_merge <= 0 && return 0
+    max_cluster >= 2 || return 0
     max_sigma_ratio < 1 && return 0
 
     ws = pfield.merging_workspace
@@ -498,10 +504,27 @@ function merge_particles!(
     @inbounds for i in 1:np
         parent[i] = i
     end
+    # the union is transitive: without a cap, close pairs chain a whole region
+    # into one cluster (the same-cell-only search hid this by bounding a
+    # cluster to a cell). `max_cluster` members per cluster, 2026-09-26.
+    csize = fill(1, np)
 
+    # Pairs within a cell and across its faces, edges and corners: each
+    # unordered cell pair once (the 13 forward neighbours plus the cell
+    # itself). Same-cell-only search missed every pair straddling a cell
+    # boundary, whatever the cell size (2026-09-26).
+    mask = (1 << CELL_COORD_BITS) - 1
     for c in 1:n_cells
         range_start = offsets[c] + 1
         range_stop = offsets[c + 1]
+        key = unique_keys[c]
+        cx = key & mask; cy = (key >> CELL_COORD_BITS) & mask; cz = (key >> (2 * CELL_COORD_BITS)) & mask
+        for (ox, oy, oz) in _FORWARD_STENCIL
+            self_cell = ox == 0 && oy == 0 && oz == 0
+            nx = cx + ox; ny = cy + oy; nz = cz + oz
+            (0 <= nx <= CELL_COORD_MAX && 0 <= ny <= CELL_COORD_MAX && 0 <= nz <= CELL_COORD_MAX) || continue
+            nrange = self_cell ? (range_start:range_stop) : _cell_range(offsets, unique_keys, n_cells, _pack_cell_key(nx, ny, nz))
+            isempty(nrange) && continue
 
         for a in range_start:range_stop
             ia = sorted_indices[a]
@@ -510,7 +533,7 @@ function merge_particles!(
             zi = pfield.particles[3, ia]
             sigma_i = pfield.particles[SIGMA_INDEX, ia]
 
-            for b in (a + 1):range_stop
+            for b in (self_cell ? (a + 1) : first(nrange)):last(nrange)
                 ib = sorted_indices[b]
                 sigma_j = pfield.particles[SIGMA_INDEX, ib]
                 sigma_min = min(sigma_i, sigma_j)
@@ -538,8 +561,15 @@ function merge_particles!(
                 dz = pfield.particles[3, ib] - zi
                 dist2 = dx * dx + dy * dy + dz * dz
                 r_pair = sigma_relative ? r_merge * sigma_min : r_merge
-                dist2 < r_pair * r_pair && _uf_union!(parent, rank, ia, ib)
+                if dist2 < r_pair * r_pair
+                    ra = _uf_find!(parent, ia); rb = _uf_find!(parent, ib)
+                    if ra != rb && csize[ra] + csize[rb] <= max_cluster
+                        _uf_union!(parent, rank, ia, ib)
+                        csize[_uf_find!(parent, ia)] = csize[ra] + csize[rb]
+                    end
+                end
             end
+        end
         end
     end
 

@@ -92,3 +92,15 @@ end
     @test all(iszero, pf.particles[vpm.M_INDEX, np + 1]) && all(iszero, pf.particles[vpm.SFS_INDEX, np + 1])
     @test all(iszero, pf.particles[vpm.U_INDEX, np + 1]) && all(iszero, pf.particles[vpm.J_INDEX, np + 1])
 end
+
+@testset "merging pairs particles across cell boundaries" begin
+    # the hash paired only within one cell: 0.49 and 0.51 sat in adjacent
+    # 0.5-wide cells and never merged (2026-09-26)
+    pf = vpm.ParticleField(8; formulation = vpm.formulation_rVPM, kernel = vpm.kernel_gaussianerf, UJ = vpm.UJ_direct)
+    vpm.add_particle(pf, SVector(0.49, 0.0, 0.0), SVector(0.0, 0.0, 1.0), 1.0)
+    vpm.add_particle(pf, SVector(0.51, 0.0, 0.0), SVector(0.0, 0.0, 1.0), 1.0)
+    vpm.add_particle(pf, SVector(5.0, 5.0, 5.0), SVector(0.0, 0.0, 1.0), 1.0)
+    n = vpm.merge_particles!(pf; r_merge = 0.5, sigma_relative = false)
+    @test n == 1 && vpm.get_np(pf) == 2
+    @test vpm.get_Gamma(pf, 1) ≈ [0.0, 0.0, 2.0] && vpm.get_X(pf, 1) ≈ [0.5, 0.0, 0.0]
+end
