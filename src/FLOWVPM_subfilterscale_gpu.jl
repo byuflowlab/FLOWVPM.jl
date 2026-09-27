@@ -44,7 +44,7 @@ function _pseudo3level_beforeUJ_broadcast!(pfield, SFS, alpha::Real)
 
     # active (non-static) mask as 1.0/0.0
     act = view(Sc, 1:1, :)
-    act .= true
+    act .= row(STATIC_INDEX) .== 0
 
     αR = R(alpha)
     one_R = one(R)
@@ -111,7 +111,7 @@ function _pseudo3level_afterUJ_broadcast!(pfield, SFS, alpha::Real, rlxf::Real,
     row(r) = view(P, r:r, :)
 
     act = view(Sc, 1:1, :)
-    act .= true
+    act .= row(STATIC_INDEX) .== 0
 
     G1, G2, G3 = row(GAMMA_INDEX[1]), row(GAMMA_INDEX[2]), row(GAMMA_INDEX[3])
     J1, J2, J3 = row(J_INDEX[1]), row(J_INDEX[2]), row(J_INDEX[3])

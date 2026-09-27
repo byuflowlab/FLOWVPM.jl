@@ -22,11 +22,14 @@ function _reset_M_storage!(pfield::ParticleField)
     zeroR = zero(eltype(pfield.particles))
     if pfield.particles isa Array
         for i in 1:pfield.np
-            pfield.particles[M_INDEX, i] .= zeroR
+            if pfield.particles[STATIC_INDEX, i] == 0
+                pfield.particles[M_INDEX, i] .= zeroR
+            end
         end
     else
         np = pfield.np
-        view(pfield.particles, M_INDEX, 1:np) .= zero(eltype(pfield.particles))
+        is_static = view(pfield.particles, STATIC_INDEX:STATIC_INDEX, 1:np)
+        view(pfield.particles, M_INDEX, 1:np) .*= is_static
     end
     return nothing
 end
@@ -86,7 +89,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     if relax
         if pfield.particles isa Array
             for i in 1:pfield.np
-                pfield.relaxation(get_particle(pfield, i))
+                pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
             end
         else
             relax_broadcast!(pfield.relaxation, pfield)
@@ -102,6 +105,7 @@ end
 function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
     Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
+        is_static(p) && continue # skip static particles
 
         C::R = get_C(p)[1]
 
@@ -140,7 +144,8 @@ function _euler_broadcast_classic!(pfield::ParticleField, dt, Uinf, zeta0)
     Uinf = R.(Uinf)
     zeta0 = R(zeta0)
 
-    active = fill!(similar(pfield.particles, R, size(pfield.particles, 2)), one(R))   # host or device vector
+    # Static-particle mask: 0 for static, 1 for active
+    active = one(R) .- pfield.particles[STATIC_INDEX, :]
 
     # Update the particle field: convection and stretching
     # Position: X += dt*(U + Uinf)
@@ -207,7 +212,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     if relax
         if pfield.particles isa Array
             for i in 1:pfield.np
-                pfield.relaxation(get_particle(pfield, i))
+                pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
             end
         else
             relax_broadcast!(pfield.relaxation, pfield)
@@ -223,6 +228,7 @@ end
 function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0) where {R, R2}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
+        is_static(p) && continue # skip static particles
 
         C::R = get_C(p)[1]
 
@@ -279,7 +285,8 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     g = R(g)
     zeta0 = R(zeta0)
 
-    active = fill!(similar(pfield.particles, R, size(pfield.particles, 2)), one(R))   # host or device vector
+    # Static-particle mask: 0 for static, 1 for active
+    active = one(R) .- pfield.particles[STATIC_INDEX, :]
 
     # Update the particle field: convection and stretching
     # Position: X += dt*(U + Uinf)
@@ -385,11 +392,15 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
                 Threads.@threads for i in 1:pfield.np
-                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    if pfield.particles[STATIC_INDEX,i] == 0
+                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    end
                 end
             else
                 for i in 1:pfield.np
-                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    if pfield.particles[STATIC_INDEX,i] == 0
+                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    end
                 end
             end
         else
@@ -418,6 +429,7 @@ end
 function update_particle_states_cpu_classic!(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
+        is_static(p) && continue
 
         C::R = get_C(p)[1]
 
@@ -463,7 +475,8 @@ function update_particle_states_broadcast_classic!(pfield::ParticleField{R, <:Cl
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 8, :); active .= one(eltype(active))  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
+    static = view(P, STATIC_INDEX, :)
+    active = view(Sc, 8, :); active .= one(eltype(active)) .- static  # row 8: free here (only rows 1-7 used below), no conflict with ReformulatedVPM's own row numbering since they never share a call
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)
@@ -580,11 +593,15 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
                 Threads.@threads for i in 1:pfield.np
-                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    if pfield.particles[STATIC_INDEX,i] == 0
+                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    end
                 end
             else
                 for i in 1:pfield.np
-                    pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    if pfield.particles[STATIC_INDEX,i] == 0
+                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                    end
                 end
             end
         else
@@ -612,6 +629,7 @@ end
 function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
+        is_static(p) && continue
 
         C::R = get_C(p)[1]
 
@@ -687,7 +705,8 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     P = pfield.particles
     Sc = pfield.scratch
 
-    active = view(Sc, 11, :); active .= one(eltype(active))
+    static = view(P, STATIC_INDEX, :)
+    active = view(Sc, 11, :); active .= one(eltype(active)) .- static
     isactive = active .> 0
 
     U1, U2, U3 = view(P, U_INDEX[1], :), view(P, U_INDEX[2], :), view(P, U_INDEX[3], :)

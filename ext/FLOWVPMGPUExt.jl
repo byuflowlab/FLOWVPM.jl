@@ -72,11 +72,11 @@ function fmm.source_to_buffer!(buf::AnyGPUMatrix, pfield::GPUField{R}, sort_inde
     # strided row views cost 0.6 ms/step on Metal for 450 kB (2026-09-01).
     kernel = _source_to_buffer_kernel!(KA.get_backend(P), 256)
     kernel(buf, P, rho_sigma, first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX),
-           FLOWVPM.SIGMA_INDEX, np; ndrange=np)
+           FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX, np; ndrange=np)
     return buf
 end
 
-@kernel function _source_to_buffer_kernel!(buf, @Const(P), rho_sigma, ix, ig, isig, np)
+@kernel function _source_to_buffer_kernel!(buf, @Const(P), rho_sigma, ix, ig, isig, istat, np)
     i = @index(Global)
     @inbounds if i <= np
         buf[1, i] = P[ix, i]
@@ -88,7 +88,7 @@ end
         buf[6, i] = P[ig + 1, i]
         buf[7, i] = P[ig + 2, i]
         buf[8, i] = sig
-        buf[9, i] = one(eltype(buf))     # every particle active (static particles removed 2026-09-22)
+        buf[9, i] = P[istat, i] == 0
     end
 end
 
@@ -240,9 +240,9 @@ const RK3_FUSED = Ref(true)          # FLOWVPM_RK3_FUSED=0 in the environment tu
 
 @kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, a, b, dt,
         uinf1, uinf2, uinf3, cfg, cf, inv_zeta0,
-        ix, ig, isig, iu, ij, im, ic, isfs)
+        ix, ig, isig, iu, ij, im, ic, isfs, istat)
     i = @index(Global)
-    @inbounds if i <= np
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
         T = eltype(P)
         g1 = P[ig, i]; g2 = P[ig+1, i]; g3 = P[ig+2, i]
         j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
@@ -291,7 +291,7 @@ function FLOWVPM.update_particle_states_broadcast_reformulated!(
         (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0),
         first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
         first(FLOWVPM.U_INDEX), first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX),
-        first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX);
+        first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX), FLOWVPM.STATIC_INDEX;
         ndrange = cld(np, wg) * wg)
     KA.synchronize(backend)
     return nothing
@@ -299,9 +299,9 @@ end
 
 # zero a contiguous row block of every non-static particle (U, vorticity, J,
 # PSE are rows 10:27; the SFS rows 40:42): one thread per particle
-@kernel function ka_zero_rows_kernel!(P, np, r0, r1)
+@kernel function ka_zero_rows_kernel!(P, np, r0, r1, istat)
     i = @index(Global)
-    @inbounds if i <= np
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
         for r in r0:r1
             P[r, i] = zero(eltype(P))
         end
@@ -312,16 +312,17 @@ function _zero_rows!(pfield::GPUField, r0::Int, r1::Int)
     np == 0 && return nothing
     backend = KA.get_backend(pfield.particles)
     wg = _sfs_wg(backend)
-    ka_zero_rows_kernel!(backend, wg)(pfield.particles, np, r0, r1;
+    ka_zero_rows_kernel!(backend, wg)(pfield.particles, np, r0, r1, FLOWVPM.STATIC_INDEX;
         ndrange = cld(np, wg) * wg)
     return nothing
 end
 function FLOWVPM._reset_particles_broadcast!(pfield::GPUField)
     RK3_FUSED[] || return invoke(FLOWVPM._reset_particles_broadcast!, Tuple{FLOWVPM.ParticleField}, pfield)
-    # U 10:12, vorticity 13:15, J 16:24 are contiguous
+    # U 10:12, vorticity 13:15, J 16:24, PSE 25:27 are contiguous
     @assert last(FLOWVPM.U_INDEX) + 1 == first(FLOWVPM.VORTICITY_INDEX) &&
-            last(FLOWVPM.VORTICITY_INDEX) + 1 == first(FLOWVPM.J_INDEX)
-    _zero_rows!(pfield, first(FLOWVPM.U_INDEX), last(FLOWVPM.J_INDEX))
+            last(FLOWVPM.VORTICITY_INDEX) + 1 == first(FLOWVPM.J_INDEX) &&
+            last(FLOWVPM.J_INDEX) + 1 == first(FLOWVPM.PSE_INDEX)
+    _zero_rows!(pfield, first(FLOWVPM.U_INDEX), last(FLOWVPM.PSE_INDEX))
     return nothing
 end
 function FLOWVPM._reset_particles_sfs_broadcast!(pfield::GPUField)
@@ -332,9 +333,9 @@ end
 
 # core spreading's RK3 register update (two strided broadcasts, 41 ms on a
 # 400k Metal field) as one kernel
-@kernel function ka_corespreading_rk3_kernel!(P, np, nu2dt, aux1, aux2, im7, isig)
+@kernel function ka_corespreading_rk3_kernel!(P, np, nu2dt, aux1, aux2, im7, isig, istat)
     i = @index(Global)
-    @inbounds if i <= np
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
         m7 = aux1 * P[im7, i] + nu2dt
         P[im7, i] = m7
         s = P[isig, i]
@@ -348,7 +349,7 @@ function FLOWVPM._corespreading_rk3_broadcast!(pfield::GPUField{R}, nu, dt, aux1
     backend = KA.get_backend(pfield.particles)
     wg = _sfs_wg(backend)
     ka_corespreading_rk3_kernel!(backend, wg)(pfield.particles, np, R(dt) * 2 * R(nu), R(aux1), R(aux2),
-        FLOWVPM.M_INDEX[7], FLOWVPM.SIGMA_INDEX; ndrange = cld(np, wg) * wg)
+        FLOWVPM.M_INDEX[7], FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
     return nothing
 end
 
@@ -404,7 +405,7 @@ end
 # per-particle loops as whole-field broadcasts and the dot products as
 # device reductions. Static particles are excluded from the solve exactly as
 # `iterator(pfield)` excludes them on the host.
-function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpreading; active=nothing) where R
+function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpreading) where R
     P = pfield.particles; np = pfield.np
     X = view(P, FLOWVPM.M_INDEX[1:3], 1:np)      # solution
     Rr = view(P, FLOWVPM.M_INDEX[4:6], 1:np)     # residual
@@ -412,8 +413,7 @@ function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpre
     G = view(P, FLOWVPM.GAMMA_INDEX, 1:np)       # search direction p
     W = view(P, FLOWVPM.VORTICITY_INDEX, 1:np)   # A p
     vol = view(P, FLOWVPM.VOL_INDEX:FLOWVPM.VOL_INDEX, 1:np)
-    act = fill!(similar(P, Bool, 1, np), true)   # 1 x np mask
-    active === nothing || copyto!(act, reshape(Vector{Bool}(active), 1, np))
+    act = view(P, FLOWVPM.STATIC_INDEX:FLOWVPM.STATIC_INDEX, 1:np) .== 0   # 1 x np mask
     dots(A, Bm) = [sum(view(A, i:i, :) .* view(Bm, i:i, :) .* act) for i in 1:3]
 
     cs.rr0s .= 0; cs.rrs .= 0; cs.flags .= false
@@ -641,12 +641,13 @@ end
 # directly from global memory. Mirrors FLOWVPMCUDAExt.jl's
 # gpu_estr_direct_kernel!.
 @kernel function ka_estr_direct_kernel!(sfs_out, @Const(P), n::Int32, zeta, transposed::Bool,
-                                         j1::Int32, j2::Int32, j3::Int32,
+                                         static_row::Int32, j1::Int32, j2::Int32, j3::Int32,
                                          j4::Int32, j5::Int32, j6::Int32, j7::Int32, j8::Int32, j9::Int32)
     j_target = @index(Global)
     T = eltype(P)
     if j_target <= n
-        if true
+        @inbounds target_is_static = P[static_row, j_target]
+        if target_is_static == 0
             @inbounds tx = P[1, j_target]
             @inbounds ty = P[2, j_target]
             @inbounds tz = P[3, j_target]
@@ -658,7 +659,8 @@ end
 
             i::Int32 = 1
             while i <= n
-                if true
+                @inbounds source_is_static = P[static_row, i]
+                if source_is_static == 0
                     @inbounds sx = P[1, i]
                     @inbounds sy = P[2, i]
                     @inbounds sz = P[3, i]
@@ -725,6 +727,7 @@ function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
 
     ka_estr_direct_kernel!(KA.get_backend(pfield.particles), 256)(
         out, P, Int32(n), pfield.kernel.zeta, pfield.transposed,
+        Int32(FLOWVPM.STATIC_INDEX),
         jrows[1], jrows[2], jrows[3], jrows[4], jrows[5], jrows[6], jrows[7], jrows[8], jrows[9];
         ndrange=n)
     KA.synchronize(KA.get_backend(pfield.particles))
@@ -771,11 +774,11 @@ end
 # Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
 @kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
         fac, rlxf, minC, maxC, zeta0, epsv, ::Val{FP}, subtract::Bool,
-        ig, isig, ij, im, ic, isfs) where {FP}
+        ig, isig, ij, im, ic, isfs, istat) where {FP}
     i = @index(Global)
     @inbounds if i <= np
         T = eltype(P)
-        act = true
+        act = P[istat, i] == zero(T)
         g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
         j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
         j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
@@ -826,11 +829,11 @@ end
 # Port of the post-UJ half of `_pseudo3level_beforeUJ_broadcast!`: zero M for
 # active particles, store the test-filter stretching and E_str, restore sigma.
 @kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, alpha,
-        ig, isig, ij, im, isfs)
+        ig, isig, ij, im, isfs, istat)
     i = @index(Global)
     @inbounds if i <= np
         T = eltype(P)
-        if true
+        if P[istat, i] == zero(T)
             g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
             j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
             j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
@@ -847,10 +850,11 @@ end
 end
 
 # sigma *= alpha on active particles (the test-filter width), before the UJ call
-@kernel function ka_sfs_scale_sigma_kernel!(P, np, alpha, isig)
+@kernel function ka_sfs_scale_sigma_kernel!(P, np, alpha, isig, istat)
     i = @index(Global)
     @inbounds if i <= np
-        P[isig, i] = P[isig, i] * alpha
+        T = eltype(P)
+        P[istat, i] == zero(T) && (P[isig, i] = P[isig, i] * alpha)
     end
 end
 
@@ -873,8 +877,8 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
          twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
          R(pfield.kernel.zeta(zero(R))), R(eps()), Val(force_positive), !twolevel,
          first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX, first(FLOWVPM.J_INDEX),
-         first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX);
-         ndrange = cld(np, wg) * wg)
+         first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX),
+         FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
     KA.synchronize(backend)
     Array(flag)[1] == 0 || error("NaN in dynamicprocedure_pseudo3level_afterUJ " *
         "(GPU fused path, np=$(np))")
@@ -891,13 +895,14 @@ function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha:
     wg = _sfs_wg(backend)
     ndr = cld(np, wg) * wg
     ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, R(alpha),
-        FLOWVPM.SIGMA_INDEX; ndrange = ndr)
+        FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = ndr)
     KA.synchronize(backend)
     # UJ at the test filter width (device radix path; resets U/J and the SFS rows)
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
     ka_sfs_beforeUJ_store_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
         R(alpha), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
-        first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX), first(FLOWVPM.SFS_INDEX); ndrange = ndr)
+        first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX), first(FLOWVPM.SFS_INDEX),
+        FLOWVPM.STATIC_INDEX; ndrange = ndr)
     KA.synchronize(backend)
     return nothing
 end
@@ -1415,29 +1420,29 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
         off = _sfs_pair_offsets!(nf, backend, wg)
         ka_sfs_zeta_cells_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-            nf.n_cells, rc2, K1, 0, TF, Val(wg); ndrange=nf.n_cells * wg)
+            nf.n_cells, rc2, K1, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
     elseif npairs > 0
         ka_sfs_zeta_pairs_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
-            nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 0, TF, Val(wg); ndrange=npairs * wg)
+            nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
     end
     if dsigma
         fill!(view(ctx.dj, :, 1:n), zero(TF))
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dj_cells_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, nf.n_cells,
-                rc2, A, 0, TF, Val(wg); ndrange=nf.n_cells * wg)
+                rc2, A, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
         elseif npairs > 0
             ka_sfs_dj_pairs_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
-                nf.direct_sources, npairs, rc2, A, 0, TF, Val(wg); ndrange=npairs * wg)
+                nf.direct_sources, npairs, rc2, A, 9, TF, Val(wg); ndrange=npairs * wg)
         end
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dzeta_cells_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-                nf.n_cells, rc2, K1, 0, TF, Val(wg); ndrange=nf.n_cells * wg)
+                nf.n_cells, rc2, K1, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
         elseif npairs > 0
             ka_sfs_dzeta_pairs_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
-                nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 0, TF, Val(wg); ndrange=npairs * wg)
+                nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
         end
     end
     # no sync: the kernels queue in order behind the lifecycle's; fmm!'s finalize synchronizes

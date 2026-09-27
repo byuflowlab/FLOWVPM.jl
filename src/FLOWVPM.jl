@@ -327,6 +327,10 @@ function _kernel_compatibility(viscous_scheme::CoreSpreading)
     return [gaussianerf, kernel_gaussianerf]
 end
 
+function _kernel_compatibility(viscous_scheme::ParticleStrengthExchange)
+    return [gaussianerf, winckelmans,
+    kernel_gaussianerf, kernel_winckelmans]
+end
 
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------
@@ -367,7 +371,7 @@ export rVPM, cVPM,
        formulation_tube_continuity, formulation_tube_momentum
        singular, gaussian, gaussianerf, winckelmans,
        pedrizzetti, correctedpedrizzetti, norelaxation, relax_filter_all,
-       Inviscid, CoreSpreading,
+       Inviscid, CoreSpreading, ParticleStrengthExchange,
        noSFS, SFS_Cs_nobackscatter, SFS_Cd_twolevel_nobackscatter,
        SFS_Cd_twolevel_analytic_nobackscatter, analyticSFS,
        SFS_Cd_twolevel_nobackscatter_projection,

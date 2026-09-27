@@ -72,13 +72,13 @@ function _radix_sfs_pass!(pfield::ParticleField, ctx, nf; dsigma::Bool=false)
     n = nf.n_bodies
     _host_sfs_tg_and_zero!(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, ctx.transposed, n)
     _host_sfs_zeta_pairs!(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
-        nf.direct_targets, nf.direct_sources, nf.n_direct, 0)
+        nf.direct_targets, nf.direct_sources, nf.n_direct, 9)
     if dsigma
         _host_sfs_dj_pairs!(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
-            nf.direct_sources, nf.n_direct, n, 0)
+            nf.direct_sources, nf.n_direct, n, 9)
         _host_sfs_dsigma_tg_and_zero!(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, ctx.transposed, n)
         _host_sfs_dzeta_pairs!(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
-            nf.direct_targets, nf.direct_sources, nf.n_direct, 0)
+            nf.direct_targets, nf.direct_sources, nf.n_direct, 9)
     end
     return nothing
 end

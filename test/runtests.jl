@@ -6,6 +6,7 @@
 
 using Test
 import FLOWVPM
+const vpm = FLOWVPM   # the test files bind this name; one const binding for the session
 
 # Run tests on CPU
 const test_using_GPU = fill(0)
