@@ -702,19 +702,14 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
     # (particles added/removed between steps) with no reallocation.
-    # Task 048: SFS storage is armed unconditionally for this vortex coupling
-    # (sfs=true requires only hessian=true + sigma in packed row 8, both
-    # already guaranteed here), so any SFS scheme works without a cache
-    # rebuild; the per-evaluation `sfs` flag gates both execution and delivery.
-    # Packed row 9 is the non-static mask used by the SFS pair pass, matching
-    # CPU Estr_direct!/Estr_fmm! source and target semantics.
+    # The SFS pass is FLOWVPM's own (FLOWVPM_fmm_radix_sfs.jl), run through
+    # fmm!'s nearfield_pass; it needs hessian=true and sigma in packed row 8.
     return fmm.RadixFMMCache(pfield;
         expansion_order=P, ell,
         max_n_bodies,
         bounds=(SVector{3,TF}(bounds[1]),
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
-        hessian=true, sfs=true, sfs_transposed=pfield.transposed,
-        sfs_active_row=0,     # no static particles: the SFS sweeps filter nothing (2026-09-22)
+        hessian=true,
         near_radius2=q,
         level_radii2=settings.level_radii2, window_classes=K,
         device, options=opts)
@@ -858,7 +853,8 @@ function _radix_fmm_coupling!(pfield::ParticleField)
         cache = _build_radix_fmm_cache(pfield, settings)
         st = (; cache, settings, np_checked=Ref(pfield.np),
                 sigma_limit=_radix_sigma_limit(cache, settings),
-                q=get(_radix_built_q, pfield, settings.near_radius2), evals=Ref(0))
+                q=get(_radix_built_q, pfield, settings.near_radius2), evals=Ref(0),
+                sfs=Ref{Any}(nothing))            # the SFS pass's scratch, on first use
         _radix_fmm_couplings[pfield] = st
     end
     return st
@@ -877,58 +873,6 @@ cache's fixed box. With derived bounds the coupling recenters once
 (`fmm.recenter!`, derived padded bounds, no reallocation) and retries; with
 user-fixed `bounds` the error propagates (the box is a user promise).
 """
-#--- SFS repass (FastMultipole.radix_sfs_repass!) ---#
-
-# The particles' current U (rows 10:12) and J (16:24) into the resident output
-# (rows 2:4 and 5:13) in sorted body order. Host arrays here; the GPU extension
-# overloads it with one kernel.
-function fmm.output_from_target!(pfield::ParticleField, output::Matrix, perm, body_system,
-                                 body_index, isys, n)
-    P = pfield.particles
-    u0 = first(U_INDEX); j0 = first(J_INDEX)
-    @inbounds for sorted_i in 1:n
-        g = perm[sorted_i]
-        body_system[g] == isys || continue
-        i = body_index[g]
-        output[2, sorted_i] = P[u0, i]; output[3, sorted_i] = P[u0 + 1, i]; output[4, sorted_i] = P[u0 + 2, i]
-        for k in 0:8
-            output[5 + k, sorted_i] = P[j0 + k, i]
-        end
-    end
-    return output
-end
-
-"""
-    sfs_repass!(pfield)
-
-Recompute the SFS estimator (`SFS_INDEX`) from the particles' CURRENT velocity
-gradient over the direct pairs of the last radix evaluation. For a caller that
-reused that evaluation's U/J and then added another source's field to them.
-"""
-function sfs_repass!(pfield::ParticleField)
-    st = get(_radix_fmm_couplings, pfield, nothing)
-    st === nothing && error("sfs_repass!: no radix evaluation on record for this field")
-    _reset_particles_sfs(pfield)
-    fmm.radix_sfs_repass!(st.cache, (pfield,); dsigma=_sfs_dsigma_requested(pfield))
-    return nothing
-end
-
-# sfs_dsigma channel (two-level dynamic procedure): rows 1:3 L = (Γ⋅∇)∂U/∂α into
-# M[1:3], rows 4:6 ∂E/∂α into M[4:6]; REPLACE (the procedure owns those rows
-# between its beforeUJ and afterUJ). Host-Matrix method; the device one lives
-# in ext/FLOWVPMGPUExt.jl.
-function fmm.sfs_dsigma_to_target!(pfield::ParticleField,
-        buf::Union{Matrix,SubArray{<:Any,2,<:Matrix}},
-        sort_index=1:pfield.np)
-    np = pfield.np
-    size(buf, 2) == np || error(
-        "unexpected SFS derivative buffer shape $(size(buf)) for np=$np")
-    m0 = first(M_INDEX)
-    view(pfield.particles, m0:m0+5, 1:np) .= buf
-    _sfs_dsigma_delivered!(pfield, true)
-    return pfield
-end
-
 #--- oversize cores (see RadixFMMSettings.oversize_count) ---#
 
 """
@@ -1141,9 +1085,14 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         # the two-level dynamic procedure asks for the analytic core-scaling
         # derivatives of the SFS pass (see dynamicprocedure_twolevel_beforeUJ)
         sfs_dsigma = sfs && _sfs_dsigma_requested(pfield)
+        # the SFS estimator is FLOWVPM's pass over the lifecycle's near field,
+        # run inside fmm! when the particles' U and J are complete (before the
+        # extra sources), delivered after fmm! returns
+        ctx = sfs ? _radix_sfs_context!(pfield, st) : nothing
+        nearfield_pass = sfs ? (c -> _radix_sfs_pass!(pfield, ctx, fmm.radix_nearfield(c); dsigma=sfs_dsigma)) : nothing
         try
             fmm.fmm!(targets, sources, st.cache;
-                scalar_potential=false, gradient=true, hessian, sfs, sfs_dsigma,
+                scalar_potential=false, gradient=true, hessian, nearfield_pass,
                 tree_sources)
         catch err
             (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
@@ -1155,9 +1104,10 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
                 (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
             fmm.recenter!(st.cache, pfield; bounds)
             fmm.fmm!(targets, sources, st.cache;
-                scalar_potential=false, gradient=true, hessian, sfs, sfs_dsigma,
+                scalar_potential=false, gradient=true, hessian, nearfield_pass,
                 tree_sources)
         end
+        sfs && _radix_sfs_deliver!(pfield, ctx, fmm.radix_nearfield(st.cache); dsigma=sfs_dsigma)
     finally
         ov === nothing || _radix_oversize_restore!(pfield, oversize, ov)
     end
@@ -1201,22 +1151,6 @@ end
 # caller resets SFS rows). This host-Matrix method serves the transfer-based
 # host path; the CuArray method lives in ext/FLOWVPMGPUExt.jl.
 ################################################################################
-
-# NOTE on the signature: the buffer is host-pinned to plain-Matrix storage to
-# stay unambiguous against the CuArray method in ext/FLOWVPMGPUExt.jl, but it
-# must also accept the SubArray prefix view FastMultipole's
-# finalize_radix_sfs_output! passes when the cache capacity (max_n_bodies)
-# exceeds the live np. A SubArray of a host Matrix is never a CUDA.AnyCuArray,
-# so the union keeps the disambiguation intact.
-function fmm.sfs_to_target!(pfield::ParticleField,
-        buf::Union{Matrix,SubArray{<:Any,2,<:Matrix}},
-        sort_index=1:pfield.np)
-    np = pfield.np
-    size(buf, 2) == np || error(
-        "unexpected SFS output buffer shape $(size(buf)) for np=$np")
-    view(pfield.particles, SFS_INDEX, 1:np) .+= buf
-    return pfield
-end
 
 else # !_FMM_HAS_RADIX ---------------------------------------------------------
 

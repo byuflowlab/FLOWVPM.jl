@@ -1026,8 +1026,8 @@ m = σ³/ζ(0) ∂E_str/∂α, the derivatives with respect to a uniform scaling
 approximates them by a finite difference over a second full evaluation at
 `alpha`σ (and its 3α − 2 factor is that approximation's own artifact, → 1 as
 α → 1); here the radix FMM accumulates them exactly over its direct pairs
-(`fmm!(...; sfs=true, sfs_dsigma=true)`, FastMultipole) and delivers L into
-M[1:3] and ∂E/∂α into M[4:6] through [`FastMultipole.sfs_dsigma_to_target!`](@ref),
+(FLOWVPM's own pass over FastMultipole's near field, `_radix_sfs_pass!` with
+`dsigma = true`) and delivers L into M[1:3] and ∂E/∂α into M[4:6],
 so no test-width evaluation, no 4th-digit cancellation, and `alpha` is unused.
 Off the radix path (host `UJ_direct`/octree `UJ_fmm`) the derivatives come
 from the all-pairs reference [`dsigma_direct!`](@ref). The coefficient logic

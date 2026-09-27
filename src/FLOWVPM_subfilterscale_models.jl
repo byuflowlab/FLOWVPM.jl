@@ -275,7 +275,7 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
     # L = op(∂J)Γ, then ∂E = Σ_j [∂ζ op(J_i − J_j)Γ_j + ζ op(∂J_i − ∂J_j)Γ_j]
     Threads.@threads for i in 1:np
         gi = (P[g0, i], P[g0 + 1, i], P[g0 + 2, i])
-        L = fmm._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
+        L = _sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
             dJ[7, i], dJ[8, i], dJ[9, i], gi..., transposed)
         xi, yi, zi = P[x0, i], P[x0 + 1, i], P[x0 + 2, i]
         e1 = zero(R); e2 = zero(R); e3 = zero(R)
@@ -287,9 +287,9 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
             z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
             dz_ = z * (rho2 - 3)
             gj = (P[g0, j], P[g0 + 1, j], P[g0 + 2, j])
-            s = fmm._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)...,
+            s = _sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)...,
                 gj..., transposed)
-            ds = fmm._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
+            ds = _sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
             e1 += dz_ * s[1] + z * ds[1]
             e2 += dz_ * s[2] + z * ds[2]
             e3 += dz_ * s[3] + z * ds[3]
@@ -352,7 +352,7 @@ function dsigma_fmm!(pfield::ParticleField{R}, target_tree, source_tree, direct_
     # L = op(∂J)Γ into M[1:3]; ∂E accumulators zeroed
     Threads.@threads for i in 1:np
         @inbounds begin
-            L = fmm._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
+            L = _sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
                 dJ[7, i], dJ[8, i], dJ[9, i], P[g0, i], P[g0 + 1, i], P[g0 + 2, i], transposed)
             P[m0, i] = L[1]; P[m0 + 1, i] = L[2]; P[m0 + 2, i] = L[3]
             P[m0 + 3, i] = 0; P[m0 + 4, i] = 0; P[m0 + 5, i] = 0
@@ -374,8 +374,8 @@ function dsigma_fmm!(pfield::ParticleField{R}, target_tree, source_tree, direct_
                     rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
                     z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
                     dz_ = z * (rho2 - 3)
-                    s = fmm._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)..., gj..., transposed)
-                    ds = fmm._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
+                    s = _sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)..., gj..., transposed)
+                    ds = _sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj..., transposed)
                     P[m0 + 3, i] += dz_ * s[1] + z * ds[1]
                     P[m0 + 4, i] += dz_ * s[2] + z * ds[2]
                     P[m0 + 5, i] += dz_ * s[3] + z * ds[3]
