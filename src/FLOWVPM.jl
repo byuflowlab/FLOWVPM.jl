@@ -86,7 +86,7 @@ for header_name in ["kernel", "viscous", "formulation",
                     "fmm_radix",
                     "fmm_radix_sfs",
                     "merging", "splitting",
-                    "gpu_erf",
+                    "gpu_erf", "rectangular",
                     "UJ", "subfilterscale_models", "subfilterscale_gpu",
                     "timeintegration",
                     "monitors", "utils"]# , "rrules"]
