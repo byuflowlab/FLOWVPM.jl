@@ -96,8 +96,9 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                     γbar[a] = zero(T)
                 end
                 if VS
+                    @views Ubar_target_buffer = fmm.get_gradient(target_buffer, derivatives_switch, j)
                     for a=1:3
-                        Ubar[a] = target_buffer[a+4, j].deriv
+                        Ubar[a] = Ubar_target_buffer[a].deriv
                     end
 
                     for a=1:3
@@ -108,9 +109,10 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                     
                 end
                 if GS
+                    @views Jbar_target_buffer = fmm.get_hessian(target_buffer, derivatives_switch, j)
                     for a=1:3
                         for b=1:3
-                            Jbar[a,b] = target_buffer[7 + 3*(b-1) + a, j].deriv # may need to transpose this?
+                            Jbar[a,b] = Jbar_target_buffer[a, b].deriv # may need to transpose this?
                             αbar += Jbar[a, b] * γ[a] * dx[b]
                             γbar[a] += Jbar[a, b] * α * dx[b]
                             dxbar[b] += Jbar[a, b] * α * γ[a]
@@ -162,8 +164,9 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
     end
 
     # unseed outputs
-    
-    for j in target_index
+    # skipped - since we accumulate into U and J (instead of overwriting them), we do not reset their derivatives.
+
+    #=for j in target_index
         for a=1:3
             target_buffer[a+4, j].deriv = 0.0
         end
@@ -172,7 +175,7 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                 target_buffer[7 + 3*(b-1) + a, j].deriv = 0.0
             end
         end
-    end
+    end=#
 
     return nothing
 
@@ -501,49 +504,130 @@ end
     return nothing
 end
 
+# buffer[1:3, i_body] .= get_position(system, i_sorted)
+function fmm.position_to_buffer__value!(buffer, i_body, system, i_sorted, buffer_star)
+    for a=1:3
+        buffer_star[a, i_body] = buffer[a, i_body].value
+        buffer[a, i_body,].value = system.particles[X_INDEX[a], i_sorted].value
+    end
+    return nothing
+end
+
+#=function fmm.metadata_to_buffer!(buffer, switch, i_buffer, system::ParticleField, i_body)
+    previous_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i_body)
+    G = gx*gx + gy*gy + gz*gz
+    previous_gradient = G > 0 ? sqrt(G) : zero(eltype(G))
+    buffer[fmm.metadata_index(switch, 1), i_buffer] = previous_potential
+    buffer[fmm.metadata_index(switch, 2), i_buffer] = previous_gradient
+end=#
+function fmm.metadata_to_buffer__value!(buffer, switch, i_buffer, system, i_body, buffer_star)
+    previous_potential = zero(ReverseDiff.valtype(eltype(system)))#zero(eltype(system))
+    U = get_U(system, i_body)
+    G2 = U[1].value*U[1].value + U[2].value*U[2].value + U[3].value*U[3].value
+    previous_gradient = sqrt(G2)
+    buffer_star[4, i_buffer] = buffer[fmm.metadata_index(switch, 1), i_buffer].value
+    buffer_star[5, i_buffer] = buffer[fmm.metadata_index(switch, 2), i_buffer].value
+    buffer[fmm.metadata_index(switch, 1), i_buffer].value = previous_potential
+    buffer[fmm.metadata_index(switch, 2), i_buffer].value = previous_gradient
+    return nothing
+end
+
+# buffer[1:3, i_body] .= get_position(system, i_sorted)
+function fmm.position_to_buffer__pullback!(buffer, i_body, system, i_sorted, buffer_star)
+    for a=1:3
+        buffer[a, i_body].value = buffer_star[a, i_body] # reset to original value, which is the buffer value at the end of the previous timestep.
+        ReverseDiff._add_to_deriv!(system.particles[X_INDEX[a], i_sorted], buffer[a, i_body].deriv)
+        ReverseDiff.unseed!(buffer[a, i_body])
+    end
+    return nothing
+end
+
+#=function fmm.metadata_to_buffer!(buffer, switch, i_buffer, system::ParticleField, i_body)
+    previous_potential = zero(eltype(system))
+    gx, gy, gz = get_U(system, i_body)
+    G = gx*gx + gy*gy + gz*gz
+    previous_gradient = G > 0 ? sqrt(G) : zero(eltype(G))
+    buffer[fmm.metadata_index(switch, 1), i_buffer] = previous_potential
+    buffer[fmm.metadata_index(switch, 2), i_buffer] = previous_gradient
+end=#
+function fmm.metadata_to_buffer__pullback!(buffer, switch, i_buffer, system, i_body, buffer_star)
+
+    # Ubar[a] = Gbar*dGdU[a] = Gbar * U[a]/sqrt(G) (if G > 0)
+    #previous_potential = zero(eltype(system)) # the only thing needed to handle this is to unseed the relevant buffer entry
+    buffer[fmm.metadata_index(switch, 1), i_buffer].value = buffer_star[4, i_body]
+    buffer[fmm.metadata_index(switch, 2), i_buffer].value = buffer_star[5, i_body]
+    U = get_U(system, i_body)
+    G2 = U[1].value*U[1].value + U[2].value*U[2].value + U[3].value*U[3].value
+    if G2 > 0 # if zero gradient, then the pullback doesn't matter - the cotangent blows up the infinity, but the existence of a real, deterministic answer ensures that we always have a removeable singularity.
+        G = sqrt(G2)
+        for a=1:3
+            ReverseDiff._add_to_deriv!(U[a], buffer[fmm.metadata_index(switch, 2), i_buffer].deriv * U[a].value/G)
+        end
+    end
+    ReverseDiff.unseed!(buffer[fmm.metadata_index(switch, 1), i_buffer])
+    ReverseDiff.unseed!(buffer[fmm.metadata_index(switch, 2), i_buffer])
+
+end
+
+#=
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, target_buffer, i_buffer) where {PS,VS,GS}
+    # switch-aware getters -- see the comment on set_gradient! in direct! above. The
+    # bare 2-arg forms read hardcoded rows 5:7 / 8:16, which no longer match the
+    # buffer layout now that ParticleField declares metadata_per_body = 2.
+    if VS
+        @views target_system.particles[U_INDEX, i_target] .+= fmm.get_gradient(target_buffer, derivatives_switch, i_buffer)
+    end
+    if GS
+        j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
+        for i = 1:9
+            target_system.particles[J_INDEX[i], i_target] += j[i]
+        end
+    end
+end
+=#
+
 # In-place function that breaks without an explicit rule
-function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch, target_buffer::AbstractArray{<:ReverseDiff.TrackedReal}, i_buffer)
+function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, derivatives_switch::fmm.DerivativesSwitch{PS,VS,GS}, target_buffer::AbstractArray{<:ReverseDiff.TrackedReal}, i_buffer) where {PS,VS,GS}
     
     tp = ReverseDiff.tape(target_system, target_buffer)
-    #ustar = ReverseDiff.value.(target_system.particles[U_INDEX, i_target])
-    #jstar = ReverseDiff.value.(target_system.particles[J_INDEX, i_target])
-    u = fmm.get_gradient(target_buffer, i_buffer)
-    for i=1:3
-        target_system.particles[U_INDEX[i], i_target].value += u[i].value
-        #target_system.particles[U_INDEX[i], i_target] = ReverseDiff.track(target_system.particles[U_INDEX[i], i_target] + u[i], tp)
+    if VS
+        u = fmm.get_gradient(target_buffer, derivatives_switch, i_buffer)
+        for i=1:3
+            target_system.particles[U_INDEX[i], i_target].value += u[i].value
+        end
     end
-    j = fmm.get_hessian(target_buffer, i_buffer)
-    for i = 1:9
-        target_system.particles[J_INDEX[i], i_target].value += j[i].value
-        #target_system.particles[J_INDEX[i], i_target] = ReverseDiff.track(target_system.particles[J_INDEX[i], i_target] + j[i], tp)
+    if GS
+        j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
+        for i = 1:9
+            target_system.particles[J_INDEX[i], i_target].value += j[i].value
+        end
     end
     
     ReverseDiff.record!(tp,
                         ReverseDiff.SpecialInstruction,
                         fmm.buffer_to_target_system!,
-                        (target_system, i_target, derivatives_switch, target_buffer, i_buffer),
+                        (target_system, i_target, derivatives_switch, target_buffer, i_buffer, VS, GS),
                         nothing)
-                        #(ustar, jstar))
     return nothing
 end
 
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.buffer_to_target_system!)})
 
-    target_system, i_target, derivatives_switch, target_buffer, i_buffer = instruction.input
-    #ustar, jstar = instruction.cache
-    u = fmm.get_gradient(target_buffer, i_buffer)
-    j = fmm.get_hessian(target_buffer, i_buffer)
-    for i=1:3
-        target_system.particles[U_INDEX[i], i_target].value -= u[i].value
-        #target_buffer[i+4, i_buffer].deriv += target_system.particles[U_INDEX[i], i_target].deriv
-        ReverseDiff._add_to_deriv!(target_buffer[i+4, i_buffer], target_system.particles[U_INDEX[i], i_target].deriv)
-        #target_system.particles[U_INDEX[i], i_target].deriv = 0.0
+    target_system, i_target, derivatives_switch, target_buffer, i_buffer, VS, GS = instruction.input
+    if VS
+        u = fmm.get_gradient(target_buffer, derivatives_switch, i_buffer)
+        for i=1:3
+            target_system.particles[U_INDEX[i], i_target].value -= u[i].value
+            ReverseDiff._add_to_deriv!(u[i], target_system.particles[U_INDEX[i], i_target].deriv)
+        end
     end
-    for i=1:9
-        target_system.particles[J_INDEX[i], i_target].value -= j[i].value
-        #target_buffer[i+7, i_buffer].deriv += target_system.particles[J_INDEX[i], i_target].deriv
-        ReverseDiff._add_to_deriv!(target_buffer[i+7, i_buffer], target_system.particles[J_INDEX[i], i_target].deriv)
-        #target_system.particles[J_INDEX[i], i_target].deriv = 0.0
+    if GS
+        j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
+        for i=1:9
+            target_system.particles[J_INDEX[i], i_target].value -= j[i].value
+            ReverseDiff._add_to_deriv!(j[i], target_system.particles[J_INDEX[i], i_target].deriv)
+        end
     end
     return nothing
 
@@ -551,17 +635,18 @@ end
 
 function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.buffer_to_target_system!)})
 
-    target_system, i_target, derivatives_switch, target_buffer, i_buffer = instruction.input
-    ustar, jstar = instruction.cache
-    ustar .= ReverseDiff.value.(target_system.particles[U_INDEX, i_target])
-    jstar .= ReverseDiff.value.(target_system.particles[J_INDEX, i_target])
-    u = fmm.get_gradient(target_buffer, i_buffer)
-    for i=1:3
-        target_system.particles[U_INDEX[i], i_target].value += u[i].value
+    target_system, i_target, derivatives_switch, target_buffer, i_buffer, VS, GS = instruction.input
+    if VS
+        u = fmm.get_gradient(target_buffer, i_buffer)
+        for i=1:3
+            target_system.particles[U_INDEX[i], i_target].value += u[i].value
+        end
     end
-    j = fmm.get_hessian(target_buffer, i_buffer)
-    for i = 1:9
-        target_system.particles[J_INDEX[i], i_target].value += j[i].value
+    if GS
+        j = fmm.get_hessian(target_buffer, i_buffer)
+        for i = 1:9
+            target_system.particles[J_INDEX[i], i_target].value += j[i].value
+        end
     end
 
     return nothing

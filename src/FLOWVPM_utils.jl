@@ -122,6 +122,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
         # Save particle field
         # Currently only saves when using AbstractFloat numbers (i.e., not when using AD).
         # Supporting AD types requires custom save() implementations that convert the AD types to something that hdf5 can interpret.
+        
         if save_pfield && save_path!==nothing && (i%nsteps_save==0 || i==nsteps || breakflag)
             overwrite_time = save_time ? nothing : pfield.nt
             save(pfield, run_name; path=save_path, add_num=true,
@@ -150,7 +151,6 @@ function save(
         file_name::String; path::String="",
                 add_num::Bool=true, num::Int64=-1, createpath::Bool=false,
                 overwrite_time=nothing) where TF
-
     # Save a field with one dummy particle if field is empty
     if get_np(self)==0
         dummy_pfield = ParticleField(1, TF; nt=self.nt, t=self.t,

@@ -65,12 +65,12 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
+    # this solve is currently not numerically - changes at the scale of machine precision will result in changes to ρ_σ several orders of magnitude larger. this could trip up some unit tests/error checks.
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
     buffer[5:7, i_buffer] .= view(system.particles, GAMMA_INDEX, i_body)
     buffer[8, i_buffer] = σ
-
 end
 
 function fmm.data_per_body(system::ParticleField)
