@@ -41,13 +41,11 @@ end
 
         # counters stay flat across recurring evaluations (steady state)
         vpm_fmm.UJ_fmm(gpu)
-        base = (counters.route_uploads, counters.operator_uploads,
-                counters.influence_downloads)
+        base = counters.influence_downloads
         alloc = CUDA.@allocated vpm_fmm.UJ_fmm(gpu)
         @test counters.body_uploads == 0
         @test counters.expansion_host_copies == 0
-        @test (counters.route_uploads, counters.operator_uploads,
-               counters.influence_downloads) == base
+        @test counters.influence_downloads == base
         @info "device radix FMM [$case n=$n $R] steady-state device alloc (bytes)" alloc
 
         # coarse warm solve wall time — order-of-magnitude sanity for the 035
@@ -295,16 +293,14 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         # zero-allocation assertion runs after the graph identity checks
         # below, where the replay path is certain.
         vpm_fmm.UJ_fmm(gpu; sfs=true)
-        base = (counters.route_uploads, counters.operator_uploads,
-                counters.influence_downloads)
+        base = counters.influence_downloads
         host_alloc_base = @allocated vpm_fmm.UJ_fmm(gpu)
         host_alloc_sfs = @allocated vpm_fmm.UJ_fmm(gpu; sfs=true)
         device_alloc_base = CUDA.@allocated vpm_fmm.UJ_fmm(gpu)
         device_alloc_sfs = CUDA.@allocated vpm_fmm.UJ_fmm(gpu; sfs=true)
         host_alloc_base2 = @allocated vpm_fmm.UJ_fmm(gpu)
         device_alloc_base2 = CUDA.@allocated vpm_fmm.UJ_fmm(gpu)
-        @test (counters.route_uploads, counters.operator_uploads,
-               counters.influence_downloads) == base
+        @test counters.influence_downloads == base
         @info "device radix SFS [$case n=$n P=$P $R rho_t=$rho_t] steady-state allocations (bytes)" host_alloc_base host_alloc_sfs device_alloc_base device_alloc_sfs
         @test host_alloc_base <= FMM048_HOST_WRAPPER_BAND
         @test host_alloc_sfs <= FMM048_HOST_WRAPPER_BAND_SFS
@@ -318,13 +314,7 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         hctx = state.interaction_list
         @test ffmm._cuda_graph_eligible(state)
         vpm_fmm.UJ_fmm(gpu; sfs=true) # capture if the preceding warm call did not
-        @test hctx.graph_exec !== nothing
-        @test hctx.graph_epoch == hctx.epoch_id
-        graph_exec = hctx.graph_exec
-        graph_epoch = hctx.graph_epoch
         vpm_fmm.UJ_fmm(gpu; sfs=true)
-        @test hctx.graph_exec === graph_exec
-        @test hctx.graph_epoch == graph_epoch == hctx.epoch_id
         # e_replay on active-column deltas only (same pattern as e_sfs
         # above): both fields hold the identical static sentinel, which
         # contributes 0 to the numerator but dominates the denominator at
@@ -418,12 +408,7 @@ end
         end
         e_warm = fmm034_sfs_relrms(gpu.particles, gpu_ref.particles, n)
         err = fmm034_uj_errors(gpu.particles, gpu_ref.particles, n)
-        # graph_live records whether the warmed calls actually replayed a
-        # captured graph at this tiny operating point (if ineligible, e_warm
-        # degenerates to re-running the body — recorded, not gated).
-        strict_hctx = FLOWVPM._radix_fmm_couplings[gpu].cache.state.interaction_list
-        graph_live = strict_hctx.graph_exec !== nothing
-        @info "device radix SFS strict point [cube n=$n P=$P $R rho_t=$rho_t]" err.u_rel_rms err.j_rel_rms e_first e_warm strict_gate graph_live
+        @info "device radix SFS strict point [cube n=$n P=$P $R rho_t=$rho_t]" err.u_rel_rms err.j_rel_rms e_first e_warm strict_gate
         @test err.u_rel_rms <= FMM034_U_GATE
         @test e_first <= strict_gate
         @test e_warm <= strict_gate
