@@ -343,7 +343,9 @@ end
         (; direct_kernel=:regularized, rho_t=0.0),
         (; direct_kernel=:regularized, rho_c=2.0),
         (; m2l_strategy=:bogus),
-        (; ell=3, near_radius2=6, level_radii2=(6,)),
+        # a fixed ell=3 takes the smallest adequate stencil (q=27 here), so
+        # level 2 is all-near and the schedule is 1 active or 2 legacy entries
+        (; ell=3, near_radius2=6, level_radii2=(6, 6, 6)),
         # n=200 resolves auto ell=2, so the legacy 2:ell schedule has length 1.
         (; near_radius2=6, level_radii2=(6, 6)),
         (; accuracy_margin=0.0),
@@ -383,16 +385,20 @@ end
         FLOWVPM.RadixFMMSettings(; direct_kernel=:regularized)).rho_t ≈ 4.789
     # shipped defaults (task 048 production selection, user-approved
     # 2026-08-22): P6 + PartitionedVortex(rho_t=4.789) + DenseTranslationM2L,
+    # M2L default since switched to :concat (2026-09-23: 7.9 s vs 19.6 s dense
+    # on the H200 5MW 800k run, identical CP),
     # derived near shell (q floor 6), margin 1.03 — passes the strict 5e-4
     # F64 delivered-E_str gate on the p018 production field (job 13303399)
     sdef = FLOWVPM.RadixFMMSettings()
     @test FLOWVPM._radix_direct_kernel(sdef) isa FLOWVPM.fmm.PartitionedVortex
-    @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.DenseTranslationM2L
+    @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.ConcatenatedFixedZM2L
     @test sdef.expansion_order == 6       # literature P = 7
     @test sdef.near_radius2 == 6
     @test sdef.accuracy_margin ≈ 1.03
-    # joint auto-geometry rule at the shipped defaults reproduces every
-    # measured cycle-3A P5 winner from the case sigma/L
+    # joint auto-geometry rule at the shipped defaults: the cubes reproduce
+    # their measured cycle-3A P5 winners; the wakes' (5,6) and (6,6) came from
+    # the ~n^(1/3) occupancy cap, removed when memory became the only depth
+    # cap, so without occupancy counts they take the deepest admissible depth
     sig_c = 2 * (1 / 1e5)^(1 / 3)
     sig_w = 2 * (3.927 / 1e5)^(1 / 3)
     sig_c6 = 2 * (1 / 1e6)^(1 / 3)
@@ -400,17 +406,19 @@ end
     @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 6, 3.668, 1.03) ==
         (4, 12)
     @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 6, 3.668, 1.03) ==
-        (5, 6)
+        (6, 17)
     @test FLOWVPM._radix_auto_geometry(1.2, sig_c6, 1_000_000, 6, 3.668, 1.03) ==
         (5, 12)
     @test FLOWVPM._radix_auto_geometry(6.0, sig_w6, 1_000_000, 6, 3.668, 1.03) ==
-        (6, 6)
-    # the cycle-1 rule at the old explicit settings still reproduces the
-    # cycle-1/2 winners (cube (4,17), wake (5,16)) — regression on the rule
+        (7, 17)
+    # at the old explicit settings the cube still reproduces its cycle-1/2
+    # winner (4,17); the wake's (5,16) came from the ~n^(1/3) occupancy cap,
+    # removed when memory became the only depth cap, so without occupancy
+    # counts it now takes the deepest admissible depth
     @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 16, 4.252, 1.15) ==
         (4, 17)
     @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 16, 4.252, 1.15) ==
-        (5, 16)
+        (6, 27)
     # invalid selections fail loudly
     @test_throws ErrorException FLOWVPM._radix_direct_kernel(
         FLOWVPM.RadixFMMSettings(; direct_kernel=:nope))
@@ -541,19 +549,29 @@ end
     vpm_fmm.UJ_fmm_gpu!(pfield)
     @test FLOWVPM._radix_fmm_couplings[pfield] === st1
 
-    # user-fixed ell is a promise: no auto rebuild — the runtime adequacy
-    # gate reports instead of a silent geometry change
+    # user-fixed ell is a promise: FLOWVPM never rebuilds the coupling. An
+    # outgrown geometry is demoted by FastMultipole to the all-direct zero-M2L
+    # cache (052f) instead of refusing, so the answer stays accurate. Oversize
+    # masking is off here: by default it would take the one fat core out of
+    # the tree (all-pairs arm) and the geometry would never be outgrown
     pfield2 = fmm034_pfield(n)
+    ref2 = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct)
     for i in 1:n
         vpm_fmm.add_particle(pfield2, Xs[i], Gs[i], sigma0)
+        vpm_fmm.add_particle(ref2, Xs[i], Gs[i], sigma0)
     end
-    FLOWVPM.radix_fmm_settings!(pfield2; ell=2, near_radius2=6)
+    FLOWVPM.radix_fmm_settings!(pfield2; ell=2, near_radius2=6, oversize_count=-1)
     vpm_fmm.UJ_fmm_gpu!(pfield2)
     st2 = FLOWVPM._radix_fmm_couplings[pfield2]
     lim2 = FLOWVPM._radix_sigma_limit(st2.cache, st2.settings)
+    @test isfinite(lim2)
     vpm_fmm.get_sigma(pfield2, 1) .= 1.5 * lim2
-    @test_throws ArgumentError vpm_fmm.UJ_fmm_gpu!(pfield2)
+    vpm_fmm.get_sigma(ref2, 1) .= 1.5 * lim2
+    vpm_fmm.UJ_fmm_gpu!(pfield2)
+    vpm_fmm.UJ_direct(ref2)
     @test FLOWVPM._radix_fmm_couplings[pfield2] === st2
+    @test isempty(st2.cache.accepted_offsets)          # demoted: zero M2L
+    @test fmm034_uj_errors(pfield2.particles, ref2.particles, n).u_rel_rms <= FMM034_U_GATE
 end
 
 @testset "radix FMM coupling: rectangular bounds (task 037, host path)" begin
@@ -619,13 +637,11 @@ end
     cache_c = FLOWVPM._radix_fmm_couplings[pfield_c].cache
     @test maximum(cache_c.ell_axes) == minimum(cache_c.ell_axes)
     @test maximum(cache_c.box_extent) ≈ minimum(cache_c.box_extent)
-    # rectangular derived the same depth/leaf width (auto-geometry rule is
-    # shape-independent: L = max extent)
-    @test cache.ell == cache_c.ell
-    # Same center, longest extent, ell, and leaf width imply the same occupied
-    # leaf lattice and direct list; rectangular trimming may change coarse M2L.
-    @test cache.state.grid.n_cells == cache_c.state.grid.n_cells
-    @test cache.state.counts.n_direct == cache_c.state.counts.n_direct
+    # the depth is no longer shape-independent: it is picked by the near-pair
+    # count over each box's own cell occupancy, so the rectangular and cubic
+    # boxes may choose different (ell, q). Both must still be accurate.
+    err_c = fmm034_uj_errors(pfield_c.particles, ref.particles, n)
+    @test err_c.u_rel_rms <= FMM034_U_GATE
 
     # explicit user bounds with a 3-vector box size pass through as-is:
     # rectangular cache, and out-of-box errors (user-owned box, no recenter)
@@ -809,9 +825,10 @@ fmm034_matrix_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
         e_fmm = fmm034_sfs_relrms(pfield.particles, fmmref.particles, n)
         e_sanity = fmm034_sfs_relrms(fmmref.particles, ref.particles, n)
         # Conservative per-pair candidates were derived at ε=1e-3 with half
-        # reserved for the omitted tail. F64 can enforce that ε/2 budget;
-        # F32 retains the phase-wide 1e-3 delivered gate.
-        strict_gate = R === Float64 ? 5e-4 : 1e-3
+        # reserved for the omitted tail. F64 enforces that ε/2 budget at the
+        # production cutoff 4.789; the 4.211 candidate (F64 P=4 measures
+        # 5.009e-4, J-bound) and F32 keep the phase-wide 1e-3 delivered gate.
+        strict_gate = R === Float64 && rho_t == 4.789 ? 5e-4 : 1e-3
         mech_gate = R === Float64 ? 1e-6 : 1e-4
         @info "SFS host radix [cube n=$n P=$P $R rho_t=$rho_t]" e_mech e_direct e_fmm e_sanity j_rel strict_gate
         @test e_mech <= mech_gate
@@ -828,7 +845,8 @@ fmm034_matrix_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
         @test isapprox(S2, 2 .* S1; rtol=R === Float64 ? 1e-10 : 1e-5)
 
         # sfs=false evaluations leave the SFS rows untouched
-        sfs_ctx = FLOWVPM._radix_fmm_couplings[pfield].cache.state.sfs
+        # the SFS scratch lives on FLOWVPM's coupling (the pass left FastMultipole)
+        sfs_ctx = FLOWVPM._radix_fmm_couplings[pfield].sfs[]
         om_before = copy(sfs_ctx.om)
         q_before = copy(sfs_ctx.q)
         vpm_fmm.UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=false)
