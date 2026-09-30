@@ -1093,7 +1093,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         try
             fmm.fmm!(targets, sources, st.cache;
                 scalar_potential=false, gradient=true, hessian, nearfield_pass,
-                tree_sources)
+                tree_sources, metadata=0)
         catch err
             (err isa ArgumentError && st.settings.bounds === nothing) || rethrow()
             # out-of-box (or other geometry) rejection: recenter and retry once;
@@ -1105,7 +1105,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
             fmm.recenter!(st.cache, pfield; bounds)
             fmm.fmm!(targets, sources, st.cache;
                 scalar_potential=false, gradient=true, hessian, nearfield_pass,
-                tree_sources)
+                tree_sources, metadata=0)
         end
         sfs && _radix_sfs_deliver!(pfield, ctx, fmm.radix_nearfield(st.cache); dsigma=sfs_dsigma)
     finally
