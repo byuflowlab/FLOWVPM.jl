@@ -89,6 +89,7 @@ function UJ_fmm(
         reset::Bool=true,
         reset_sfs::Bool=false,
         autotune::Bool=true,
+        optargs..., # e.g. the integrators' `relaxation`, which the particle-only evaluation ignores
     )
 
     # reset # TODO should this really have an elseif in between?

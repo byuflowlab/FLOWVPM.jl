@@ -46,6 +46,8 @@ Function used to solve the ``N``-body problem to obtain the velocity field, vort
 - [`UJ_fmm`](@ref FLOWVPM.UJ_fmm): Uses the fast multipole method to solve the ``N``-body problem (default).
 - [`UJ_direct`](@ref FLOWVPM.UJ_direct(pfield::FLOWVPM.ParticleField)): Loops through all particle interactions directly.
 
+The integrators make every U/J evaluation through this one function (each stage, the relaxation, an SFS procedure's test-filter pass), called as `UJ(pfield; reset, reset_sfs, sfs)` plus `relaxation=true` for the relaxation pass, so a custom `UJ` accepts further keywords (`; kwargs...`). A code that couples external sources to the particles (e.g. a lifting-line driver's bound and trailing filaments, or a non-uniform freestream) sets `UJ` to its full-field evaluation: FLOWVPM needs no change for a new source. The integrators' former `custom_UJ` keyword must be `nothing`.
+
 ### `Uinf::Function`
 The freestream fluid velocity. Defaults to `(t) -> SVector{3,Float64}(0,0,0)`.
 
@@ -70,7 +72,7 @@ Scheme used to ensure the field is divergence free.
 - [`pedrizzetti`](@ref FLOWVPM.pedrizzetti): Relaxation scheme where the vortex strength is aligned with the local vorticity. (default).
 - [`correctedpedrizzetti`](@ref FLOWVPM.correctedpedrizzetti): Relaxation scheme where the vortex strength is aligned with the local vorticity while preserving the magnitude of the particle strength.
 
-Under [`rungekutta3`](@ref FLOWVPM.rungekutta3) the relaxation evaluates U and J once more after the last stage, with the same function as the stages: the integrator's `custom_UJ` when one is given (called with `sfs=false, reset_sfs=false`), else the field's `UJ`. A `custom_UJ` must therefore include every external source the particles feel (e.g. a coupled code's bound and trailing filaments) in that call too: Pedrizzetti aligns Γ with the vorticity it reads, without renormalising, so a particle-only vorticity next to an external body rotates the fresh particles off its trailing direction and weakens them each step.
+Under [`rungekutta3`](@ref FLOWVPM.rungekutta3) the relaxation evaluates U and J once more after the last stage through the field's `UJ` (see above), with `sfs=false, reset_sfs=false, relaxation=true`. A `UJ` with external sources must include them in that call too: Pedrizzetti aligns Γ with the vorticity it reads, without renormalising, so a particle-only vorticity next to an external body rotates the fresh particles off its trailing direction and weakens them each step.
 
 ### `fmm::FMM`
 Settings for the fast multipole solver. Defaults autotune the FMM so that the absolute and relative tolerance of the velocity calculations are within 1e-3. See the the [`FMM`](@ref FLOWVPM.FMM) API for detailed settings

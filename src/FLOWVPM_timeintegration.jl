@@ -8,6 +8,14 @@
   * Created   : Aug 2020
 =###############################################################################
 
+# Every U/J evaluation goes through `pfield.UJ`, called with the keywords
+# `reset`, `reset_sfs`, `sfs` and, for the relaxation pass, `relaxation=true`.
+# A driver that adds sources of its own (e.g. bound and trailing filaments)
+# sets `pfield.UJ` to its full-field evaluation; the integrators' old
+# `custom_UJ` keyword is kept only so that callers passing `nothing` still work.
+_no_custom_UJ(::Nothing) = nothing
+_no_custom_UJ(custom_UJ) = throw(ArgumentError("`custom_UJ` is no longer used: " *
+    "set `pfield.UJ` to the full evaluation instead (it is called for every stage and the relaxation)"))
 
 """
     _reset_M_storage!(pfield)
@@ -43,19 +51,16 @@ Convects the `pfield` by timestep `dt` using a forward Euler step.
 - `pfield::ParticleField` The particle field to integrate.
 - `dt::Real` The time step.
 - `relax::Bool` Whether to apply relaxation (default: false).
-- `custom_UJ` Optional custom function for updating U and J.
+- `custom_UJ` Deprecated, must be `nothing`: U and J come from `pfield.UJ`.
 
 """
 function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
 
     # Evaluate UJ, SFS, and C
     # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
+    _no_custom_UJ(custom_UJ)
     pfield.SFS(pfield, BeforeUJ())
-    if isnothing(custom_UJ)
-        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-    else
-        custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-    end
+    pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
 
     _euler(pfield, dt; relax)
 
@@ -339,6 +344,8 @@ integration scheme. See Notebook entry 20180105.
 function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
                             dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R3}
 
+    _no_custom_UJ(custom_UJ)
+
     # the classic updaters share the reformulated signature and ignore its two
     # coefficients; they were never bound here, so a classic RK3 step threw
     # UndefVarError (2026-09-26)
@@ -360,11 +367,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
-        if isnothing(custom_UJ)
-            pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
-        else
-            custom_UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
-        end
+        pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
@@ -387,13 +390,9 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       but in MyVPM I just used the J calculated in the last RK step
         #       and it worked just fine. So maybe I perhaps I can save computation
         #       by not calculating UJ again.
-        # The same evaluation as the stages (a custom_UJ may add sources the
-        # particles do not carry, e.g. a driver's bound and trailing filaments)
-        if isnothing(custom_UJ)
-            pfield.UJ(pfield)
-        else
-            custom_UJ(pfield; reset_sfs=false, reset=true, sfs=false)
-        end
+        # The same evaluation as the stages (a driver's pfield.UJ may add
+        # sources the particles do not carry, e.g. bound and trailing filaments)
+        pfield.UJ(pfield; reset_sfs=false, reset=true, sfs=false, relaxation=true)
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
@@ -549,12 +548,14 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 - `pfield::ParticleField` The particle field to integrate.
 - `dt::R3` The time step.
 - `relax::Bool` Whether to apply relaxation (default: false).
-- `custom_UJ` Optional custom function for updating U and J (the stages and the
-  relaxation pass; called with `sfs=false, reset_sfs=false` for the relaxation).
+- `custom_UJ` Deprecated, must be `nothing`: the stages and the relaxation pass
+  call `pfield.UJ` (the relaxation with `sfs=false, reset_sfs=false, relaxation=true`).
 
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
                      dt::R3; relax::Bool=false, custom_UJ=nothing) where {R, V, R2, R3}
+
+    _no_custom_UJ(custom_UJ)
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7],
     #                      qsmg <=> get_M(p)[8], Z <=> MM4, S <=> MM[1:3]
@@ -573,11 +574,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 
         # Evaluate UJ, SFS, and C
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
-        if isnothing(custom_UJ)
-            pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-        else
-            custom_UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
-        end
+        pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
 
         # Update the particle field: convection and stretching
@@ -594,14 +591,10 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         # Resets U and J from previous step
         _reset_particles(pfield)
 
-        # Calculates U and J with the same evaluation as the stages (a custom_UJ
-        # may add sources the particles do not carry, e.g. a driver's bound and
+        # Calculates U and J with the same evaluation as the stages (a driver's
+        # pfield.UJ may add sources the particles do not carry, e.g. bound and
         # trailing filaments)
-        if isnothing(custom_UJ)
-            pfield.UJ(pfield)
-        else
-            custom_UJ(pfield; reset_sfs=false, reset=true, sfs=false)
-        end
+        pfield.UJ(pfield; reset_sfs=false, reset=true, sfs=false, relaxation=true)
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
