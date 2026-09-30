@@ -70,6 +70,8 @@ Scheme used to ensure the field is divergence free.
 - [`pedrizzetti`](@ref FLOWVPM.pedrizzetti): Relaxation scheme where the vortex strength is aligned with the local vorticity. (default).
 - [`correctedpedrizzetti`](@ref FLOWVPM.correctedpedrizzetti): Relaxation scheme where the vortex strength is aligned with the local vorticity while preserving the magnitude of the particle strength.
 
+Under [`rungekutta3`](@ref FLOWVPM.rungekutta3) the relaxation evaluates U and J once more after the last stage, with the same function as the stages: the integrator's `custom_UJ` when one is given (called with `sfs=false, reset_sfs=false`), else the field's `UJ`. A `custom_UJ` must therefore include every external source the particles feel (e.g. a coupled code's bound and trailing filaments) in that call too: Pedrizzetti aligns Γ with the vorticity it reads, without renormalising, so a particle-only vorticity next to an external body rotates the fresh particles off its trailing direction and weakens them each step.
+
 ### `fmm::FMM`
 Settings for the fast multipole solver. Defaults autotune the FMM so that the absolute and relative tolerance of the velocity calculations are within 1e-3. See the the [`FMM`](@ref FLOWVPM.FMM) API for detailed settings
 
