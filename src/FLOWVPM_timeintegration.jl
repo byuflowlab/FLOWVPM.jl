@@ -387,7 +387,13 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         #       but in MyVPM I just used the J calculated in the last RK step
         #       and it worked just fine. So maybe I perhaps I can save computation
         #       by not calculating UJ again.
-        pfield.UJ(pfield)
+        # The same evaluation as the stages (a custom_UJ may add sources the
+        # particles do not carry, e.g. a driver's bound and trailing filaments)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield)
+        else
+            custom_UJ(pfield; reset_sfs=false, reset=true, sfs=false)
+        end
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
@@ -543,7 +549,8 @@ integration scheme using the VPM reformulation. See Notebook entry 20180105
 - `pfield::ParticleField` The particle field to integrate.
 - `dt::R3` The time step.
 - `relax::Bool` Whether to apply relaxation (default: false).
-- `custom_UJ` Optional custom function for updating U and J.
+- `custom_UJ` Optional custom function for updating U and J (the stages and the
+  relaxation pass; called with `sfs=false, reset_sfs=false` for the relaxation).
 
 """
 function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},
@@ -587,8 +594,14 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         # Resets U and J from previous step
         _reset_particles(pfield)
 
-        # Calculates interactions between particles: U and J
-        pfield.UJ(pfield)
+        # Calculates U and J with the same evaluation as the stages (a custom_UJ
+        # may add sources the particles do not carry, e.g. a driver's bound and
+        # trailing filaments)
+        if isnothing(custom_UJ)
+            pfield.UJ(pfield)
+        else
+            custom_UJ(pfield; reset_sfs=false, reset=true, sfs=false)
+        end
 
         if pfield.particles isa Array
             if pfield.np > MIN_MT_NP
