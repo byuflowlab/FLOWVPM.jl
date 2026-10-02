@@ -847,6 +847,9 @@ function _radix_fmm_coupling!(pfield::ParticleField)
         get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix coupling dropped for rebuild at np=$(pfield.np)"); flush(stdout))
         delete!(_radix_fmm_couplings, pfield)
         st = nothing
+        # the old cache's device arrays are freed only by their finalizers;
+        # collect now so the new cache does not allocate on top of the old one
+        GC.gc()
     end
     if st === nothing
         settings = get(_radix_fmm_settings, pfield, RadixFMMSettings())
