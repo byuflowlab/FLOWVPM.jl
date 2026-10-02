@@ -818,7 +818,11 @@ and the runtime gate reports.
 function _radix_sigma_outgrown!(pfield::ParticleField, st)
     st.settings.ell === nothing || return false
     sigma_max = Float64(_radix_sigma_max(pfield))
-    sigma_max > st.sigma_limit || return false
+    # the live limit: `recenter!` changes the cache's box (and so its limit)
+    # after the coupling recorded `sigma_limit`
+    limit = _radix_sigma_limit(st.cache, st.settings)
+    sigma_max > limit || return false
+    get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix sigma outgrown: np=$(pfield.np) sigma_max=$(round(sigma_max; sigdigits=4)) > limit $(round(limit; sigdigits=4))"); flush(stdout))
     bounds = st.settings.bounds === nothing ?
         _radix_derive_bounds(pfield, st.settings.padding;
             rectangular=st.settings.rectangular) : st.settings.bounds
@@ -927,6 +931,15 @@ function _radix_oversize_select(pfield::ParticleField, settings::RadixFMMSetting
     settings.oversize_count < 0 && return Int[]
     settings.oversize_count > 0 && return _radix_oversize_select(pfield, settings.oversize_count)
     thr = _radix_oversize_threshold!(pfield, settings)
+    # Never above what the cached grid admits. The threshold is derived for a
+    # fresh padded box around the field, which outgrows the cache's box between
+    # recenters, so on its own it let cores through that the cached geometry
+    # cannot serve, and `_radix_sigma_outgrown!` rebuilt at the same (ell, q):
+    # 86 of 107 rebuilds on the NREL 5MW, 72 steps/rev, 20 rev (2026-10-02).
+    # Cores between the two are masked instead; a tail longer than K_max still
+    # leaves cores in the tree, which then outgrow the cache and rebuild it.
+    st = get(_radix_fmm_couplings, pfield, nothing)
+    st === nothing || (thr = min(thr, _radix_sigma_limit(st.cache, st.settings)))
     isfinite(thr) || return Int[]
     K_max = _radix_oversize_kmax(settings, pfield.np)
     idx = _radix_oversize_above(pfield.particles, pfield.np, thr, K_max + 64)
@@ -1111,6 +1124,8 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
                 rectangular=st.settings.rectangular)
             st.settings.rectangular &&
                 (bounds = _radix_center_snapped_bounds(bounds, st.cache.ell))
+            get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix recenter at np=$(pfield.np): ",
+                sprint(showerror, err; context=:limit => true)[1:min(end, 120)]); flush(stdout))
             fmm.recenter!(st.cache, pfield; bounds)
             fmm.fmm!(targets, sources, st.cache;
                 scalar_potential=false, gradient=true, hessian, nearfield_pass,

@@ -528,6 +528,10 @@ end
         vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma0)
         vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma0)
     end
+    # oversize masking off: with it, the fat core below would be masked into the
+    # all-pairs arm (the threshold is capped at the cached grid's limit) and the
+    # rebuild path under test would not run; the masked case is checked after
+    FLOWVPM.radix_fmm_settings!(pfield; oversize_count=-1)
     vpm_fmm.UJ_fmm_gpu!(pfield)
     st0 = FLOWVPM._radix_fmm_couplings[pfield]
     ell0 = st0.cache.ell
@@ -548,6 +552,21 @@ end
     # steady sigma: no churn
     vpm_fmm.UJ_fmm_gpu!(pfield)
     @test FLOWVPM._radix_fmm_couplings[pfield] === st1
+
+    # default (adaptive) masking: the same fat core is masked, the cached grid
+    # is kept, and the answer stays accurate
+    pfield3 = fmm034_pfield(n)
+    for i in 1:n
+        vpm_fmm.add_particle(pfield3, Xs[i], Gs[i], sigma0)
+    end
+    vpm_fmm.UJ_fmm_gpu!(pfield3)
+    st3 = FLOWVPM._radix_fmm_couplings[pfield3]
+    vpm_fmm.get_sigma(pfield3, 1) .= 1.05 * FLOWVPM._radix_sigma_limit(st3.cache, st3.settings)
+    vpm_fmm.get_sigma(ref, 1) .= vpm_fmm.get_sigma(pfield3, 1)
+    vpm_fmm.UJ_direct(ref)
+    vpm_fmm.UJ_fmm_gpu!(pfield3)
+    @test FLOWVPM._radix_fmm_couplings[pfield3] === st3
+    @test fmm034_uj_errors(pfield3.particles, ref.particles, n).u_rel_rms <= FMM034_U_GATE
 
     # user-fixed ell is a promise: FLOWVPM never rebuilds the coupling. An
     # outgrown geometry is demoted by FastMultipole to the all-direct zero-M2L

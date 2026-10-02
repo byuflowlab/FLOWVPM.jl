@@ -83,3 +83,39 @@ end
     @test eu < 5e-3
     @test ej < 2e-2
 end
+
+@testset "adaptive threshold stays within the cached grid" begin
+    # A continuous core tail (1.1-3x), as a convecting wake has. The adaptive
+    # threshold is derived for a fresh padded box; once the field's extent grows
+    # (still inside the cache's padded box, so no recenter), that box is larger
+    # than the cache's and the threshold let cores through that the cached grid
+    # cannot serve: the coupling rebuilt at the same (ell, q) on every refresh
+    # (NREL 5MW, 2026-10-02). The threshold is now capped at the cache's limit where
+    # it is used, so the coupling survives and the evaluation stays accurate.
+    n = 20000; ntail = 400
+    sigma = 1.2 * (1.0 / n)^(1 / 3)
+    function mk()
+        f = oversize_field(n, 0; seed=11)
+        for k in 1:ntail; f.particles[vpm.SIGMA_INDEX, k] = sigma * (1.1 + 1.9 * (k - 1) / (ntail - 1)); end
+        return f
+    end
+    pf = mk()
+    vpm.radix_fmm_settings!(pf; oversize_count=0, oversize_fraction=0.02)
+    vpm.UJ_fmm_gpu!(pf; reset=true)
+    st1 = vpm._radix_fmm_couplings[pf]
+    # grow the extent 5 % along x (padding is 10 % per face: still inside the box)
+    i = argmax(view(pf.particles, vpm.X_INDEX[1], 1:n))
+    pf.particles[vpm.X_INDEX[1], i] += 0.05
+    ref = mk(); ref.particles[vpm.X_INDEX[1], i] += 0.05
+    vpm.UJ_direct(ref); R = copy(ref.particles)
+    delete!(vpm._radix_oversize_thr, pf)          # the refresh that saw the grown box
+    vpm.UJ_fmm_gpu!(pf; reset=true)
+    st2 = vpm._radix_fmm_couplings[pf]
+    thr = vpm._radix_oversize_thr[pf].thr
+    lim = vpm._radix_sigma_limit(st2.cache, st2.settings)
+    eu = rel_err(pf.particles, R, n, vpm.U_INDEX); ej = rel_err(pf.particles, R, n, vpm.J_INDEX)
+    println("  grown box: same coupling $(st2 === st1), thr $(round(thr, sigdigits=4)) vs cache limit $(round(lim, sigdigits=4)), U $(round(eu, sigdigits=3)) J $(round(ej, sigdigits=3))")
+    @test st2 === st1
+    @test eu < 5e-3
+    @test ej < 2e-2
+end
