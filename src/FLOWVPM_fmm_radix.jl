@@ -106,7 +106,7 @@ end
 function _radix_m2l_strategy(settings)
     sym = settings.m2l_strategy
     sym === :concat &&
-        return (fmm.ConcatenatedFixedZM2L(), fmm.MaterializedYRotationM2L())
+        return (fmm.ConcatenatedFixedZM2L(settings.m2l_chunk), fmm.MaterializedYRotationM2L())
     sym === :dense &&
         return (fmm.DenseTranslationM2L(), fmm.MaterializedYRotationM2L())
     sym === :precomputed_y &&
@@ -178,6 +178,11 @@ to automatic derivation:
   whose sweep had measured concat 1.6-2.8x slower at matched geometry — no
   longer true on the KA lifecycle), or `:precomputed_y`
   (`PrecomputedFactoredYM2L`).
+- `m2l_chunk`: route columns per M2L apply for `:concat` (default `2^14`). The
+  device M2L scratch is about 6 KB per column (P = 6, Float32), so the
+  FastMultipole default of `2^17` held 806 MB on the NREL 5MW at 112k particles
+  whatever the route count; `2^14` holds 131 MB at the same time per step
+  (Metal, 2026-10-02). Chunking is exact.
 - `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
   non-increasing, ending at the leaf radius); `nothing` = uniform.
 - `accuracy_margin`: multiplier on the kernel's `rho_t` in the auto-geometry
@@ -204,6 +209,7 @@ Base.@kwdef struct RadixFMMSettings
     rho_t::Union{Nothing,Float64} = nothing
     rho_c::Union{Nothing,Float64} = nothing
     m2l_strategy::Symbol = :concat
+    m2l_chunk::Int = 1 << 14
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
     # The radix depth is always the DEEPEST the adequacy gate admits, capped
