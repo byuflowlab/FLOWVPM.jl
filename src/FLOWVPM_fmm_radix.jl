@@ -255,6 +255,10 @@ Base.@kwdef struct RadixFMMSettings
     # costs K x np pairs: 2% of 540k is 6e9, under 0.3 s on the H200.
     oversize_count::Int = 0
     oversize_fraction::Float64 = 0.02
+    # how the masked particles act on the others: :allpairs (exact, K x N pairs)
+    # or :multilevel (back into the tree at the level their reach admits;
+    # FastMultipole.MultilevelOversize)
+    oversize_evaluator::Symbol = :allpairs
 end
 
 # Deepest radix level the dense per-level node table allows (8^ell Int32).
@@ -724,7 +728,10 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         verbose = _radix_verbose())
     rec === rec0 || (_radix_oversize_thr[pfield] = rec)
     ov = isempty(oversize) ? nothing :
-        fmm.MaskedBodies(fmm.radix_mask_bodies!(pfield, oversize), _radix_direct_kernel(settings), 3)
+        fmm.MaskedBodies(fmm.radix_mask_bodies!(pfield, oversize), _radix_direct_kernel(settings), 3;
+            idx = oversize, bodytype = fmm.body_type(pfield),
+            evaluator = settings.oversize_evaluator === :multilevel ?
+                fmm.MultilevelOversize(; margin = settings.accuracy_margin) : fmm.AllPairsOversize())
     try
         st = _radix_fmm_coupling!(pfield)
         # extra targets (probes, ring nodes) and extra sources (bound segments,
