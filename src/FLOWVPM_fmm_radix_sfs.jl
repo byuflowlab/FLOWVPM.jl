@@ -68,12 +68,12 @@ U and J are complete and before any extra source is added. With `dsigma` the
 core-scaling channel runs its own ∂J pair sweep and the ∂ζ sweep.
 """
 function _radix_sfs_pass!(pfield::ParticleField, ctx, nf; dsigma::Bool=false,
-        masked=get(_radix_sfs_masked, pfield, nothing))
+        masked=nf.masked)
     nf.device && return _radix_sfs_pass_device!(pfield, ctx, nf; dsigma, masked)
     size(nf.output, 1) >= 13 || throw(AssertionError("the SFS pass requires the 13-row (hessian) output"))
     n = nf.n_bodies
-    m = masked === nothing ? nothing : _sfs_masked_prepare(eltype(nf.output), masked)
-    mslot = m === nothing ? nothing : _sfs_masked_slots_host(m, nf)
+    m = masked === nothing ? nothing : _sfs_masked_grid(eltype(nf.output), masked)
+    mslot = m === nothing ? nothing : fmm.radix_masked_slots(m, nf)
     _host_sfs_tg_and_zero!(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, ctx.transposed, n)
     m === nothing || _host_sfs_masked_t!(ctx.tg, nf.output, 5, m, mslot, ctx.transposed)
     _host_sfs_zeta_pairs!(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
@@ -161,7 +161,7 @@ function sfs_repass!(pfield::ParticleField)
 end
 
 # device methods: ext/FLOWVPMGPUExt.jl
-_radix_sfs_pass_device!(pfield, ctx, nf; dsigma=false, masked=nothing) =
+_radix_sfs_pass_device!(pfield, ctx, nf; dsigma=false, masked=nf.masked) =
     error("the SFS pass on a device field needs the FLOWVPM GPU extension (load KernelAbstractions and GPUArraysCore)")
 _radix_sfs_deliver_device!(pfield, ctx, nf; dsigma=false) =
     error("the SFS delivery on a device field needs the FLOWVPM GPU extension")
@@ -462,61 +462,18 @@ end
 # near a masked core, 1e-4 elsewhere). Restored here: T and ∂T from the saved
 # strength, and each masked particle's pairs with every target inside its saturation
 # reach (ρ² ≤ rc², the cutoff the sweeps use), summed target-major over a uniform
-# grid of the masked particles (cell ≥ the largest reach, so the 27 cells around a
-# target hold every pair), in a fixed order: deterministic, no atomics.
+# grid of the masked particles (FastMultipole's `radix_masked_grid`: cell ≥ the
+# largest reach, so the 27 cells around a target hold every pair), in a fixed
+# order: deterministic, no atomics.
 
-# The masked set of the field's last radix evaluation: (global indices, saved 9 x K
-# buffer of FastMultipole's `MaskedBodies`), or nothing. `sfs_repass!` reads it too.
-const _radix_sfs_masked = IdDict{Any,Any}()
+# The masked set comes with the near field (`radix_nearfield(cache).masked`, recorded
+# by the evaluation); FastMultipole bins it (`radix_masked_grid`, cell >= the SFS
+# saturation reach) and finds its slots. Γ is packed rows 5:7, σ row 8.
+_sfs_masked_grid(::Type{TF}, masked) where TF =
+    (m = fmm.radix_masked_grid(masked, TF, sqrt(Float64(_sfs_saturation_rc2(TF))); core_row = 8);
+     merge(m, (; mg = TF.(m.cols[5:7, :]))))
 
-"""
-    _sfs_masked_prepare(TF, masked) -> NamedTuple
 
-Host arrays for the masked pairs: positions `mx`, strengths `mg` (3 x K), cores
-`ms`, global indices `mp`, sorted by grid cell; `offsets[c]:offsets[c+1]-1` are
-cell `c`'s particles; the grid `origin`, cell `h` and `dims`. `psorted`/`korder`
-map a global index back to its position in that order (for the slot search).
-"""
-function _sfs_masked_prepare(::Type{TF}, masked) where TF
-    idx, buf = masked
-    K = length(idx)
-    rc = sqrt(Float64(_sfs_saturation_rc2(TF)))
-    h = rc * maximum(Float64(buf[8, k]) for k in 1:K)
-    lo = [minimum(Float64(buf[d, k]) for k in 1:K) for d in 1:3]
-    hi = [maximum(Float64(buf[d, k]) for k in 1:K) for d in 1:3]
-    dims = [floor(Int, (hi[d] - lo[d]) / h) + 1 for d in 1:3]
-    while prod(dims) > 1 << 22                  # a coarser grid only adds candidates
-        h *= 2; dims = [floor(Int, (hi[d] - lo[d]) / h) + 1 for d in 1:3]
-    end
-    cell(k) = 1 + min(floor(Int, (buf[1, k] - lo[1]) / h), dims[1] - 1) +
-              dims[1] * (min(floor(Int, (buf[2, k] - lo[2]) / h), dims[2] - 1) +
-              dims[2] * min(floor(Int, (buf[3, k] - lo[3]) / h), dims[3] - 1))
-    keys = [cell(k) for k in 1:K]
-    order = sortperm(keys)                      # stable: fixed summation order
-    ncells = prod(dims)
-    offsets = zeros(Int32, ncells + 1)
-    for k in order; offsets[keys[k] + 1] += 1; end
-    offsets[1] = 1
-    for c in 2:ncells + 1; offsets[c] += offsets[c - 1]; end
-    mp = idx[order]
-    pord = sortperm(mp)
-    return (; K, mx = TF.(buf[1:3, order]), mg = TF.(buf[5:7, order]), ms = TF.(buf[8, order]),
-              mp, psorted = mp[pord], korder = Int32.(pord), offsets,
-              origin = TF.(lo), h = TF(h), dims = Int32.(dims))
-end
-
-# Sorted slot of each masked particle (0 if it is not resident), host permutation.
-function _sfs_masked_slots_host(m, nf)
-    mslot = zeros(Int, m.K)
-    perm = nf.host_body_perm; sys = nf.host_body_system_ids; bidx = nf.host_body_indices
-    @inbounds for s in 1:nf.n_bodies
-        g = perm[s]
-        sys[g] == 1 || continue
-        t = searchsortedfirst(m.psorted, bidx[g])
-        (t <= m.K && m.psorted[t] == bidx[g]) && (mslot[m.korder[t]] = s)
-    end
-    return mslot
-end
 
 # T = op(J)Γ (or ∂T = op(∂J)Γ) at the masked particles' slots, from the saved Γ;
 # `jsrc[joff:joff+8, s]` is the gradient (output rows 5:13, or dj rows 1:9).
@@ -531,23 +488,6 @@ function _host_sfs_masked_t!(t, jsrc, joff::Int, m, mslot, transposed::Bool)
     return t
 end
 
-# The masked sources around target position (xi, yi, zi): calls f(t, s) for each
-# (t its position in the sorted order, s its slot).
-@inline function _sfs_masked_foreach(f, m, mslot, xi, yi, zi)
-    cx = floor(Int, (xi - m.origin[1]) / m.h)
-    cy = floor(Int, (yi - m.origin[2]) / m.h)
-    cz = floor(Int, (zi - m.origin[3]) / m.h)
-    nx, ny, nz = m.dims
-    @inbounds for kz in max(cz - 1, 0):min(cz + 1, nz - 1),
-                  ky in max(cy - 1, 0):min(cy + 1, ny - 1),
-                  kx in max(cx - 1, 0):min(cx + 1, nx - 1)
-        c = 1 + kx + nx * (ky + ny * kz)
-        for t in m.offsets[c]:m.offsets[c + 1] - 1
-            f(t, mslot[t])
-        end
-    end
-    return nothing
-end
 
 function _host_sfs_masked_zeta!(om::AbstractMatrix{TF}, q, tg, source_bodies, m, mslot,
         n::Int, active_row::Int) where TF
@@ -556,7 +496,7 @@ function _host_sfs_masked_zeta!(om::AbstractMatrix{TF}, q, tg, source_bodies, m,
         (active_row == 0 || !iszero(source_bodies[active_row, i])) || continue
         xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
         o = zeros(TF, 3); qq = zeros(TF, 3)
-        _sfs_masked_foreach(m, mslot, xi, yi, zi) do t, s
+        fmm.radix_masked_foreach(m, mslot, xi, yi, zi) do t, s
             (s == i || s == 0) && return
             dx = xi - m.mx[1, t]; dy = yi - m.mx[2, t]; dz = zi - m.mx[3, t]
             r2 = dx * dx + dy * dy + dz * dz
@@ -577,7 +517,7 @@ function _host_sfs_masked_dj!(dj::AbstractMatrix{TF}, source_bodies, m, mslot,
         (active_row == 0 || !iszero(source_bodies[active_row, i])) || continue
         xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
         d = zeros(TF, 9)
-        _sfs_masked_foreach(m, mslot, xi, yi, zi) do t, s
+        fmm.radix_masked_foreach(m, mslot, xi, yi, zi) do t, s
             (s == i || s == 0) && return
             dx = xi - m.mx[1, t]; dy = yi - m.mx[2, t]; dz = zi - m.mx[3, t]
             r2 = dx * dx + dy * dy + dz * dz
@@ -601,7 +541,7 @@ function _host_sfs_masked_dzeta!(dom::AbstractMatrix{TF}, dq, tg, dt, source_bod
         (active_row == 0 || !iszero(source_bodies[active_row, i])) || continue
         xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
         o = zeros(TF, 3); qq = zeros(TF, 3)
-        _sfs_masked_foreach(m, mslot, xi, yi, zi) do t, s
+        fmm.radix_masked_foreach(m, mslot, xi, yi, zi) do t, s
             (s == i || s == 0) && return
             dx = xi - m.mx[1, t]; dy = yi - m.mx[2, t]; dz = zi - m.mx[3, t]
             r2 = dx * dx + dy * dy + dz * dz

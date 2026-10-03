@@ -757,8 +757,8 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         ctx = sfs ? _radix_sfs_context!(pfield, st) : nothing
         # With oversize particles masked, the pass runs after fmm! instead: their
         # velocity gradient (the all-pairs extra source) is in the output only then,
-        # and the pass adds their pairs (see `_radix_sfs_masked`)
-        _radix_sfs_masked[pfield] = ov === nothing ? nothing : (oversize, ov.buffer)
+        # and the pass adds their pairs (`radix_nearfield(cache).masked`)
+        fmm.radix_set_masked!(st.cache, ov === nothing ? nothing : (oversize, ov.buffer))
         masked_sfs = sfs && ov !== nothing
         nearfield_pass = (sfs && !masked_sfs) ?
             (c -> _radix_sfs_pass!(pfield, ctx, fmm.radix_nearfield(c); dsigma=sfs_dsigma)) : nothing

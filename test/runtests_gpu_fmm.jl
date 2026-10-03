@@ -286,8 +286,8 @@ end
         vpm_fmm.radix_fmm_settings!(pf; oversize_count = K)
         vpm_fmm._sfs_dsigma_request!(pf, true)
         vpm_fmm.UJ_fmm_gpu!(pf; reset = true, reset_sfs = true, sfs = true)
-        m = get(vpm_fmm._radix_sfs_masked, pf, nothing)
-        return copy(pf.particles[:, 1:n]), m === nothing ? 0 : length(m[1])
+        m = vpm_fmm.fmm.radix_nearfield(vpm_fmm._radix_fmm_couplings[pf].cache).masked
+        return copy(pf.particles[:, 1:n]), m === nothing ? 0 : length(m.idx)
     end
     A, nA = masked_run(64)
     B, nB = masked_run(-1)

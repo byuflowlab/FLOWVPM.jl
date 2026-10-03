@@ -1390,8 +1390,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     backend = KA.get_backend(nf.output); wg = _SFS_WORKGROUP
     tv = ctx.transposed ? Val(true) : Val(false)
     rc2 = FLOWVPM._sfs_saturation_rc2(TF); K1 = TF(FLOWVPM._SFS_ZETA_K1); A = TF(fmm._GAUSSERF_A)
-    md = masked === nothing ? nothing :
-        _sfs_masked_device(FLOWVPM._sfs_masked_prepare(TF, masked), nf, backend, TF)
+    md = masked === nothing ? nothing : _sfs_masked_device(FLOWVPM._sfs_masked_grid(TF, masked), nf, backend)
     ka_sfs_tg_kernel!(backend, wg)(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, TF, tv, n; ndrange=n)
     md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.tg, nf.output, 5, md.mg, md.mslot, tv, md.K;
         ndrange=cld(md.K, wg) * wg)
@@ -1510,30 +1509,6 @@ end
 
 #------- the oversize (masked) particles in the SFS pass (see src/FLOWVPM_fmm_radix_sfs.jl) -------#
 
-# sorted slot of each masked particle: one thread per slot, a binary search of the
-# masked global indices
-@kernel function ka_sfs_masked_slots_kernel!(mslot, @Const(perm), @Const(sysid), @Const(bidx),
-        @Const(psorted), @Const(korder), K, n)
-    s = @index(Global)
-    @inbounds if s <= n
-        g = perm[s]
-        if sysid[g] == 1
-            p = bidx[g]
-            lo = 1; hi = K
-            while lo < hi
-                mid = (lo + hi) >>> 1
-                if psorted[mid] < p
-                    lo = mid + 1
-                else
-                    hi = mid
-                end
-            end
-            if K >= 1 && psorted[lo] == p
-                mslot[korder[lo]] = Int32(s)
-            end
-        end
-    end
-end
 
 # T = op(J)Γ at the masked slots from the saved Γ; `jsrc[joff:joff+8, s]` is the gradient
 @kernel function ka_sfs_masked_t_kernel!(t, @Const(jsrc), joff, @Const(mg), @Const(mslot),
@@ -1618,15 +1593,11 @@ end
     end
 end
 
-# the host-prepared masked set on the device, with the slots searched there
-function _sfs_masked_device(m, nf, backend, ::Type{TF}) where TF
-    up(A) = (d = KA.allocate(backend, eltype(A), size(A)...); copyto!(d, A); d)
-    mslot = KA.zeros(backend, Int32, m.K)
-    psorted = up(collect(m.psorted)); korder = up(m.korder)
-    ka_sfs_masked_slots_kernel!(backend, 256)(mslot, nf.body_perm, nf.body_system_ids, nf.body_indices,
-        psorted, korder, m.K, nf.n_bodies; ndrange = cld(nf.n_bodies, 256) * 256)
-    return (; K = m.K, mx = up(m.mx), mg = up(m.mg), ms = up(m.ms), mslot, offsets = up(m.offsets),
-              o = m.origin, h = m.h, dims = m.dims)
+# the masked grid on the device (FastMultipole's, slots searched there) plus the Γ rows
+function _sfs_masked_device(m, nf, backend)
+    g = fmm.radix_masked_grid_device(m, nf, backend)
+    mg = KA.allocate(backend, eltype(m.mg), size(m.mg)...); copyto!(mg, m.mg)
+    return merge(g, (; mg))
 end
 
 function _sfs_masked_pairs!(a, b, tg, dt, nf, md, mode, coef, ::Type{TF}, backend, wg) where TF
