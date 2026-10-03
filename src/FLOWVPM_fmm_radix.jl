@@ -103,10 +103,11 @@ function _radix_direct_kernel(settings)
 end
 
 "Resolve the (m2l_strategy, operator) pair from settings (task 035)."
-function _radix_m2l_strategy(settings)
+function _radix_m2l_strategy(settings, chunk_default::Int=1 << 14)
     sym = settings.m2l_strategy
     sym === :concat &&
-        return (fmm.ConcatenatedFixedZM2L(settings.m2l_chunk), fmm.MaterializedYRotationM2L())
+        return (fmm.ConcatenatedFixedZM2L(something(settings.m2l_chunk, chunk_default)),
+                fmm.MaterializedYRotationM2L())
     sym === :dense &&
         return (fmm.DenseTranslationM2L(), fmm.MaterializedYRotationM2L())
     sym === :precomputed_y &&
@@ -114,6 +115,14 @@ function _radix_m2l_strategy(settings)
     error("RadixFMMSettings.m2l_strategy must be :concat, :dense, or " *
         ":precomputed_y; got $(repr(sym))")
 end
+
+# Default M2L route columns per apply: the device scratch is ~6 KB per column
+# (P = 6, Float32), and the right trade differs by backend. On an H200 larger
+# chunks are much faster (UJ at 1M bodies: 2.27 s at 2^14, 1.24 s at 2^17; job
+# 13964561) and the ~800 MB is small; elsewhere (Metal, host) 2^14 keeps the
+# scratch at ~130 MB at about the same time per step (NREL 5MW, 112k).
+_radix_default_m2l_chunk(pfield) =
+    nameof(typeof(pfield.particles)) === :CuArray ? 1 << 17 : 1 << 14
 
 ################################################################################
 # Settings and cache registry
@@ -178,11 +187,11 @@ to automatic derivation:
   whose sweep had measured concat 1.6-2.8x slower at matched geometry — no
   longer true on the KA lifecycle), or `:precomputed_y`
   (`PrecomputedFactoredYM2L`).
-- `m2l_chunk`: route columns per M2L apply for `:concat` (default `2^14`). The
-  device M2L scratch is about 6 KB per column (P = 6, Float32), so the
-  FastMultipole default of `2^17` held 806 MB on the NREL 5MW at 112k particles
-  whatever the route count; `2^14` holds 131 MB at the same time per step
-  (Metal, 2026-10-02). Chunking is exact.
+- `m2l_chunk`: route columns per M2L apply for `:concat`; `nothing` (default)
+  picks by backend: `2^17` on CUDA, where larger chunks are much faster (H200,
+  1M bodies: 1.24 s vs 2.27 s per UJ at `2^14`), and `2^14` elsewhere, which
+  holds the device scratch (about 6 KB per column at P = 6, Float32) to ~130 MB
+  at about the same time per step on Metal. Chunking is exact.
 - `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
   non-increasing, ending at the leaf radius); `nothing` = uniform.
 - `accuracy_margin`: multiplier on the kernel's `rho_t` in the auto-geometry
@@ -209,7 +218,7 @@ Base.@kwdef struct RadixFMMSettings
     rho_t::Union{Nothing,Float64} = nothing
     rho_c::Union{Nothing,Float64} = nothing
     m2l_strategy::Symbol = :concat
-    m2l_chunk::Int = 1 << 14
+    m2l_chunk::Union{Nothing,Int} = nothing
     level_radii2::Union{Nothing,Tuple} = nothing
     accuracy_margin::Float64 = 1.03
     # The radix depth is always the DEEPEST the adequacy gate admits, capped
@@ -774,7 +783,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
-    m2l_strategy, operator = _radix_m2l_strategy(settings)
+    m2l_strategy, operator = _radix_m2l_strategy(settings, _radix_default_m2l_chunk(pfield))
     opts = fmm.CUDARadixLifecycleOptions(; precision=TF, operator, m2l_strategy)
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
