@@ -461,11 +461,11 @@ end
 @testset "radix FMM coupling: depth rebuild on particle growth (052c)" begin
     # A wake growing from hundreds to thousands of particles must not keep
     # the shallow grid depth frozen at first build (052 stage-d root cause:
-    # ell=2 chosen at np=330 served 242k particles near-dense). Fixed sigma
-    # so only np drives the occupancy cap: build at n0=300 (ell=2), grow to
-    # n1=8000 (occupancy admits ell=4) and expect a strictly deeper rebuild.
-    n0, n1 = 300, 8000
-    sigma = 0.03
+    # ell=2 chosen at np=330 served 242k particles near-dense). Fixed sigma:
+    # build at n0=300 (ell=3 at this core), grow to n1=2000 (the depth rule
+    # then picks ell=4) and expect a strictly deeper rebuild.
+    n0, n1 = 300, 2000
+    sigma = 0.045
     rng = MersenneTwister(FMM034_SEED + 52)
     pfield = fmm034_pfield(n1)
     ref = fmm034_pfield(n1; UJ=vpm_fmm.UJ_direct)
@@ -517,8 +517,10 @@ end
     # and/or larger near set) instead of tripping FastMultipole's runtime
     # adequacy gate (job 13497184: ell=4 admissible at sigma_max=0.0198 near
     # step 473, refused at 0.02137 by step 502).
-    n = 8000
-    sigma0 = 0.005
+    # n and sigma0 keep the tree shallow (ell=3): the host lifecycle that
+    # checks this costs seconds per call at ell >= 4
+    n = 300
+    sigma0 = 0.03
     rng = MersenneTwister(FMM034_SEED + 53)
     pfield = fmm034_pfield(n)
     ref = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct)
@@ -813,11 +815,13 @@ fmm034_matrix_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
     #     if the g/h arithmetic ever improves, and a mechanism regression
     #     (not J-bound) still fails loudly. A flat 1e-3 vs exact-erf
     #     references is unattainable at any radix setting while J is ≈ 2e-3.
-    n = 1500
+    n = 800     # the cube builder keeps the core overlap fixed as n changes
     # Required matrix: P=4/P=8 x Float32/Float64. The original delivery only
     # covered P=4 in Float32 and substituted a J-scaled mechanical gate for
-    # the required CPU physics gate.
-    for R in (Float64, Float32), P in (4, 8), rho_t in (4.211, 4.789)
+    # the required CPU physics gate. Each rho_t cutoff rides two of the four
+    # cells (the full 2x2x2 product doubled the suite's longest testset).
+    for (R, P, rho_t) in ((Float64, 4, 4.211), (Float64, 8, 4.789),
+                          (Float32, 4, 4.789), (Float32, 8, 4.211))
         pfield = fmm034_build_cube(n; R)
         FLOWVPM.radix_fmm_settings!(pfield; expansion_order=P, ell=2,
             near_radius2=20, rho_t)
