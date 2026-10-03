@@ -2,8 +2,7 @@
 # side-track): does a backend-agnostic KA kernel regress FLOWVPMCUDAExt.jl's
 # hand-written, H200-validated CUDA kernels? Standalone script -- does NOT
 # touch FLOWVPM.gpu_direct!/gpu_zeta_direct!/gpu_estr_direct! dispatch for
-# CuArray (same "de-risk before wiring" pattern as
-# test/metal_env/ka_direct_bench.jl used for Metal), so it cannot regress
+# CuArray (the same "de-risk before wiring" pattern used for Metal), so it cannot regress
 # production CUDA runs just by being present in the repo.
 #
 # Two different questions bundled here, because the two CUDA kernel families

@@ -3,8 +3,8 @@
 # tree AND FastMultipole (this branch's Project.toml requires FastMultipole
 # 2.2.0+, which is NOT on the General registry -- registry tops out at
 # 2.0.4, same unreleased-version situation task 034/048 hit on gpu-full; here
-# it's `../FastMultipole` on branch flowpanel-20260817, confirmed via
-# test/metal_env/Manifest.toml) to the BYU cluster into their own trees + env
+# it's `../FastMultipole` on branch flowpanel-20260817) to the BYU cluster
+# into their own trees + env
 # (separate from the task-034/048 trees, owned by other in-flight work), then
 # submit scripts/ka_cuda_bench_run.sh. Pattern: cuda_034_submit.sh.
 #   bash scripts/ka_cuda_bench_submit.sh    # from the FLOWVPM.jl repo root, metal-testing branch
