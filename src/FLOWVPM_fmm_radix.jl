@@ -424,6 +424,69 @@ function clear_radix_fmm_cache!(pfield::ParticleField)
     return nothing
 end
 
+"""
+    radix_state(pfield) -> Dict or nothing
+
+The history the radix coupling carries between evaluations, for a checkpoint:
+the live cache's geometry (box, depth and stencil radius as they are now, after
+any `recenter!` -- not what the field would derive from its particles), the
+depth check's counters and the oversize threshold. `nothing` when the field has
+no coupling yet. [`restore_radix_state!`](@ref) rebuilds the coupling from it,
+so a restarted run evaluates exactly as the uninterrupted one would have.
+"""
+function radix_state(pfield::ParticleField)
+    st = get(_radix_fmm_couplings, pfield, nothing)
+    st === nothing && return nothing
+    c = st.cache
+    rectangular = c.ell_axes != SVector(c.ell, c.ell, c.ell)
+    # the stencil the cache actually has, which FastMultipole's all-direct
+    # fallback can change without the coupling knowing; `built_q` and `st_q`
+    # are the coupling's own records, which later rebuild checks read
+    pol = c.policy
+    rigid = pol isa fmm.HierarchicalRigidStencil
+    built_q = get(_radix_built_q, pfield, st.q)
+    d = Dict{Symbol,Any}(:x_min => Vector(c.x_min),
+        :box => rectangular ? Vector(c.box_extent) : 2 * c.h0,
+        :ell => c.ell, :q => rigid ? pol.near_radius2 : built_q,
+        :level_radii2 => rigid ? pol.level_radii2 : st.settings.level_radii2,
+        :built_q => built_q, :st_q => st.q, :settings => st.settings,
+        :np_checked => st.np_checked[], :evals => st.evals[])
+    if haskey(_radix_oversize_thr, pfield)
+        rec = _radix_oversize_thr[pfield]
+        d[:oversize] = rec === nothing ? nothing :
+            Dict{Symbol,Any}(:thr => rec.thr, :np => rec.np, :evals => rec.evals[])
+    end
+    return d
+end
+
+"""
+    restore_radix_state!(pfield, d)
+
+Rebuild `pfield`'s radix coupling from [`radix_state`](@ref)'s `Dict`; the
+particles must already be restored. `nothing` drops any coupling, as for a
+field that had none.
+"""
+function restore_radix_state!(pfield::ParticleField, d)
+    clear_radix_fmm_cache!(pfield)
+    d === nothing && return nothing
+    # the settings the coupling ran with, also for any later rebuild
+    settings = d[:settings]
+    _radix_fmm_settings[pfield] = settings
+    bounds = (d[:x_min], d[:box])
+    cache = _build_radix_fmm_cache(pfield, settings;
+        geometry=(bounds, d[:ell], d[:q], d[:level_radii2]))
+    _radix_built_q[pfield] = d[:built_q]
+    _radix_fmm_couplings[pfield] = (; cache, settings, np_checked=Ref(d[:np_checked]),
+        sigma_limit=_radix_sigma_limit(cache, settings), q=d[:st_q], evals=Ref(d[:evals]),
+        sfs=Ref{Any}(nothing))
+    if haskey(d, :oversize)
+        o = d[:oversize]
+        _radix_oversize_thr[pfield] = o === nothing ? nothing :
+            (; thr=o[:thr], np=o[:np], evals=Ref(o[:evals]))
+    end
+    return nothing
+end
+
 ################################################################################
 # Configuration derivation
 ################################################################################
@@ -659,7 +722,8 @@ end
 
 function _build_radix_fmm_cache(pfield::ParticleField{R},
                                 settings::RadixFMMSettings;
-                                max_n_bodies::Int=pfield.maxparticles) where R
+                                max_n_bodies::Int=pfield.maxparticles,
+                                geometry=nothing) where R
     _validate_radix_fmm_settings(pfield)
     device = !(pfield.particles isa Array)
     if device
@@ -672,34 +736,41 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
                 "device radix lifecycle is available: $(fmm.radix_device_status())")
     end
 
-    bounds = settings.bounds === nothing ?
-        _radix_derive_bounds(pfield, settings.padding;
-            rectangular=settings.rectangular) : settings.bounds
-    sigma_max = Float64(_radix_sigma_max(pfield))
     P = settings.expansion_order === nothing ? pfield.fmm.p - 1 :
         settings.expansion_order
     direct_kernel = _radix_direct_kernel(settings)
-    kernel_primary_reach = _radix_primary_reach(direct_kernel)
-    # The auto-geometry rule is shape-independent (task 037): L = max extent
-    # drives ell and q via sigma-adequacy exactly as in cubic mode, so the leaf
-    # width L/2^ell is identical — rectangularity only trims per-axis counts.
-    L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
-        Float64(maximum(bounds[2]))
-    occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)
-    ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
-        kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell,
-        occupancy)
-    if get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1"
-        # one line per (re)build: what the depth rule saw and what it chose
-        occ = join((string(l, ":", occupancy[l][1], "/", round(Int, occupancy[l][2]))
-                    for l in sort!(collect(keys(occupancy)))), " ")
-        println("radix build: np=$(pfield.np) L=$(round(L_geo; sigdigits=4)) sigma_max=$(round(sigma_max; sigdigits=4)) -> ell=$ell q=$q  [ell:cells/sum_sq  $occ]")
-        flush(stdout)
+    level_radii2 = settings.level_radii2
+    if geometry === nothing
+        bounds = settings.bounds === nothing ?
+            _radix_derive_bounds(pfield, settings.padding;
+                rectangular=settings.rectangular) : settings.bounds
+        sigma_max = Float64(_radix_sigma_max(pfield))
+        kernel_primary_reach = _radix_primary_reach(direct_kernel)
+        # The auto-geometry rule is shape-independent (task 037): L = max extent
+        # drives ell and q via sigma-adequacy exactly as in cubic mode, so the leaf
+        # width L/2^ell is identical — rectangularity only trims per-axis counts.
+        L_geo = bounds[2] isa Real ? Float64(bounds[2]) :
+            Float64(maximum(bounds[2]))
+        occupancy = _radix_occupancy_sums(pfield, bounds, _RADIX_MAX_ELL)
+        ell, q = _radix_auto_geometry(L_geo, sigma_max, pfield.np, settings.near_radius2,
+            kernel_primary_reach, settings.accuracy_margin; ell_fixed = settings.ell,
+            occupancy)
+        if get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1"
+            # one line per (re)build: what the depth rule saw and what it chose
+            occ = join((string(l, ":", occupancy[l][1], "/", round(Int, occupancy[l][2]))
+                        for l in sort!(collect(keys(occupancy)))), " ")
+            println("radix build: np=$(pfield.np) L=$(round(L_geo; sigdigits=4)) sigma_max=$(round(sigma_max; sigdigits=4)) -> ell=$ell q=$q  [ell:cells/sum_sq  $occ]")
+            flush(stdout)
+        end
+        if settings.bounds === nothing && settings.rectangular
+            bounds = _radix_center_snapped_bounds(bounds, ell)
+        end
+    else
+        # a checkpoint's geometry (see `radix_state`): the box, depth and
+        # stencil the live cache had, not the ones the field would derive now
+        bounds, ell, q, level_radii2 = geometry
     end
-    if settings.bounds === nothing && settings.rectangular
-        bounds = _radix_center_snapped_bounds(bounds, ell)
-    end
-    _radix_built_q[pfield] = q          # the depth check compares (ell, q), not ell alone
+    _radix_built_q[pfield] = q         # the depth check compares (ell, q), not ell alone
     TF = settings.precision === nothing ? R : settings.precision
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
@@ -717,7 +788,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
             bounds[2] isa Real ? TF(bounds[2]) : SVector{3,TF}(bounds[2])),
         hessian=true,
         near_radius2=q,
-        level_radii2=settings.level_radii2, window_classes=K,
+        level_radii2, window_classes=K,
         device, options=opts)
 end
 
@@ -1188,5 +1259,8 @@ end
 function clear_radix_fmm_cache!(pfield)
     return nothing
 end
+
+radix_state(pfield) = nothing
+restore_radix_state!(pfield, d) = nothing
 
 end # _FMM_HAS_RADIX

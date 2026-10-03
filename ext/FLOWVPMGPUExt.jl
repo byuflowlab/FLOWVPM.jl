@@ -109,6 +109,16 @@ end
         k <= cap && (idx[k] = Int32(i))
     end
 end
+# every particle in histogram bin `b` or above, binned exactly as
+# `_sigma_hist_kernel!` bins it, so the count is the histogram's
+@kernel function _sigma_collect_bins_kernel!(idx, counter, @Const(P), row, np, lo, inv_w, nb, b, cap)
+    i = @index(Global)
+    @inbounds if i <= np &&
+            clamp(floor(Int32, (P[row, i] - lo) * inv_w) + Int32(1), Int32(1), Int32(nb)) >= b
+        k = KernelAbstractions.@atomic counter[1] += Int32(1)
+        k <= cap && (idx[k] = Int32(i))
+    end
+end
 function FLOWVPM._radix_oversize_top(P::AnyGPUMatrix, np::Int, K::Int)
     backend = KA.get_backend(P)
     T = eltype(P); row = FLOWVPM.SIGMA_INDEX; nb = 2048
@@ -125,13 +135,13 @@ function FLOWVPM._radix_oversize_top(P::AnyGPUMatrix, np::Int, K::Int)
         acc += h[b]; b -= 1
     end
     b == nb && acc + h[b] <= 1 && return Int[]           # only the maximum itself: skip
-    thr = T(lo) + T(b - 1) / inv_w
     cap = acc + h[b]
     idx = KA.zeros(backend, Int32, cap); counter = KA.zeros(backend, Int32, 1)
-    _sigma_collect_kernel!(backend, 256)(idx, counter, P, row, np, thr, Int32(cap); ndrange=np)
+    _sigma_collect_bins_kernel!(backend, 256)(idx, counter, P, row, np, T(lo), inv_w, nb, Int32(b), Int32(cap); ndrange=np)
     KA.synchronize(backend)
     n = min(Int(Array(counter)[1]), cap)
-    return Int.(Array(view(idx, 1:n)))
+    # the compaction fills in arrival order; sorted, the list is reproducible
+    return sort!(Int.(Array(view(idx, 1:n))))
 end
 
 # adaptive oversize mask: every particle with sigma > thr, at most cap (one
@@ -142,8 +152,17 @@ function FLOWVPM._radix_oversize_above(P::AnyGPUMatrix, np::Int, thr, cap::Int)
     idx = KA.zeros(backend, Int32, cap); counter = KA.zeros(backend, Int32, 1)
     _sigma_collect_kernel!(backend, 256)(idx, counter, P, row, np, nextfloat(T(thr)), Int32(cap); ndrange=np)
     KA.synchronize(backend)
-    n = min(Int(Array(counter)[1]), cap)
-    return Int.(Array(view(idx, 1:n)))
+    n = Int(Array(counter)[1])
+    if n > cap
+        # which `cap` of them the compaction kept depends on arrival order:
+        # take the largest `cap` on the host instead, as the Matrix method does
+        sig = Array(view(P, row, 1:np))
+        lim = nextfloat(T(thr))                 # the device collect's comparison
+        above = findall(>=(lim), sig)
+        return sort!(above[partialsortperm(view(sig, above), 1:cap; rev=true)])
+    end
+    # the compaction fills in arrival order; sorted, the list is reproducible
+    return sort!(Int.(Array(view(idx, 1:n))))
 end
 
 # SFS repass: the particles' current U/J into the resident output in sorted order
@@ -1194,150 +1213,132 @@ end
 end
 @kernel function ka_sfs_zeta_cells_kernel!(om, q, @Const(tg), @Const(source_bodies),
         @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
-        n_cells, rc2, K1, active_row, ::Type{T}, ::Val{WG}) where {T,WG}
-    c = @index(Group)
-    tid = @index(Local)
+        n_cells, rc2, K1, active_row, ::Type{T}, n_bodies) where {T}
+    i = @index(Global)
     half = T(0.5)
-    @inbounds begin
-        tfirst = cell_ranges[1, c]
-        tlast = tfirst + cell_ranges[2, c] - 1
+    @inbounds if i <= n_bodies
+        c = _ka_cell_of(cell_ranges, n_cells, i)
         p0 = offsets[c]; p1 = offsets[c + 1] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
-                o1 = zero(T); o2 = zero(T); o3 = zero(T)
-                q1 = zero(T); q2 = zero(T); q3 = zero(T)
-                for p in p0:p1
-                    sc = direct_sources[p]
-                    sfirst = cell_ranges[1, sc]
-                    slast = sfirst + cell_ranges[2, sc] - 1
-                    for j in sfirst:slast
-                        if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
-                            dx = xi - source_bodies[1, j]
-                            dy = yi - source_bodies[2, j]
-                            dz = zi - source_bodies[3, j]
-                            r2 = dx * dx + dy * dy + dz * dz
-                            sigma = source_bodies[8, j]
-                            rho2 = r2 / (sigma * sigma)
-                            if rho2 <= rc2
-                                z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
-                                o1 += z * source_bodies[5, j]
-                                o2 += z * source_bodies[6, j]
-                                o3 += z * source_bodies[7, j]
-                                q1 += z * tg[1, j]
-                                q2 += z * tg[2, j]
-                                q3 += z * tg[3, j]
-                            end
+        if active_row == 0 || !iszero(source_bodies[active_row, i])
+            xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+            o1 = zero(T); o2 = zero(T); o3 = zero(T)
+            q1 = zero(T); q2 = zero(T); q3 = zero(T)
+            for p in p0:p1
+                sc = direct_sources[p]
+                sfirst = cell_ranges[1, sc]
+                slast = sfirst + cell_ranges[2, sc] - 1
+                for j in sfirst:slast
+                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
+                        dx = xi - source_bodies[1, j]
+                        dy = yi - source_bodies[2, j]
+                        dz = zi - source_bodies[3, j]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        sigma = source_bodies[8, j]
+                        rho2 = r2 / (sigma * sigma)
+                        if rho2 <= rc2
+                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
+                            o1 += z * source_bodies[5, j]
+                            o2 += z * source_bodies[6, j]
+                            o3 += z * source_bodies[7, j]
+                            q1 += z * tg[1, j]
+                            q2 += z * tg[2, j]
+                            q3 += z * tg[3, j]
                         end
                     end
                 end
-                om[1, i] = o1; om[2, i] = o2; om[3, i] = o3
-                q[1, i] = q1; q[2, i] = q2; q[3, i] = q3
             end
-            i += WG
+            om[1, i] = o1; om[2, i] = o2; om[3, i] = o3
+            q[1, i] = q1; q[2, i] = q2; q[3, i] = q3
         end
     end
 end
 
 @kernel function ka_sfs_dj_cells_kernel!(dj, @Const(source_bodies), @Const(cell_ranges),
         @Const(direct_sources), @Const(offsets), n_cells, rc2, A, active_row,
-        ::Type{T}, ::Val{WG}) where {T,WG}
-    c = @index(Group)
-    tid = @index(Local)
+        ::Type{T}, n_bodies) where {T}
+    i = @index(Global)
     half = T(0.5)
-    @inbounds begin
-        tfirst = cell_ranges[1, c]
-        tlast = tfirst + cell_ranges[2, c] - 1
+    @inbounds if i <= n_bodies
+        c = _ka_cell_of(cell_ranges, n_cells, i)
         p0 = offsets[c]; p1 = offsets[c + 1] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
-                d1 = zero(T); d2 = zero(T); d3 = zero(T)
-                d4 = zero(T); d5 = zero(T); d6 = zero(T)
-                d7 = zero(T); d8 = zero(T); d9 = zero(T)
-                for p in p0:p1
-                    sc = direct_sources[p]
-                    sfirst = cell_ranges[1, sc]
-                    slast = sfirst + cell_ranges[2, sc] - 1
-                    for j in sfirst:slast
-                        sigma = source_bodies[8, j]
-                        if i != j && sigma > zero(T)
-                            dx = xi - source_bodies[1, j]
-                            dy = yi - source_bodies[2, j]
-                            dz = zi - source_bodies[3, j]
-                            r2 = dx * dx + dy * dy + dz * dz
-                            rho2 = r2 / (sigma * sigma)
-                            if rho2 <= rc2 && r2 > zero(T)
-                                invr = inv(sqrt(r2))
-                                G = A * rho2 * sqrt(rho2) * exp(-half * rho2)
-                                _, _, _, _, h1, h2, h3, h4, h5, h6, h7, h8, h9 =
-                                    fmm._vortex_pair_ugh(dx, dy, dz, r2, invr,
-                                        source_bodies[5, j], source_bodies[6, j],
-                                        source_bodies[7, j], -G, rho2 * G)
-                                d1 += h1; d2 += h2; d3 += h3
-                                d4 += h4; d5 += h5; d6 += h6
-                                d7 += h7; d8 += h8; d9 += h9
-                            end
+        if active_row == 0 || !iszero(source_bodies[active_row, i])
+            xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+            d1 = zero(T); d2 = zero(T); d3 = zero(T)
+            d4 = zero(T); d5 = zero(T); d6 = zero(T)
+            d7 = zero(T); d8 = zero(T); d9 = zero(T)
+            for p in p0:p1
+                sc = direct_sources[p]
+                sfirst = cell_ranges[1, sc]
+                slast = sfirst + cell_ranges[2, sc] - 1
+                for j in sfirst:slast
+                    sigma = source_bodies[8, j]
+                    if i != j && sigma > zero(T)
+                        dx = xi - source_bodies[1, j]
+                        dy = yi - source_bodies[2, j]
+                        dz = zi - source_bodies[3, j]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        rho2 = r2 / (sigma * sigma)
+                        if rho2 <= rc2 && r2 > zero(T)
+                            invr = inv(sqrt(r2))
+                            G = A * rho2 * sqrt(rho2) * exp(-half * rho2)
+                            _, _, _, _, h1, h2, h3, h4, h5, h6, h7, h8, h9 =
+                                fmm._vortex_pair_ugh(dx, dy, dz, r2, invr,
+                                    source_bodies[5, j], source_bodies[6, j],
+                                    source_bodies[7, j], -G, rho2 * G)
+                            d1 += h1; d2 += h2; d3 += h3
+                            d4 += h4; d5 += h5; d6 += h6
+                            d7 += h7; d8 += h8; d9 += h9
                         end
                     end
                 end
-                dj[1, i] = d1; dj[2, i] = d2; dj[3, i] = d3
-                dj[4, i] = d4; dj[5, i] = d5; dj[6, i] = d6
-                dj[7, i] = d7; dj[8, i] = d8; dj[9, i] = d9
             end
-            i += WG
+            dj[1, i] = d1; dj[2, i] = d2; dj[3, i] = d3
+            dj[4, i] = d4; dj[5, i] = d5; dj[6, i] = d6
+            dj[7, i] = d7; dj[8, i] = d8; dj[9, i] = d9
         end
     end
 end
 
 @kernel function ka_sfs_dzeta_cells_kernel!(dom, dq, @Const(tg), @Const(dt), @Const(source_bodies),
         @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
-        n_cells, rc2, K1, active_row, ::Type{T}, ::Val{WG}) where {T,WG}
-    c = @index(Group)
-    tid = @index(Local)
+        n_cells, rc2, K1, active_row, ::Type{T}, n_bodies) where {T}
+    i = @index(Global)
     half = T(0.5)
     three = T(3)
-    @inbounds begin
-        tfirst = cell_ranges[1, c]
-        tlast = tfirst + cell_ranges[2, c] - 1
+    @inbounds if i <= n_bodies
+        c = _ka_cell_of(cell_ranges, n_cells, i)
         p0 = offsets[c]; p1 = offsets[c + 1] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
-                o1 = zero(T); o2 = zero(T); o3 = zero(T)
-                q1 = zero(T); q2 = zero(T); q3 = zero(T)
-                for p in p0:p1
-                    sc = direct_sources[p]
-                    sfirst = cell_ranges[1, sc]
-                    slast = sfirst + cell_ranges[2, sc] - 1
-                    for j in sfirst:slast
-                        if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
-                            dx = xi - source_bodies[1, j]
-                            dy = yi - source_bodies[2, j]
-                            dz = zi - source_bodies[3, j]
-                            r2 = dx * dx + dy * dy + dz * dz
-                            sigma = source_bodies[8, j]
-                            rho2 = r2 / (sigma * sigma)
-                            if rho2 <= rc2
-                                z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
-                                dz_ = z * (rho2 - three)
-                                o1 += dz_ * source_bodies[5, j]
-                                o2 += dz_ * source_bodies[6, j]
-                                o3 += dz_ * source_bodies[7, j]
-                                q1 += dz_ * tg[1, j] + z * dt[1, j]
-                                q2 += dz_ * tg[2, j] + z * dt[2, j]
-                                q3 += dz_ * tg[3, j] + z * dt[3, j]
-                            end
+        if active_row == 0 || !iszero(source_bodies[active_row, i])
+            xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+            o1 = zero(T); o2 = zero(T); o3 = zero(T)
+            q1 = zero(T); q2 = zero(T); q3 = zero(T)
+            for p in p0:p1
+                sc = direct_sources[p]
+                sfirst = cell_ranges[1, sc]
+                slast = sfirst + cell_ranges[2, sc] - 1
+                for j in sfirst:slast
+                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
+                        dx = xi - source_bodies[1, j]
+                        dy = yi - source_bodies[2, j]
+                        dz = zi - source_bodies[3, j]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        sigma = source_bodies[8, j]
+                        rho2 = r2 / (sigma * sigma)
+                        if rho2 <= rc2
+                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
+                            dz_ = z * (rho2 - three)
+                            o1 += dz_ * source_bodies[5, j]
+                            o2 += dz_ * source_bodies[6, j]
+                            o3 += dz_ * source_bodies[7, j]
+                            q1 += dz_ * tg[1, j] + z * dt[1, j]
+                            q2 += dz_ * tg[2, j] + z * dt[2, j]
+                            q3 += dz_ * tg[3, j] + z * dt[3, j]
                         end
                     end
                 end
-                dom[1, i] = o1; dom[2, i] = o2; dom[3, i] = o3
-                dq[1, i] = q1; dq[2, i] = q2; dq[3, i] = q3
             end
-            i += WG
+            dom[1, i] = o1; dom[2, i] = o2; dom[3, i] = o3
+            dq[1, i] = q1; dq[2, i] = q2; dq[3, i] = q3
         end
     end
 end
@@ -1387,6 +1388,53 @@ a finished J.
     end
 end
 
+# the cell holding sorted body `i`: the last cell whose first body is <= i
+@inline function _ka_cell_of(cell_ranges, n_cells, i)
+    lo = 1; hi = n_cells
+    while lo < hi
+        mid = (lo + hi + 1) >>> 1
+        if cell_ranges[1, mid] <= i
+            lo = mid
+        else
+            hi = mid - 1
+        end
+    end
+    return lo
+end
+
+# target-owned form (see `ka_sfs_zeta_cells_kernel!`): one thread per target
+# body, its cell's source cells in pair-list order, one store per target
+@kernel function ka_zeta_cells_kernel!(om, @Const(source_bodies), @Const(cell_ranges),
+        @Const(direct_sources), @Const(offsets), n_cells, K1, ::Type{T}, n_bodies) where {T}
+    i = @index(Global)
+    half = T(0.5)
+    @inbounds if i <= n_bodies
+        c = _ka_cell_of(cell_ranges, n_cells, i)
+        p0 = offsets[c]; p1 = offsets[c + 1] - 1
+        xi = source_bodies[1, i]
+        yi = source_bodies[2, i]
+        zi = source_bodies[3, i]
+        o1 = zero(T); o2 = zero(T); o3 = zero(T)
+        for p in p0:p1
+            sc = direct_sources[p]
+            sfirst = cell_ranges[1, sc]
+            slast = sfirst + cell_ranges[2, sc] - 1
+            for j in sfirst:slast
+                dx = xi - source_bodies[1, j]
+                dy = yi - source_bodies[2, j]
+                dz = zi - source_bodies[3, j]
+                r2 = dx * dx + dy * dy + dz * dz
+                sigma = source_bodies[8, j]
+                z = K1 * exp(-half * r2 / (sigma * sigma)) / (sigma * sigma * sigma)
+                o1 += z * source_bodies[5, j]
+                o2 += z * source_bodies[6, j]
+                o3 += z * source_bodies[7, j]
+            end
+        end
+        om[1, i] += o1; om[2, i] += o2; om[3, i] += o3
+    end
+end
+
 
 #------- the SFS pass on the device (kernels above, verbatim from FastMultipole's KA extension) -------#
 
@@ -1420,7 +1468,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
         off = _sfs_pair_offsets!(nf, backend, wg)
         ka_sfs_zeta_cells_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-            nf.n_cells, rc2, K1, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
+            nf.n_cells, rc2, K1, 9, TF, n; ndrange=cld(n, wg) * wg)
     elseif npairs > 0
         ka_sfs_zeta_pairs_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
             nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
@@ -1430,7 +1478,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dj_cells_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, nf.n_cells,
-                rc2, A, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
+                rc2, A, 9, TF, n; ndrange=cld(n, wg) * wg)
         elseif npairs > 0
             ka_sfs_dj_pairs_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
                 nf.direct_sources, npairs, rc2, A, 9, TF, Val(wg); ndrange=npairs * wg)
@@ -1439,7 +1487,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dzeta_cells_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-                nf.n_cells, rc2, K1, 9, TF, Val(wg); ndrange=nf.n_cells * wg)
+                nf.n_cells, rc2, K1, 9, TF, n; ndrange=cld(n, wg) * wg)
         elseif npairs > 0
             ka_sfs_dzeta_pairs_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
                 nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
@@ -1507,8 +1555,14 @@ function FLOWVPM.zeta_fmm(pfield::GPUField)
     backend = KA.get_backend(om); wg = _SFS_WORKGROUP
     fill!(om, zero(TF))
     npairs = nf.n_direct
-    npairs > 0 && ka_zeta_pairs_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
-        nf.direct_sources, npairs, TF(FLOWVPM._SFS_ZETA_K1), TF, Val(wg); ndrange=npairs * wg)
+    if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
+        off = _sfs_pair_offsets!(nf, backend, wg)
+        ka_zeta_cells_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
+            nf.n_cells, TF(FLOWVPM._SFS_ZETA_K1), TF, n; ndrange=cld(n, wg) * wg)
+    elseif npairs > 0
+        ka_zeta_pairs_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
+            nf.direct_sources, npairs, TF(FLOWVPM._SFS_ZETA_K1), TF, Val(wg); ndrange=npairs * wg)
+    end
     buf = view(out, :, 1:np); fill!(buf, zero(TF))
     n > 0 && ka_sfs_scatter_kernel!(backend, wg)(buf, om, nf.body_perm, nf.body_system_ids, nf.body_indices, 1, n; ndrange=n)
     # ζ arrives in global particle order; assigned (the host zeta_fmm zeroes then assigns)
