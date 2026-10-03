@@ -143,23 +143,9 @@ end
 fmm048_relrms(A, B) = sqrt(sum(abs2, Float64.(A) .- Float64.(B)) /
                            max(sum(abs2, Float64.(B)), eps()))
 
-# Allocation contract, asserted at the layer that owns it (2026-08-22 trace;
-# integration-api-spec "no per-step allocation" = construction-time buffers
-# only, prefixes mutated per step — the framework satisfies this):
-#  - the resident LIFECYCLE (graph replay = one CUDA.launch) must be
-#    device-allocation-free and within a small host launch-bookkeeping cap;
-#  - the full FLOWVPM WRAPPER performs ~25-30 GPU ops/step whose CUDA.jl
-#    launch/broadcast bookkeeping allocates ~1-4 KB host each (fixed,
-#    launch-count-scaled, NOT n-scaled: any n-sized download would add
-#    >= 160 KB at n=2e4), plus <= 512 B device library scratch from two
-#    accumulate! prefix scans (counting sort translate_batched_cuda.jl:229,
-#    body prefix :6682) and one maximum reduction (geometry gate
-#    translate_batched_resident.jl:2085). The wrapper contract is a fixed
-#    band, no growth across steps, and SFS adding no device allocation.
-const FMM048_HOST_ALLOC_BUDGET = 4096          # lifecycle layer
-const FMM048_HOST_WRAPPER_BAND = 160_000       # base wrapper step (measured 98.6-107.2 KB)
-const FMM048_HOST_WRAPPER_BAND_SFS = 192_000   # sfs wrapper step (measured 119.1-129.6 KB)
-const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (measured 272-400 B)
+# Allocation: steady-state calls must not grow, and the SFS pass must add no
+# device allocation. (Fixed byte bands belonged to the removed native CUDA
+# lifecycle; the KA path's launch bookkeeping is a different, larger constant.)
 
 @testset "device-resident radix FMM: SFS device pass (task 048)" begin
     specs = vec([("cube", 20000, R, P, rho_t)
@@ -218,7 +204,6 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         nb = state.counts.n_bodies
         @test nb == n
         nd = state.counts.n_direct
-        ffmm = FLOWVPM.fmm
         B = Array(view(state.source_bodies, :, 1:nb))
         out = Array(view(state.output, :, 1:nb))
         cr = Array(state.cell_ranges)
@@ -226,16 +211,16 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         ds = Array(view(state.direct_sources, 1:nd))
         TF = eltype(B)
         tg = zeros(TF, 3, nb); om = zeros(TF, 3, nb); q = zeros(TF, 3, nb)
-        ffmm._host_sfs_tg_and_zero!(tg, om, q, out, B, true, nb)
-        ffmm._host_sfs_zeta_pairs!(om, q, tg, B, cr, dt, ds, nd, 9)
+        vpm_fmm._host_sfs_tg_and_zero!(tg, om, q, out, B, true, nb)
+        vpm_fmm._host_sfs_zeta_pairs!(om, q, tg, B, cr, dt, ds, nd, 9)
         E_ulist = zeros(TF, 3, nb)
-        ffmm._host_sfs_form_e!(E_ulist, om, q, out, true, nb)
+        vpm_fmm._host_sfs_form_e!(E_ulist, om, q, out, true, nb)
         # sorted -> global permute for comparison with the delivered SFS rows
         perm = Array(view(state.body_perm, 1:nb))
         bsys = Array(view(state.body_system_ids, 1:nb))
         bidx = Array(view(state.body_indices, 1:nb))
         Eg = zeros(TF, 3, nb)
-        ffmm._scatter_sfs_host!(Eg, E_ulist, perm, bsys, bidx, 1, nb)
+        vpm_fmm._scatter_sfs_host!(Eg, E_ulist, perm, bsys, bidx, 1, nb)
         e_kernel = fmm048_relrms(S_delta[:, active_indices],
                                  Eg[:, active_indices])
         E_full = fmm048_sorted_sfs_brute(B, out, nb; active_row=9)
@@ -288,10 +273,7 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         @test counters.body_uploads == 0
         @test counters.expansion_host_copies == 0
 
-        # steady state: counters flat; wrapper-layer allocation band (see the
-        # contract comment at FMM048_HOST_ALLOC_BUDGET). The lifecycle-layer
-        # zero-allocation assertion runs after the graph identity checks
-        # below, where the replay path is certain.
+        # steady state: counters flat, allocations not growing
         vpm_fmm.UJ_fmm(gpu; sfs=true)
         base = counters.influence_downloads
         host_alloc_base = @allocated vpm_fmm.UJ_fmm(gpu)
@@ -302,81 +284,29 @@ const FMM048_DEVICE_SCRATCH_BAND = 512         # CUDA.jl scan/reduce scratch (me
         device_alloc_base2 = CUDA.@allocated vpm_fmm.UJ_fmm(gpu)
         @test counters.influence_downloads == base
         @info "device radix SFS [$case n=$n P=$P $R rho_t=$rho_t] steady-state allocations (bytes)" host_alloc_base host_alloc_sfs device_alloc_base device_alloc_sfs
-        @test host_alloc_base <= FMM048_HOST_WRAPPER_BAND
-        @test host_alloc_sfs <= FMM048_HOST_WRAPPER_BAND_SFS
         @test host_alloc_base2 <= host_alloc_base + 4096   # no growth
-        @test device_alloc_base <= FMM048_DEVICE_SCRATCH_BAND
         @test device_alloc_sfs <= device_alloc_base         # SFS adds none
         @test device_alloc_base2 <= device_alloc_base       # no growth
 
-        # Deterministic same-state graph replay: eligibility, executable, and
-        # epoch identity are all asserted before and after the replay.
-        hctx = state.interaction_list
-        @test ffmm._cuda_graph_eligible(state)
-        vpm_fmm.UJ_fmm(gpu; sfs=true) # capture if the preceding warm call did not
-        vpm_fmm.UJ_fmm(gpu; sfs=true)
-        # e_replay on active-column deltas only (same pattern as e_sfs
-        # above): both fields hold the identical static sentinel, which
-        # contributes 0 to the numerator but dominates the denominator at
-        # this n (delivered |E| << |sentinel|), deflating a statics-inclusive
-        # relrms into vacuousness. sfs=true resets active SFS every call, so
-        # the delta from S_before is the per-call delivered E of the replay.
-        S_replay = Array(gpu.particles)[vpm_fmm.SFS_INDEX, 1:n]
-        e_replay = fmm048_relrms((S_replay .- S_before)[:, active_indices],
-                                 Sref_delta[:, active_indices])
-        err_replay = fmm034_uj_errors(gpu.particles, gpu_ref.particles, n;
-            skip=static_indices)
-        @info "device radix SFS replay parity [$case n=$n P=$P $R rho_t=$rho_t]" e_replay err_replay.u_rel_rms err_replay.j_rel_rms
-        # same occupancy epoch (tiny perturbation), so the measured ζ-
-        # truncation share and the field's E/J amplification above still apply
-        @test e_replay <= max(R === Float64 ? 1e-3 : 3e-3,
-                              20 * err_replay.j_rel_rms + 2 * e_trunc)
-        # Replayed U and J must not regress vs the first (uncaptured)
-        # evaluation: job 13298230 measured replay j_rel_rms ~ 0.11 vs
-        # first-call 2e-3 (far-field content decorrelated on replay). The
-        # 1.5x headroom covers atomic-order jitter, nothing else.
-        @test err_replay.u_rel_rms <= 1.5 * err.u_rel_rms + eps(Float32)
-        @test err_replay.j_rel_rms <= 1.5 * err.j_rel_rms + eps(Float32)
-
-        # The lifecycle-layer allocation contract (one graph launch per step)
-        # belonged to the removed native CUDA lifecycle; the wrapper-level
-        # allocation gate above is the one that remains.
-
-        # Independent same-state replay parity: the uncaptured launch-sequence
-        # body on the IDENTICAL state is ground truth; the replayed graph must
-        # reproduce the DELIVERED particle U/J with a fixed tolerance that NO
-        # measured error can scale. (The e_replay gate above scales with
-        # j_rel_rms and is permissive exactly when replay is broken — this
-        # gate is not.) The comparison is in GLOBAL particle order: the
-        # sorted state.output slab is NOT comparable across calls because the
-        # per-step counting-sort scatter assigns intra-cell slots via
-        # atomic_add, i.e. the permutation is unstable — diag 13299959
-        # measured slab relrms 0.02-0.04 from pure column shuffling on
-        # identical input. Static columns are excluded (never-reset
+        # Repeat evaluation on the same state: the KA lifecycle and the SFS pass
+        # have no order-dependent sums, so the delivered U, J and SFS rows repeat
+        # in every bit (active columns; static columns are never-reset
         # accumulators with differing evaluation counts).
-        uj_rows = [collect(vpm_fmm.U_INDEX); collect(vpm_fmm.J_INDEX)]
-        vpm_fmm.UJ_fmm(gpu; sfs=true)       # replayed graph
-        uj_replay = Array(gpu.particles)[uj_rows, active_indices]
-        graph_flag_prior = ffmm.radix_setting(:CUDA_GRAPH_LIFECYCLE)
-        replay_body_parity = try
-            ffmm.set_radix_setting!(:CUDA_GRAPH_LIFECYCLE, false)
-            vpm_fmm.UJ_fmm(gpu; sfs=true)   # uncaptured body, same state
-            uj_body = Array(gpu.particles)[uj_rows, active_indices]
-            fmm048_relrms(uj_replay, uj_body)
-        finally
-            ffmm.set_radix_setting!(:CUDA_GRAPH_LIFECYCLE, graph_flag_prior)
-        end
-        @info "device radix SFS replay-vs-body parity [$case n=$n P=$P $R rho_t=$rho_t]" replay_body_parity
-        @test replay_body_parity <= (R === Float64 ? 1e-10 : 1e-4)
+        rows = [collect(vpm_fmm.U_INDEX); collect(vpm_fmm.J_INDEX); collect(vpm_fmm.SFS_INDEX)]
+        vpm_fmm.UJ_fmm(gpu; sfs=true)
+        first_eval = Array(gpu.particles)[rows, active_indices]
+        vpm_fmm.UJ_fmm(gpu; sfs=true)
+        @test Array(gpu.particles)[rows, active_indices] == first_eval
 
         # sfs=false must skip the pass itself, not merely delivery.
         S = copy(Array(gpu.particles)[vpm_fmm.SFS_INDEX, 1:n])
-        om_before = copy(Array(view(state.sfs.om, :, 1:n)))
-        q_before = copy(Array(view(state.sfs.q, :, 1:n)))
+        sfs_ctx = FLOWVPM._radix_fmm_couplings[gpu].sfs[]   # FLOWVPM's SFS buffers
+        om_before = copy(Array(view(sfs_ctx.om, :, 1:n)))
+        q_before = copy(Array(view(sfs_ctx.q, :, 1:n)))
         vpm_fmm.UJ_fmm(gpu)                 # default sfs=false
         @test Array(gpu.particles)[vpm_fmm.SFS_INDEX, 1:n] == S
-        @test Array(view(state.sfs.om, :, 1:n)) == om_before
-        @test Array(view(state.sfs.q, :, 1:n)) == q_before
+        @test Array(view(sfs_ctx.om, :, 1:n)) == om_before
+        @test Array(view(sfs_ctx.q, :, 1:n)) == q_before
     end
 end
 
