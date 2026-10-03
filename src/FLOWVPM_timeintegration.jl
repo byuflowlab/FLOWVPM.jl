@@ -321,8 +321,11 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
     Gnorm2 = G[1, :] .* G[1, :] .+ G[2, :] .* G[2, :] .+ G[3, :] .* G[3, :]
     S_dot_G = MM1 .* G[1, :] .+ MM2 .* G[2, :] .+ MM3 .* G[3, :]
     C_eps_dot_G = C_all[1, :] .* (SFS_all[1, :] .* G[1, :] .+ SFS_all[2, :] .* G[2, :] .+ SFS_all[3, :] .* G[3, :]) .* sigma3 ./ zeta0
-    MM4 = ((f + g) / (1 + 3*f) .* S_dot_G .- f / (1 + 3*f) .* C_eps_dot_G) ./ max.(Gnorm2, eps(R))
-    MM4 .= ifelse.(Gnorm2 .> zero(R), MM4, zero(R))
+    # exact division like the CPU loop and the RK3 broadcast: a floor such as
+    # eps(R) (1.2e-7 in Float32) is far above |Γ|^2 of a weak particle and
+    # shrank its Z by orders of magnitude
+    MM4 = ifelse.(Gnorm2 .> zero(R),
+        ((f + g) / (1 + 3*f) .* S_dot_G .- f / (1 + 3*f) .* C_eps_dot_G) ./ Gnorm2, zero(R))
 
     # Update vectorial circulation: ΔΓ = Δt*(S - 3ZΓ - Cϵ)
     # Sequential read-after-write: G[1] updated first, then used in G[2], G[3]

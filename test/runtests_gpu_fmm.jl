@@ -240,6 +240,34 @@ _HAS_SIGMA_GUARD && @testset "euler sigma_guard: dt*Z cap + floor (052c trial 1)
         pf5, dt, Uinf, f, g, zeta0; sigma_guard=(bogus=1.0,))
 end
 
+@testset "euler broadcast matches the scalar loop on a weak particle (Float32)" begin
+    # The broadcast (device) Euler once divided by max(|Γ|², eps(R)); eps(Float32)
+    # = 1.2e-7 sits far above |Γ|² of a weak particle, so its Z, and so its sigma
+    # and Γ update, came out orders of magnitude small (LiftingLines rows gate,
+    # euler_rows0 tip particles). Transposed rVPM, Γ along x, only J[1] set:
+    # Z = J[1]/5.
+    dt, sigma0 = 0.01f0, 0.1f0
+    function weak_field()
+        pf = fmm034_pfield(3, Float32; UJ=vpm_fmm.UJ_direct)
+        for (i, gx) in enumerate((1f-5, 1f0, 0f0))     # weak, ordinary, zero
+            vpm_fmm.add_particle(pf, Float32[i, 0, 0], Float32[gx, 0, 0], sigma0)
+        end
+        P = pf.particles
+        P[vpm_fmm.U_INDEX, 1:3] .= 0
+        P[vpm_fmm.J_INDEX, 1:3] .= 0
+        P[first(vpm_fmm.J_INDEX), 1:3] .= 10
+        return pf
+    end
+    a, b = weak_field(), weak_field()
+    f, g, zeta0 = a.formulation.f, a.formulation.g, a.kernel.zeta(0)
+    vpm_fmm._euler_cpu_reformulated!(a, dt, zeros(Float32, 3), f, g, zeta0)
+    vpm_fmm._euler_broadcast_reformulated!(b, dt, zeros(Float32, 3), f, g, zeta0)
+    rows = vcat(vpm_fmm.GAMMA_INDEX, vpm_fmm.SIGMA_INDEX)
+    @test b.particles[rows, 1:3] ≈ a.particles[rows, 1:3] rtol = 1e-6
+    @test a.particles[vpm_fmm.SIGMA_INDEX, 1] ≈ sigma0 * (1 - dt * 10 / 5) rtol = 1e-6
+    @test all(isfinite, b.particles[rows, 1:3])                # Γ = 0 stays finite
+end
+
 # =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================
