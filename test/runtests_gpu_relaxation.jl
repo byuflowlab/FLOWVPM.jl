@@ -1,7 +1,7 @@
 # Device relaxation (both Pedrizzetti forms) against the host functions on the
 # same random field, in the device's own float type; a zero-strength particle
 # stays finite under the corrected form. Run from an environment with the
-# device package loaded (LiftingLines test/metal_env includes al_backend.jl).
+# device package loaded (LiftingLines test/gpu includes al_backend.jl).
 using Test, Random, StaticArrays
 import FLOWVPM
 const vpm = FLOWVPM
