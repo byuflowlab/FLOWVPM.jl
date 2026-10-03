@@ -454,7 +454,7 @@ end
 
 #--- the oversize particles in the SFS pass ---#
 #
-# `_radix_oversize_mask!` takes the largest cores out of the tree: they are packed
+# FastMultipole's oversize mask (`radix_mask_bodies!`) takes the largest cores out of the tree: they are packed
 # with zero strength and core, so every pair sweep skips them as sources, and their
 # T = op(J)Γ is formed from Γ = 0. Their velocity reaches the other particles
 # all-pairs, but without the pieces below their pairs were missing from the
@@ -466,7 +466,7 @@ end
 # target hold every pair), in a fixed order: deterministic, no atomics.
 
 # The masked set of the field's last radix evaluation: (global indices, saved 9 x K
-# buffer of `OversizeParticles`), or nothing. `sfs_repass!` reads it too.
+# buffer of FastMultipole's `MaskedBodies`), or nothing. `sfs_repass!` reads it too.
 const _radix_sfs_masked = IdDict{Any,Any}()
 
 """
