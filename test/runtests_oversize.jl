@@ -112,7 +112,7 @@ end
     vpm.UJ_fmm_gpu!(pf; reset=true)
     st2 = vpm._radix_fmm_couplings[pf]
     thr = vpm._radix_oversize_thr[pf].thr
-    lim = vpm._radix_sigma_limit(st2.cache, st2.settings)
+    lim = vpm.fmm.radix_sigma_limit(vpm._radix_geometry_policy(st2.settings), st2.cache)
     eu = rel_err(pf.particles, R, n, vpm.U_INDEX); ej = rel_err(pf.particles, R, n, vpm.J_INDEX)
     println("  grown box: same coupling $(st2 === st1), thr $(round(thr, sigdigits=4)) vs cache limit $(round(lim, sigdigits=4)), U $(round(eu, sigdigits=3)) J $(round(ej, sigdigits=3))")
     @test st2 === st1

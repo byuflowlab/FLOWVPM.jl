@@ -462,21 +462,21 @@ end
     sig_w = 2 * (3.927 / 1e5)^(1 / 3)
     sig_c6 = 2 * (1 / 1e6)^(1 / 3)
     sig_w6 = 2 * (3.927 / 1e6)^(1 / 3)
-    @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 6, 3.668, 1.03) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(1.2, sig_c, 100_000, 6, 3.668, 1.03) ==
         (4, 12)
-    @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 6, 3.668, 1.03) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(6.0, sig_w, 100_000, 6, 3.668, 1.03) ==
         (6, 17)
-    @test FLOWVPM._radix_auto_geometry(1.2, sig_c6, 1_000_000, 6, 3.668, 1.03) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(1.2, sig_c6, 1_000_000, 6, 3.668, 1.03) ==
         (5, 12)
-    @test FLOWVPM._radix_auto_geometry(6.0, sig_w6, 1_000_000, 6, 3.668, 1.03) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(6.0, sig_w6, 1_000_000, 6, 3.668, 1.03) ==
         (7, 17)
     # at the old explicit settings the cube still reproduces its cycle-1/2
     # winner (4,17); the wake's (5,16) came from the ~n^(1/3) occupancy cap,
     # removed when memory became the only depth cap, so without occupancy
     # counts it now takes the deepest admissible depth
-    @test FLOWVPM._radix_auto_geometry(1.2, sig_c, 100_000, 16, 4.252, 1.15) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(1.2, sig_c, 100_000, 16, 4.252, 1.15) ==
         (4, 17)
-    @test FLOWVPM._radix_auto_geometry(6.0, sig_w, 100_000, 16, 4.252, 1.15) ==
+    @test FLOWVPM.fmm.radix_auto_geometry(6.0, sig_w, 100_000, 16, 4.252, 1.15) ==
         (6, 27)
     # invalid selections fail loudly
     @test_throws ErrorException FLOWVPM._radix_direct_kernel(
@@ -622,7 +622,7 @@ end
     end
     vpm_fmm.UJ_fmm_gpu!(pfield3)
     st3 = FLOWVPM._radix_fmm_couplings[pfield3]
-    vpm_fmm.get_sigma(pfield3, 1) .= 1.05 * FLOWVPM._radix_sigma_limit(st3.cache, st3.settings)
+    vpm_fmm.get_sigma(pfield3, 1) .= 1.05 * FLOWVPM.fmm.radix_sigma_limit(FLOWVPM._radix_geometry_policy(st3.settings), st3.cache)
     vpm_fmm.get_sigma(ref, 1) .= vpm_fmm.get_sigma(pfield3, 1)
     vpm_fmm.UJ_direct(ref)
     vpm_fmm.UJ_fmm_gpu!(pfield3)
@@ -643,7 +643,7 @@ end
     FLOWVPM.radix_fmm_settings!(pfield2; ell=2, near_radius2=6, oversize_count=-1)
     vpm_fmm.UJ_fmm_gpu!(pfield2)
     st2 = FLOWVPM._radix_fmm_couplings[pfield2]
-    lim2 = FLOWVPM._radix_sigma_limit(st2.cache, st2.settings)
+    lim2 = FLOWVPM.fmm.radix_sigma_limit(FLOWVPM._radix_geometry_policy(st2.settings), st2.cache)
     @test isfinite(lim2)
     vpm_fmm.get_sigma(pfield2, 1) .= 1.5 * lim2
     vpm_fmm.get_sigma(ref2, 1) .= 1.5 * lim2
@@ -668,7 +668,7 @@ end
     @test tk isa vpm_fmm.fmm.TwoPassVortex
     @test tk.rho_t == 3.668
     @test tk.rho_c == 1.75
-    @test FLOWVPM._radix_primary_reach(tk) == 1.75
+    @test FLOWVPM.fmm.radix_primary_reach(tk) == 1.75
     @test_throws ErrorException FLOWVPM._radix_direct_kernel(
         FLOWVPM.RadixFMMSettings(; direct_kernel=:partitioned, rho_c=1.75))
 
@@ -676,8 +676,8 @@ end
     # keeps per-axis padded tight extents (vector box size), same padding and
     # 4*sigma_max floor conventions per axis
     pfield = fmm034_build("wake", n)
-    bc = FLOWVPM._radix_derive_bounds(pfield, 0.1)
-    br = FLOWVPM._radix_derive_bounds(pfield, 0.1; rectangular=true)
+    bc = FLOWVPM.fmm.radix_derive_bounds(FLOWVPM.fmm.radix_geometry_source(pfield), 0.1)
+    br = FLOWVPM.fmm.radix_derive_bounds(FLOWVPM.fmm.radix_geometry_source(pfield), 0.1; rectangular=true)
     @test bc[2] isa Float64
     @test length(br[2]) == 3
     @test maximum(br[2]) ≈ bc[2]          # long axis reproduces the cubic side
