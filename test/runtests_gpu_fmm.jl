@@ -392,10 +392,9 @@ end
     sdef = FLOWVPM.RadixFMMSettings()
     @test FLOWVPM._radix_direct_kernel(sdef) isa FLOWVPM.fmm.PartitionedVortex
     @test FLOWVPM._radix_m2l_strategy(sdef)[1] isa FLOWVPM.fmm.ConcatenatedFixedZM2L
-    # M2L chunk: the backend default unless set explicitly
-    @test FLOWVPM._radix_m2l_strategy(sdef, 1 << 17)[1].chunk == 1 << 17
-    @test FLOWVPM._radix_m2l_strategy(FLOWVPM.RadixFMMSettings(; m2l_chunk=4096), 1 << 17)[1].chunk == 4096
-    @test FLOWVPM._radix_default_m2l_chunk(fmm034_pfield(8)) == 1 << 14   # host field
+    # M2L chunk: automatic (0, FastMultipole decides) unless set explicitly
+    @test FLOWVPM._radix_m2l_strategy(sdef)[1].chunk == 0
+    @test FLOWVPM._radix_m2l_strategy(FLOWVPM.RadixFMMSettings(; m2l_chunk=4096))[1].chunk == 4096
     @test sdef.expansion_order == 6       # literature P = 7
     @test sdef.near_radius2 == 6
     @test sdef.accuracy_margin ≈ 1.03
