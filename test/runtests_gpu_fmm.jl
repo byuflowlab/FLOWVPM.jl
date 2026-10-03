@@ -268,6 +268,37 @@ end
     @test all(isfinite, b.particles[rows, 1:3])                # Γ = 0 stays finite
 end
 
+@testset "SFS with oversize particles masked matches the unmasked field" begin
+    # The masked cores are packed with zero strength and core, so the pair sweeps
+    # skipped them and their T was formed from Γ = 0: 2% of a field masked put the
+    # estimator and the core-scaling channel 2e-2 off (2026-10-03). With their
+    # pairs and T restored, masked and unmasked agree to the FMM's own level.
+    n = 4000
+    function masked_run(K)
+        rng = MersenneTwister(7)
+        pf = fmm034_pfield(n, Float32)
+        s0 = 0.8f0 * (1f0 / n)^(1 / 3)
+        for _ in 1:n
+            big = rand(rng) < 0.02
+            vpm_fmm.add_particle(pf, rand(rng, Float32, 3), (2 .* rand(rng, Float32, 3) .- 1) ./ n,
+                s0 * (big ? 3f0 + rand(rng, Float32) : 1f0 + 0.2f0 * rand(rng, Float32)))
+        end
+        vpm_fmm.radix_fmm_settings!(pf; oversize_count = K)
+        vpm_fmm._sfs_dsigma_request!(pf, true)
+        vpm_fmm.UJ_fmm_gpu!(pf; reset = true, reset_sfs = true, sfs = true)
+        m = get(vpm_fmm._radix_sfs_masked, pf, nothing)
+        return copy(pf.particles[:, 1:n]), m === nothing ? 0 : length(m[1])
+    end
+    A, nA = masked_run(64)
+    B, nB = masked_run(-1)
+    @test nA > 0 && nB == 0
+    rel(rows) = maximum(abs.(A[rows, :] .- B[rows, :])) / maximum(abs.(B[rows, :]))
+    @test rel(vpm_fmm.J_INDEX) < 1e-4
+    @test rel(vpm_fmm.SFS_INDEX) < 1e-4
+    m0 = first(vpm_fmm.M_INDEX)
+    @test rel(m0:m0+5) < 1e-4
+end
+
 # =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================

@@ -1456,14 +1456,18 @@ end
 const _SFS_WORKGROUP = 64
 
 # stages (a) and (b), and the core-scaling channel's own ∂J sweep (no fused near field)
-function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool=false)
+function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool=false, masked=nothing)
     TF = eltype(nf.output); n = nf.n_bodies
     n > 0 || return nothing
     size(nf.output, 1) >= 13 || throw(AssertionError("the SFS pass requires the 13-row (hessian) output"))
     backend = KA.get_backend(nf.output); wg = _SFS_WORKGROUP
     tv = ctx.transposed ? Val(true) : Val(false)
     rc2 = FLOWVPM._sfs_saturation_rc2(TF); K1 = TF(FLOWVPM._SFS_ZETA_K1); A = TF(fmm._GAUSSERF_A)
+    md = masked === nothing ? nothing :
+        _sfs_masked_device(FLOWVPM._sfs_masked_prepare(TF, masked), nf, backend, TF)
     ka_sfs_tg_kernel!(backend, wg)(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, TF, tv, n; ndrange=n)
+    md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.tg, nf.output, 5, md.mg, md.mslot, tv, md.K;
+        ndrange=cld(md.K, wg) * wg)
     npairs = nf.n_direct
     if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
         off = _sfs_pair_offsets!(nf, backend, wg)
@@ -1473,6 +1477,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         ka_sfs_zeta_pairs_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
             nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
     end
+    md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
     if dsigma
         fill!(view(ctx.dj, :, 1:n), zero(TF))
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
@@ -1483,7 +1488,10 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
             ka_sfs_dj_pairs_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
                 nf.direct_sources, npairs, rc2, A, 9, TF, Val(wg); ndrange=npairs * wg)
         end
+        md === nothing || _sfs_masked_pairs!(ctx.dj, ctx.dj, ctx.tg, ctx.dt, nf, md, 2, A, TF, backend, wg)
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
+        md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.dt, ctx.dj, 1, md.mg, md.mslot, tv, md.K;
+            ndrange=cld(md.K, wg) * wg)
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dzeta_cells_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
@@ -1492,6 +1500,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
             ka_sfs_dzeta_pairs_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
                 nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
         end
+        md === nothing || _sfs_masked_pairs!(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf, md, 3, K1, TF, backend, wg)
     end
     # no sync: the kernels queue in order behind the lifecycle's; fmm!'s finalize synchronizes
     return nothing
@@ -1568,6 +1577,136 @@ function FLOWVPM.zeta_fmm(pfield::GPUField)
     # ζ arrives in global particle order; assigned (the host zeta_fmm zeroes then assigns)
     view(pfield.particles, FLOWVPM.VORTICITY_INDEX, 1:np) .= buf
     KA.synchronize(backend)
+    return nothing
+end
+
+
+#------- the oversize (masked) particles in the SFS pass (see src/FLOWVPM_fmm_radix_sfs.jl) -------#
+
+# sorted slot of each masked particle: one thread per slot, a binary search of the
+# masked global indices
+@kernel function ka_sfs_masked_slots_kernel!(mslot, @Const(perm), @Const(sysid), @Const(bidx),
+        @Const(psorted), @Const(korder), K, n)
+    s = @index(Global)
+    @inbounds if s <= n
+        g = perm[s]
+        if sysid[g] == 1
+            p = bidx[g]
+            lo = 1; hi = K
+            while lo < hi
+                mid = (lo + hi) >>> 1
+                if psorted[mid] < p
+                    lo = mid + 1
+                else
+                    hi = mid
+                end
+            end
+            if K >= 1 && psorted[lo] == p
+                mslot[korder[lo]] = Int32(s)
+            end
+        end
+    end
+end
+
+# T = op(J)Γ at the masked slots from the saved Γ; `jsrc[joff:joff+8, s]` is the gradient
+@kernel function ka_sfs_masked_t_kernel!(t, @Const(jsrc), joff, @Const(mg), @Const(mslot),
+        ::Val{TRANSPOSED}, K) where TRANSPOSED
+    k = @index(Global)
+    @inbounds if k <= K
+        s = mslot[k]
+        if s > 0
+            a1, a2, a3 = FLOWVPM._sfs_apply_op(jsrc[joff, s], jsrc[joff + 1, s], jsrc[joff + 2, s],
+                jsrc[joff + 3, s], jsrc[joff + 4, s], jsrc[joff + 5, s], jsrc[joff + 6, s],
+                jsrc[joff + 7, s], jsrc[joff + 8, s], mg[1, k], mg[2, k], mg[3, k], TRANSPOSED)
+            t[1, s] = a1; t[2, s] = a2; t[3, s] = a3
+        end
+    end
+end
+
+# the masked-pair sums, one thread per target slot over the 27 grid cells around it.
+# `mode` 1: ζ (om, q); 2: ∂J (dj); 3: ∂ζ (dom, dq). Written in place (one writer per
+# target, launched after the direct sweeps): deterministic.
+@kernel function ka_sfs_masked_pairs_kernel!(a, b, @Const(tg), @Const(dt), @Const(source_bodies),
+        @Const(mx), @Const(mg), @Const(ms), @Const(mslot), @Const(offsets),
+        ox, oy, oz, h, nx, ny, nz, rc2, coef, active_row, mode, ::Type{T}, n) where T
+    i = @index(Global)
+    half = T(0.5); three = T(3)
+    @inbounds if i <= n && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+        fx = floor((xi - ox) / h); fy = floor((yi - oy) / h); fz = floor((zi - oz) / h)
+        a1 = zero(T); a2 = zero(T); a3 = zero(T); b1 = zero(T); b2 = zero(T); b3 = zero(T)
+        d4 = zero(T); d5 = zero(T); d6 = zero(T); d7 = zero(T); d8 = zero(T); d9 = zero(T)
+        # a target more than a cell outside the grid has no masked source in reach
+        if fx >= -one(T) && fy >= -one(T) && fz >= -one(T) && fx <= T(nx) && fy <= T(ny) && fz <= T(nz)
+            cx = unsafe_trunc(Int32, fx); cy = unsafe_trunc(Int32, fy); cz = unsafe_trunc(Int32, fz)
+            for kz in max(cz - Int32(1), Int32(0)):min(cz + Int32(1), nz - Int32(1)),
+                ky in max(cy - Int32(1), Int32(0)):min(cy + Int32(1), ny - Int32(1)),
+                kx in max(cx - Int32(1), Int32(0)):min(cx + Int32(1), nx - Int32(1))
+                c = Int32(1) + kx + nx * (ky + ny * kz)
+                for t in offsets[c]:(offsets[c + 1] - Int32(1))
+                    s = mslot[t]
+                    if s != i && s > 0
+                        dx = xi - mx[1, t]; dy = yi - mx[2, t]; dz = zi - mx[3, t]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        sigma = ms[t]
+                        rho2 = r2 / (sigma * sigma)
+                        if rho2 <= rc2
+                            if mode == 2
+                                if r2 > zero(T)
+                                    invr = inv(sqrt(r2))
+                                    G = coef * rho2 * sqrt(rho2) * exp(-half * rho2)
+                                    _, _, _, _, h1, h2, h3, h4, h5, h6, h7, h8, h9 =
+                                        fmm._vortex_pair_ugh(dx, dy, dz, r2, invr,
+                                            mg[1, t], mg[2, t], mg[3, t], -G, rho2 * G)
+                                    a1 += h1; a2 += h2; a3 += h3
+                                    b1 += h4; b2 += h5; b3 += h6
+                                    d7 += h7; d8 += h8; d9 += h9
+                                end
+                            else
+                                z = coef * exp(-half * rho2) / (sigma * sigma * sigma)
+                                if mode == 1
+                                    a1 += z * mg[1, t]; a2 += z * mg[2, t]; a3 += z * mg[3, t]
+                                    b1 += z * tg[1, s]; b2 += z * tg[2, s]; b3 += z * tg[3, s]
+                                else
+                                    dz_ = z * (rho2 - three)
+                                    a1 += dz_ * mg[1, t]; a2 += dz_ * mg[2, t]; a3 += dz_ * mg[3, t]
+                                    b1 += dz_ * tg[1, s] + z * dt[1, s]
+                                    b2 += dz_ * tg[2, s] + z * dt[2, s]
+                                    b3 += dz_ * tg[3, s] + z * dt[3, s]
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if mode == 2
+            a[1, i] += a1; a[2, i] += a2; a[3, i] += a3
+            a[4, i] += b1; a[5, i] += b2; a[6, i] += b3
+            a[7, i] += d7; a[8, i] += d8; a[9, i] += d9
+        else
+            a[1, i] += a1; a[2, i] += a2; a[3, i] += a3
+            b[1, i] += b1; b[2, i] += b2; b[3, i] += b3
+        end
+    end
+end
+
+# the host-prepared masked set on the device, with the slots searched there
+function _sfs_masked_device(m, nf, backend, ::Type{TF}) where TF
+    up(A) = (d = KA.allocate(backend, eltype(A), size(A)...); copyto!(d, A); d)
+    mslot = KA.zeros(backend, Int32, m.K)
+    psorted = up(collect(m.psorted)); korder = up(m.korder)
+    ka_sfs_masked_slots_kernel!(backend, 256)(mslot, nf.body_perm, nf.body_system_ids, nf.body_indices,
+        psorted, korder, m.K, nf.n_bodies; ndrange = cld(nf.n_bodies, 256) * 256)
+    return (; K = m.K, mx = up(m.mx), mg = up(m.mg), ms = up(m.ms), mslot, offsets = up(m.offsets),
+              o = m.origin, h = m.h, dims = m.dims)
+end
+
+function _sfs_masked_pairs!(a, b, tg, dt, nf, md, mode, coef, ::Type{TF}, backend, wg) where TF
+    n = nf.n_bodies
+    ka_sfs_masked_pairs_kernel!(backend, wg)(a, b, tg, dt, nf.source_bodies, md.mx, md.mg, md.ms,
+        md.mslot, md.offsets, md.o[1], md.o[2], md.o[3], md.h, md.dims[1], md.dims[2], md.dims[3],
+        FLOWVPM._sfs_saturation_rc2(TF), coef, 9, mode, TF, n; ndrange = cld(n, wg) * wg)
     return nothing
 end
 
