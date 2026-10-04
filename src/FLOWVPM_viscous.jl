@@ -77,6 +77,9 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     verbose::Bool                         # Verbose on RBF interpolation
     v_lvl::Int                            # Verbose printing tab level
     debug::Bool                           # Print verbose for debugging
+    precondition::Bool                    # Block-Jacobi preconditioned CG (false: plain CG)
+    block_cell::R                         # Preconditioner block cell, in units of sgm0
+    block_cap::Int                        # Most particles in one preconditioner block
 
     # Internal properties
     t_sgm::R                              # Time since last core size reset
@@ -92,8 +95,9 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta::Tzeta=zeta_fmm;
                         beta=R(1.5), growth_beta=R(0),
-                        itmax=R(15), tol=R(1e-3),
+                        itmax=100, tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
+                        precondition=true, block_cell=R(8), block_cap=64,
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
@@ -104,6 +108,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         beta, growth_beta,
                         itmax, tol,
                         iterror, verbose, v_lvl, debug,
+                        precondition, block_cell, block_cap,
                         t_sgm,
                         rbf,
                         rr0s, rrs, prev_rrs,
@@ -117,17 +122,35 @@ end
 
 Creates a core spreading viscous scheme with the given parameters.
 
+Core spreading assumes a single core size: every particle grows from `sgm0` and a
+reset returns every reset particle to `sgm0`. Use it with fields whose particles
+are all created at `sgm0`. A field with a range of cores (variable shedding rules,
+a hub-to-tip core scaling) has its large cores shrunk and its small ones grown at
+each reset, and the RBF problem behind the reset is then poorly posed (on a real
+rotor wake reset to its median core, the conjugate gradient stalled near 0.2-0.5
+residual).
+
 # Arguments
 - `nu`::Real Kinematic viscosity.
 - `sgm0`::Real Core size after reset.
 - `zeta::Function = zeta_fmm` Basis function evaluation method.
 - `beta::Real = 1.5` Maximum core size growth σ/σ_0.
-- `itmax::Int = 15` Maximum number of RBF iterations.
+- `itmax::Int = 100` Maximum number of RBF iterations.
 - `tol::Real = 1e-3` RBF interpolation tolerance.
 - `iterror::Bool = true` Throw error if RBF didn't converge.
 - `verbose::Bool = false` Verbose on RBF interpolation.
 - `v_lvl::Int = 2` Verbose printing tab level.
 - `debug::Bool = false` Print verbose for debugging.
+- `precondition::Bool = true` Block-Jacobi preconditioned conjugate gradient:
+  the active particles are grouped on a grid of cell `block_cell * sgm0`, cells
+  holding more than `block_cap` particles split into octants, and each block's
+  dense basis-function matrix is inverted once per reset. On a 20k-particle chunk
+  of a rotor wake (subset reset of 1062 grown cores) the plain CG had not reached
+  1e-3 after 300 iterations; preconditioned it took 25 in Float64, and in Float32
+  reached the ~1e-3 floor of single precision in about 100 (plain: 4-6e-3).
+  `false` runs the plain CG.
+- `block_cell::Real = 8` Preconditioner block cell, in units of `sgm0`.
+- `block_cap::Int = 64` Most particles in one preconditioner block.
 - `rbf::Function = rbf_conjugategradient` RBF function.
 - `rr0s::Array{R, 1} = zeros(R, 3)` Initial field residuals.
 - `rrs::Array{R, 1} = zeros(R, 3)` Current field residuals.
@@ -513,6 +536,114 @@ _corespreading_sigma_max(pfield) = pfield.np == 0 ? zero(eltype(pfield.particles
 
 ##### COMMON FUNCTIONS #########################################################
 
+#------- block-Jacobi preconditioner for the CS-RBF conjugate gradient -------#
+#
+# The RBF matrix A_ij = zeta(|x_i - x_j| / sgm0) / sgm0^3 of a reset is symmetric
+# (every reset particle is at sgm0) and badly conditioned where cores overlap
+# strongly: on a 5MW wake chunk the plain CG needed more than 300 iterations for
+# 1e-3, so the default itmax stopped it near 3e-2 (2026-10-04). The active particles
+# are grouped on a grid of cell `block_cell * sgm0`, crowded cells split into
+# octants down to `block_cap` particles, and each block's dense matrix inverted
+# once per reset (positions and cores do not change during the solve). Applying
+# it is one small dense matrix-vector product per particle.
+
+const _CS_BLOCK_SHIFT = Ref(1e-3)
+
+# split `ids` (local indices into the columns of X) into octants of the cell at
+# `lo` with edge `h` until each piece holds at most `cap`; coincident points (a
+# piece that never splits) are cut into `cap`-sized runs
+function _cs_split!(blocks, X, ids, lo, h, cap, depth=0)
+    if length(ids) <= cap
+        push!(blocks, ids); return blocks
+    end
+    if depth > 40
+        for c in Iterators.partition(ids, cap); push!(blocks, collect(c)); end
+        return blocks
+    end
+    hh = h / 2
+    oct = [Int(X[1, k] - lo[1] >= hh) + 2 * Int(X[2, k] - lo[2] >= hh) + 4 * Int(X[3, k] - lo[3] >= hh) for k in ids]
+    for o in 0:7
+        sub = ids[oct .== o]
+        isempty(sub) || _cs_split!(blocks, X, sub, lo .+ hh .* (o & 1, (o >> 1) & 1, (o >> 2) & 1), hh, cap, depth + 1)
+    end
+    return blocks
+end
+
+"""
+    _cs_blocks(X, idx, sgm0, zeta, cell, cap, TF) -> NamedTuple
+
+Block-Jacobi preconditioner of the CS-RBF system over the particles `idx` (global
+indices; `X` their 3 x K positions, Float64): `perm` the particles block by block,
+`start` each block's first position in `perm` (and one past the end), `block_of`
+each position's block, `moff` each block's first entry in `minv`, the block
+inverses column-major and stored in `TF`.
+"""
+function _cs_blocks(X::AbstractMatrix{Float64}, idx::Vector{Int}, sgm0, zeta, cell, cap, ::Type{TF}) where TF
+    K = length(idx)
+    h = Float64(cell) * Float64(sgm0)
+    keys = [(floor(Int, X[1, k] / h), floor(Int, X[2, k] / h), floor(Int, X[3, k] / h)) for k in 1:K]
+    order = sortperm(keys)
+    blocks = Vector{Vector{Int}}()
+    i = 1
+    while i <= K
+        j = i
+        while j < K && keys[order[j + 1]] == keys[order[i]]; j += 1; end
+        _cs_split!(blocks, X, order[i:j], Float64.(keys[order[i]]) .* h, h, cap)
+        i = j + 1
+    end
+    nb = length(blocks)
+    start = Vector{Int32}(undef, nb + 1); moff = Vector{Int}(undef, nb + 1)
+    perm = Vector{Int32}(undef, K); block_of = Vector{Int32}(undef, K)
+    start[1] = 1; moff[1] = 1
+    for (b, blk) in enumerate(blocks)
+        n = length(blk)
+        start[b + 1] = start[b] + n; moff[b + 1] = moff[b] + n * n
+        for (q, k) in enumerate(blk)
+            perm[start[b] + q - 1] = idx[k]; block_of[start[b] + q - 1] = b
+        end
+    end
+    minv = Vector{TF}(undef, moff[end] - 1)
+    s0 = Float64(sgm0)
+    Threads.@threads for b in 1:nb
+        blk = blocks[b]; n = length(blk)
+        A = [zeta(sqrt((X[1, a] - X[1, c])^2 + (X[2, a] - X[2, c])^2 + (X[3, a] - X[3, c])^2) / s0) / s0^3
+             for a in blk, c in blk]
+        # a small relative diagonal shift keeps the stored inverse positive definite in
+        # Float32 (unshifted blocks reach condition numbers ~1e5 and the Float32 PCG
+        # diverged); the preconditioner only approximates A^-1, the solution is unchanged
+        for a in 1:n; A[a, a] *= 1 + _CS_BLOCK_SHIFT[]; end
+        F = cholesky(Symmetric(A); check = false)
+        Ai = issuccess(F) ? inv(F) : [a == c ? 1 / A[a, a] : 0.0 for a in 1:n, c in 1:n]
+        copyto!(view(minv, moff[b]:(moff[b + 1] - 1)), vec(Ai))
+    end
+    return (; perm, start, block_of, moff, minv, nblocks = nb)
+end
+
+# the blocks of `pfield`'s active (non-static) particles, for the reset at hand
+function _cs_blocks(pfield, cs::CoreSpreading)
+    P = pfield.particles; np = pfield.np
+    S = Array(view(P, STATIC_INDEX, 1:np)); idx = findall(iszero, S)
+    X = Float64.(Array(view(P, X_INDEX, 1:np))[:, idx])
+    return _cs_blocks(X, idx, cs.sgm0, pfield.kernel.zeta, cs.block_cell, cs.block_cap, eltype(P))
+end
+
+# Z = M^-1 R on the active particles (host); 3 x np matrices
+function _cs_block_apply!(Z::AbstractMatrix, R::AbstractMatrix, blk)
+    Threads.@threads for b in 1:blk.nblocks
+        s = Int(blk.start[b]); n = Int(blk.start[b + 1]) - s; m0 = blk.moff[b]
+        for q in 1:n
+            z1 = zero(eltype(Z)); z2 = zero(eltype(Z)); z3 = zero(eltype(Z))
+            for k in 1:n
+                m = blk.minv[m0 + (q - 1) + (k - 1) * n]; j = blk.perm[s + k - 1]
+                z1 += m * R[1, j]; z2 += m * R[2, j]; z3 += m * R[3, j]
+            end
+            i = blk.perm[s + q - 1]
+            Z[1, i] = z1; Z[2, i] = z2; Z[3, i] = z3
+        end
+    end
+    return Z
+end
+
 """
 Radial basis function interpolation of Gamma using the conjugate gradient
 method. This method only works on a particle field with uniform smoothing
@@ -541,6 +672,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Initialize memory
     cs.rr0s .= 0
     cs.rrs .= 0
+    acc = zeros(Float64, 3)
     cs.flags .= false
 
     for P in iterator(pfield)
@@ -563,12 +695,34 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             # Update coefficients
             get_Gamma(P)[i] = get_M(P)[3+i]             # p0 = r0
 
-            # Initial field residual
-            cs.rr0s[i] += (get_M(P)[3+i])^2
+            # Initial field residual (summed in Float64: the step lengths of a Float32
+            # field otherwise lose the digits the preconditioned CG needs)
+            acc[i] += Float64(get_M(P)[3+i])^2
         end
     end
 
+    cs.rr0s .= acc; rr0 = copy(acc)
     cs.rrs .= cs.rr0s                         # Current field residuals
+
+    # Block-Jacobi preconditioner (see `_cs_blocks`): z0 = M^-1 r0, p0 = z0, and the
+    # step lengths use r.z; without it z = r and this is the plain CG unchanged
+    blk = cs.precondition ? _cs_blocks(pfield, cs) : nothing
+    rrs = copy(rr0)
+    Pm = pfield.particles; npart = pfield.np
+    Rv = view(Pm, M_INDEX[4]:M_INDEX[6], 1:npart)
+    Z = blk === nothing ? nothing : zeros(eltype(Pm), 3, npart)
+    rzs = copy(rr0)
+    if blk !== nothing
+        _cs_block_apply!(Z, Rv, blk)
+        rzs .= 0
+        for j in 1:npart
+            iszero(Pm[STATIC_INDEX, j]) || continue
+            for i in 1:3
+                Pm[GAMMA_INDEX[i], j] = Z[i, j]                 # p0 = z0
+                rzs[i] += Float64(Rv[i, j]) * Z[i, j]
+            end
+        end
+    end
     for i in 1:3                              # Iteration flag of each dimension
         cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
@@ -583,48 +737,66 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         cs.zeta(pfield)
 
         # Calculate pAp product on each dimension
-        cs.pAps .= 0
+        acc .= 0
         for P in iterator(pfield)
             for i in 1:3
-                cs.pAps[i] += get_Gamma(P)[i] .* get_vorticity(P)[i]
+                acc[i] += Float64(get_Gamma(P)[i]) * get_vorticity(P)[i]
             end
         end
+        cs.pAps .= acc
 
         for i in 1:3
             # an inactive component may have pAps = 0: 0/0 * false is NaN (2026-09-26)
-            cs.alphas[i] = cs.flags[i] ? cs.rrs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
+            cs.alphas[i] = cs.flags[i] ? rzs[i] / acc[i] : zero(eltype(cs.alphas))
             # cs.alphas[i] = cs.rrs[i]/cs.pAps[i]
         end
 
-        cs.prev_rrs .= cs.rrs
-        cs.rrs .= 0
+        cs.prev_rrs .= cs.rrs; prev_rrs = copy(rrs)
+        acc .= 0
 
         for P in iterator(pfield)
             for i in 1:3
                 get_M(P)[i] += cs.alphas[i]*get_Gamma(P)[i]   # x = x + alpha*p
                 get_M(P)[i+3] -= cs.alphas[i].*get_vorticity(P)[i] # r = r - alpha*Ap
-                cs.rrs[i] += get_M(P)[i+3]^2             # Update field residual
+                acc[i] += Float64(get_M(P)[i+3])^2       # Update field residual
             end
         end
 
-        cs.betas .= cs.rrs
-        cs.betas ./= cs.prev_rrs
-
-        # Avoid dividing by zero
-        for i in 1:3
-            if abs(cs.prev_rrs[i]) <= 2*eps()
-                cs.betas[i] = 1
-            end
-        end
-
-        for P in iterator(pfield)
+        rrs .= acc; cs.rrs .= acc
+        if blk === nothing
             for i in 1:3
-                get_Gamma(P)[i] = get_M(P)[i+3] + cs.betas[i]*get_Gamma(P)[i]
+                # Avoid dividing by zero
+                cs.betas[i] = abs(prev_rrs[i]) <= 2*eps() ? 1 : rrs[i] / prev_rrs[i]
+            end
+            rzs .= rrs
+
+            for P in iterator(pfield)
+                for i in 1:3
+                    get_Gamma(P)[i] = get_M(P)[i+3] + cs.betas[i]*get_Gamma(P)[i]
+                end
+            end
+        else
+            _cs_block_apply!(Z, Rv, blk)                   # z = M^-1 r
+            prev_rzs = copy(rzs); rzs .= 0
+            for j in 1:npart
+                iszero(Pm[STATIC_INDEX, j]) || continue
+                for i in 1:3
+                    rzs[i] += Float64(Rv[i, j]) * Z[i, j]
+                end
+            end
+            for i in 1:3
+                cs.betas[i] = abs(prev_rzs[i]) <= 2*eps() ? one(eltype(cs.betas)) : rzs[i] / prev_rzs[i]
+            end
+            for j in 1:npart
+                iszero(Pm[STATIC_INDEX, j]) || continue
+                for i in 1:3
+                    Pm[GAMMA_INDEX[i], j] = Z[i, j] + cs.betas[i] * Pm[GAMMA_INDEX[i], j]   # p = z + beta p
+                end
             end
         end
 
         for i in 1:3
-            cs.flags[i] *= abs(cs.rr0s[i]) <= 2*eps() ? false : sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+            cs.flags[i] *= abs(rr0[i]) <= 2*eps() ? false : sqrt(rrs[i] / rr0[i]) > cs.tol
         end
 
         # Non-convergenced case

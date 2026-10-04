@@ -1,5 +1,6 @@
 using Test
 import FLOWVPM
+import Random
 
 function vorticity_storage_fmm()
     return FLOWVPM.FMM(;
@@ -135,4 +136,37 @@ end
             @test captured_targets[][i] != [-100.0, -200.0, -300.0]
         end
     end
+end
+
+@testset "CS-RBF block-Jacobi preconditioner" begin
+    # a full reset of a field grown uniformly to 1.5 sgm0, same iteration budget: the
+    # preconditioned CG ends with a smaller residual, and the block apply is the exact
+    # inverse of each block's basis-function matrix
+    n = 1500; sgm0 = 0.12
+    function grown_field(precondition)
+        cs = FLOWVPM.CoreSpreading(1e-3, sgm0, FLOWVPM.zeta_direct; itmax = 20, iterror = false,
+                                   precondition = precondition)
+        pf = FLOWVPM.ParticleField(n; viscous = cs, UJ = FLOWVPM.UJ_direct)
+        r = Random.MersenneTwister(4)
+        for _ in 1:n
+            FLOWVPM.add_particle(pf, rand(r, 3), 2 .* rand(r, 3) .- 1, 1.5 * sgm0)
+        end
+        return pf
+    end
+    res = map((false, true)) do pc
+        pf = grown_field(pc)
+        FLOWVPM._corespreading_reset!(pf, pf.viscous)
+        maximum(sqrt.(pf.viscous.rrs ./ pf.viscous.rr0s))
+    end
+    @test res[2] < res[1]
+    pf = grown_field(true)
+    pf.particles[FLOWVPM.SIGMA_INDEX, 1:n] .= sgm0
+    blk = FLOWVPM._cs_blocks(pf, pf.viscous)
+    @test sort(Int.(blk.perm)) == collect(1:n)
+    b = argmax(diff(blk.start)); s = Int(blk.start[b]); m = Int(blk.start[b + 1]) - s
+    ids = Int.(blk.perm[s:s + m - 1]); X = pf.particles[FLOWVPM.X_INDEX, ids]
+    A = [pf.kernel.zeta(sqrt(sum(abs2, X[:, a] .- X[:, c])) / sgm0) / sgm0^3 for a in 1:m, c in 1:m]
+    for a in 1:m; A[a, a] *= 1 + FLOWVPM._CS_BLOCK_SHIFT[]; end
+    Minv = reshape(blk.minv[blk.moff[b]:blk.moff[b + 1] - 1], m, m)
+    @test maximum(abs.(Minv * A .- [a == c ? 1.0 : 0.0 for a in 1:m, c in 1:m])) < 1e-6
 end

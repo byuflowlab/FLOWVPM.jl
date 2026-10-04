@@ -346,6 +346,34 @@ end
 #------- core spreading on the device: ζ reconstruction + RBF conjugate gradient -------#
 
 
+# z = M^-1 r for the block-Jacobi preconditioner (FLOWVPM._cs_blocks): one thread per
+# particle in block order, its row of the block's inverse against the block's r; one
+# store per particle, no atomics
+@kernel function ka_cs_block_apply_kernel!(Z, @Const(R), @Const(perm), @Const(start), @Const(block_of),
+        @Const(moff), @Const(minv), K)
+    t = @index(Global)
+    @inbounds if t <= K
+        b = Int(block_of[t]); s = Int(start[b]); n = Int(start[b + 1]) - s; q = t - s
+        m0 = Int(moff[b])
+        z1 = zero(eltype(Z)); z2 = zero(eltype(Z)); z3 = zero(eltype(Z))
+        for k in 0:(n - 1)
+            m = minv[m0 + q + k * n]; j = Int(perm[s + k])
+            z1 += m * R[1, j]; z2 += m * R[2, j]; z3 += m * R[3, j]
+        end
+        i = Int(perm[t])
+        Z[1, i] = z1; Z[2, i] = z2; Z[3, i] = z3
+    end
+end
+
+function _cs_block_apply_device!(Z, R, blk)
+    K = length(blk.perm)
+    K == 0 && return Z
+    backend = KA.get_backend(Z)
+    ka_cs_block_apply_kernel!(backend, 256)(Z, R, blk.perm, blk.start, blk.block_of, blk.moff, blk.minv, K;
+        ndrange = cld(K, 256) * 256)
+    return Z
+end
+
 # Same algorithm and storage as the host rbf_conjugategradient (x = M[1:3],
 # r = M[4:6], b = M[7:9], A p = vorticity rows, p = Gamma rows), with the
 # per-particle loops as whole-field broadcasts and the dot products as
@@ -370,6 +398,18 @@ function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpre
     G .= ifelse.(act, Rr, G)                     # p0 = r0
     cs.rr0s .= dots(Rr, Rr)
     cs.rrs .= cs.rr0s
+    # block-Jacobi preconditioner, built on the host (FLOWVPM._cs_blocks) and applied
+    # here: z0 = M^-1 r0, p0 = z0, step lengths from r.z; without it this is the plain CG
+    blk = nothing; Z = nothing; rzs = copy(cs.rr0s)
+    if cs.precondition
+        h = FLOWVPM._cs_blocks(pfield, cs)
+        up(A) = (d = KA.allocate(KA.get_backend(P), eltype(A), length(A)); copyto!(d, A); d)
+        blk = (; perm = up(h.perm), start = up(h.start), block_of = up(h.block_of), moff = up(h.moff), minv = up(h.minv))
+        Z = KA.zeros(KA.get_backend(P), R, 3, np)
+        _cs_block_apply_device!(Z, Rr, blk)
+        G .= ifelse.(act, Z, G)
+        rzs .= dots(Rr, Z)
+    end
     for i in 1:3
         cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
@@ -379,19 +419,30 @@ function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpre
         cs.pAps .= dots(G, W)
         for i in 1:3
             # an inactive component may have pAps = 0: 0/0 * false is NaN (host fix mirrored, 2026-09-26)
-            cs.alphas[i] = cs.flags[i] ? cs.rrs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
+            cs.alphas[i] = cs.flags[i] ? rzs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
         end
         cs.prev_rrs .= cs.rrs
         al = _rowvec(P, cs.alphas)
         X .= ifelse.(act, X .+ al .* G, X)
         Rr .= ifelse.(act, Rr .- al .* W, Rr)
         cs.rrs .= dots(Rr, Rr)
-        cs.betas .= cs.rrs ./ cs.prev_rrs
-        for i in 1:3
-            abs(cs.prev_rrs[i]) <= 2 * eps() && (cs.betas[i] = 1)
+        if blk === nothing
+            cs.betas .= cs.rrs ./ cs.prev_rrs
+            for i in 1:3
+                abs(cs.prev_rrs[i]) <= 2 * eps() && (cs.betas[i] = 1)
+            end
+            rzs .= cs.rrs
+            be = _rowvec(P, cs.betas)
+            G .= ifelse.(act, Rr .+ be .* G, G)
+        else
+            _cs_block_apply_device!(Z, Rr, blk)                  # z = M^-1 r
+            prev_rzs = copy(rzs); rzs .= dots(Rr, Z)
+            for i in 1:3
+                cs.betas[i] = abs(prev_rzs[i]) <= 2 * eps() ? one(eltype(cs.betas)) : rzs[i] / prev_rzs[i]
+            end
+            be = _rowvec(P, cs.betas)
+            G .= ifelse.(act, Z .+ be .* G, G)
         end
-        be = _rowvec(P, cs.betas)
-        G .= ifelse.(act, Rr .+ be .* G, G)
         for i in 1:3
             cs.flags[i] *= abs(cs.rr0s[i]) <= 2 * eps() ? false : sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
         end
