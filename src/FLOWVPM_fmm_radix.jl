@@ -468,8 +468,21 @@ function restore_radix_state!(pfield::ParticleField, d)
     settings = d[:settings]
     _radix_fmm_settings[pfield] = settings
     bounds = (d[:x_min], d[:box])
-    cache = _build_radix_fmm_cache(pfield, settings;
-        geometry=(bounds, d[:ell], d[:q], d[:level_radii2]))
+    # Built on the masked field, as an evaluation builds it: the build's first
+    # update runs the adequacy gate, which on the unmasked cores demoted the
+    # restored geometry to the all-direct cache for the rest of the run (5MW
+    # step-3024 checkpoint, 2026-10-03). The mask here is only what the saved
+    # geometry cannot admit; the first evaluation re-selects and re-packs.
+    lim = fmm.radix_sigma_limit(_radix_geometry_policy(settings), d[:ell], d[:box], d[:q], d[:level_radii2])
+    idx = settings.oversize_count < 0 ? Int[] :
+        fmm.radix_rows_above(pfield.particles, SIGMA_INDEX, pfield.np, lim, pfield.np)
+    saved = isempty(idx) ? nothing : fmm.radix_mask_bodies!(pfield, idx)
+    cache = try
+        _build_radix_fmm_cache(pfield, settings;
+            geometry=(bounds, d[:ell], d[:q], d[:level_radii2]))
+    finally
+        saved === nothing || fmm.radix_unmask_bodies!(pfield, idx, saved)
+    end
     _radix_built_q[pfield] = d[:built_q]
     _radix_fmm_couplings[pfield] = (; cache, settings, np_checked=Ref(d[:np_checked]),
         sigma_limit=fmm.radix_sigma_limit(_radix_geometry_policy(settings), cache), q=d[:st_q], evals=Ref(d[:evals]),
