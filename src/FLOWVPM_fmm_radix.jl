@@ -230,8 +230,10 @@ Base.@kwdef struct RadixFMMSettings
     # particles with the largest cores OUT of the tree (their strength and core
     # are masked to zero while the field is packed, so the geometry, the
     # adequacy gate, the near field and the SFS sweep see the (K+1)-th largest
-    # core) and evaluates them all-pairs onto every target instead (the extra-
-    # source arm, K x np pairs: negligible at K = 32). Their strength and core
+    # core) and puts them back through FastMultipole's `MaskedBodies`, each at the
+    # coarser tree level its reach admits (direct to the targets near it there,
+    # far field through the tree; 2026-10-03: 2M 5MW wake on the H200, 74 -> 15 ms
+    # against the old all-pairs arm, accuracy identical). Their strength and core
     # are restored before the call returns. Dropped: their contribution to the
     # other particles' SFS estimator. `oversize_count = 0` (default) uses
     # `oversize_fraction` of the live count, clamped to [32, 4096]; a negative
@@ -251,14 +253,9 @@ Base.@kwdef struct RadixFMMSettings
     # every 60 evaluations. Measured: the HVAB hover at 540k particles ran at
     # 36 s/step with the old fixed 0.15% (clamped to 4096) rule and 1.3 s/step
     # with 4096 masked; the tail is a continuum (the 0.15% remainder still
-    # tracked the runaway) so a count-free rule is needed. The all-pairs arm
-    # costs K x np pairs: 2% of 540k is 6e9, under 0.3 s on the H200.
+    # tracked the runaway) so a count-free rule is needed.
     oversize_count::Int = 0
     oversize_fraction::Float64 = 0.02
-    # how the masked particles act on the others: :allpairs (exact, K x N pairs)
-    # or :multilevel (back into the tree at the level their reach admits;
-    # FastMultipole.MultilevelOversize)
-    oversize_evaluator::Symbol = :allpairs
 end
 
 # Deepest radix level the dense per-level node table allows (8^ell Int32).
@@ -729,9 +726,7 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
     rec === rec0 || (_radix_oversize_thr[pfield] = rec)
     ov = isempty(oversize) ? nothing :
         fmm.MaskedBodies(fmm.radix_mask_bodies!(pfield, oversize), _radix_direct_kernel(settings), 3;
-            idx = oversize, bodytype = fmm.body_type(pfield),
-            evaluator = settings.oversize_evaluator === :multilevel ?
-                fmm.MultilevelOversize(; margin = settings.accuracy_margin) : fmm.AllPairsOversize())
+            idx = oversize, bodytype = fmm.body_type(pfield), margin = settings.accuracy_margin)
     try
         st = _radix_fmm_coupling!(pfield)
         # extra targets (probes, ring nodes) and extra sources (bound segments,

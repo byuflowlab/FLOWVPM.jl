@@ -589,8 +589,8 @@ end
         vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma0)
         vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma0)
     end
-    # oversize masking off: with it, the fat core below would be masked into the
-    # all-pairs arm (the threshold is capped at the cached grid's limit) and the
+    # oversize masking off: with it, the fat core below would be masked out of the
+    # tree (the threshold is capped at the cached grid's limit) and the
     # rebuild path under test would not run; the masked case is checked after
     FLOWVPM.radix_fmm_settings!(pfield; oversize_count=-1)
     vpm_fmm.UJ_fmm_gpu!(pfield)
@@ -633,7 +633,7 @@ end
     # outgrown geometry is demoted by FastMultipole to the all-direct zero-M2L
     # cache (052f) instead of refusing, so the answer stays accurate. Oversize
     # masking is off here: by default it would take the one fat core out of
-    # the tree (all-pairs arm) and the geometry would never be outgrown
+    # the tree and the geometry would never be outgrown
     pfield2 = fmm034_pfield(n)
     ref2 = fmm034_pfield(n; UJ=vpm_fmm.UJ_direct)
     for i in 1:n
