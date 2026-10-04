@@ -104,3 +104,46 @@ end
     @test n == 1 && vpm.get_np(pf) == 2
     @test vpm.get_Gamma(pf, 1) ≈ [0.0, 0.0, 2.0] && vpm.get_X(pf, 1) ≈ [0.5, 0.0, 0.0]
 end
+
+@testset "ambient flow: uniform equals the classic Uinf, shear stretches" begin
+    # An AbstractAmbient enters through add_ambient! (U and J before each update)
+    # instead of the update's own Uinf term: the same sums for a uniform ambient.
+    u = SVector(1.0, -0.5, 0.25); dt = 2e-3
+    function field(Uinf; n = 24, seed = 3, formulation = vpm.formulation_rVPM, transposed = true)
+        Random.seed!(seed)
+        pf = vpm.ParticleField(n + 4; formulation, kernel = vpm.kernel_gaussianerf, UJ = vpm.UJ_direct,
+                               Uinf, transposed)
+        for _ in 1:n
+            vpm.add_particle(pf, SVector{3,Float64}(randn(3)), SVector{3,Float64}(0.1 .* randn(3)), 0.3 + 0.1 * rand())
+        end
+        return pf
+    end
+    pos(pf) = pf.particles[vcat(vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX), 1:pf.np]
+    for step! in (pf -> vpm.rungekutta3(pf, dt), pf -> vpm.euler(pf, dt))
+        A = field(t -> u); B = field(vpm.UniformAmbient(u))
+        C = field(vpm.AmbientField((X, t) -> u, (X, t) -> zero(SMatrix{3,3,Float64})))
+        H = field(vpm.AmbientHolder()); H.Uinf.ambient = vpm.UniformAmbient(u)
+        for _ in 1:3; step!(A); step!(B); step!(C); step!(H); end
+        @test pos(A) == pos(B) == pos(C) == pos(H)
+    end
+    # shear u = (alpha z, 0, 0), one classic-VPM particle with Gamma along z, no
+    # self-induction: Euler moves it at alpha z0 and stretches Gamma_x by alpha gamma dt per step
+    alpha = 0.7; gamma = 0.3; z0 = 0.4; n = 5
+    shear = vpm.AmbientField((X, t) -> SVector(alpha * X[3], 0.0, 0.0),
+                             (X, t) -> SMatrix{3,3,Float64}(0, 0, 0, 0, 0, 0, alpha, 0, 0))
+    pf = vpm.ParticleField(4; formulation = vpm.ClassicVPM{Float64}(), kernel = vpm.kernel_gaussianerf,
+                           UJ = vpm.UJ_direct, Uinf = shear, transposed = false)
+    vpm.add_particle(pf, SVector(0.0, 0.0, z0), SVector(0.0, 0.0, gamma), 0.2)
+    for _ in 1:n; vpm.euler(pf, dt); end
+    @test pf.particles[vpm.X_INDEX[1], 1] ≈ alpha * z0 * n * dt rtol = 1e-12
+    @test pf.particles[vpm.GAMMA_INDEX[1], 1] ≈ alpha * gamma * n * dt rtol = 1e-12
+    @test pf.particles[vpm.GAMMA_INDEX[3], 1] == gamma
+    # a holder with gradient = false convects by the shear but does not stretch
+    pf = vpm.ParticleField(4; formulation = vpm.ClassicVPM{Float64}(), kernel = vpm.kernel_gaussianerf,
+                           UJ = vpm.UJ_direct, Uinf = vpm.AmbientHolder(shear; gradient = false),
+                           transposed = false)
+    vpm.add_particle(pf, SVector(0.0, 0.0, z0), SVector(0.0, 0.0, gamma), 0.2)
+    for _ in 1:n; vpm.euler(pf, dt); end
+    @test pf.particles[vpm.X_INDEX[1], 1] ≈ alpha * z0 * n * dt rtol = 1e-12
+    @test pf.particles[vpm.GAMMA_INDEX[1], 1] == 0
+end

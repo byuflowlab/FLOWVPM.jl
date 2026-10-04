@@ -54,6 +54,9 @@ Convects the `pfield` by timestep `dt` using a forward Euler step.
 - `custom_UJ` Deprecated, must be `nothing`: U and J come from `pfield.UJ`.
 
 """
+# times of the three stages of the low-storage RK3 below, as fractions of dt
+const _RK3_STAGE_C = (0.0, 1/3, 3/4)
+
 function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
 
     # Evaluate UJ, SFS, and C
@@ -74,6 +77,9 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
                                 dt; relax::Bool=false) where {R, V}
 
     pfield.SFS(pfield, AfterUJ())
+
+    # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
+    add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -196,6 +202,9 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
                                dt::Real; relax::Bool=false) where {R, V, R2}
 
     pfield.SFS(pfield, AfterUJ())
+
+    # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
+    add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -365,13 +374,16 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
     _reset_M_storage!(pfield)
 
     # Runge-Kutta inner steps
-    for (a,b) in ((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15))
+    for (k, (a,b)) in enumerate(((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
         # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
+
+        # Ambient flow (if any) into U and J at the stage's time (stages at t, t + dt/3, t + 3dt/4)
+        add_ambient!(pfield, pfield.t + _RK3_STAGE_C[k] * dt)
 
         # Update the particle field: convection and stretching
         update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)
@@ -573,12 +585,15 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     _reset_M_storage!(pfield)
 
     # Runge-Kutta inner steps
-    for (a,b) in (((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))) # doing type conversions on fixed floating-point numbers is redundant.
+    for (k, (a,b)) in enumerate((((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15)))) # doing type conversions on fixed floating-point numbers is redundant.
 
         # Evaluate UJ, SFS, and C
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
+
+        # Ambient flow (if any) into U and J at the stage's time (stages at t, t + dt/3, t + 3dt/4)
+        add_ambient!(pfield, pfield.t + _RK3_STAGE_C[k] * dt)
 
         # Update the particle field: convection and stretching
         update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)

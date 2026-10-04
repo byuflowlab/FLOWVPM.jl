@@ -40,6 +40,7 @@ import FastMultipole
 #------------- exports --------------------------------------------------------
 
 export ParticleField,
+       AbstractAmbient, UniformAmbient, AmbientField, AmbientHolder, add_ambient!,
        ClassicVPM, ReformulatedVPM,
        NoSFS, ConstantSFS, DynamicSFS,
        U_INDEX, J_INDEX,
@@ -82,7 +83,7 @@ const sqr2 = sqrt(2)
 # ------------ HEADERS ---------------------------------------------------------
 for header_name in ["kernel", "viscous", "formulation",
                     "relaxation", "subfilterscale",
-                    "particlefield", "fmm",
+                    "particlefield", "ambient", "fmm",
                     "fmm_radix",
                     "fmm_radix_sfs",
                     "merging", "splitting",
