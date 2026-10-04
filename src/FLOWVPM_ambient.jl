@@ -42,38 +42,56 @@ struct AmbientField{FU,FG} <: AbstractAmbient
 end
 
 """
-    AmbientHolder(ambient = nothing; gradient = true)
+    AmbientHolder(ambient = nothing; gradient = true, t_offset = 0.0)
 
 A slot for an ambient a driver sets at run time (`holder.ambient = ...`):
 a particle field's `Uinf` is a type parameter fixed at construction, the
 driver's freestream is not known until then. `nothing` is no ambient.
 `gradient = false` skips the ambient gradient (a run without stretching).
+The ambient is evaluated at `pfield.t + t_offset`, for a driver whose clock
+does not start with the field's (`pfield.t` also feeds the SFS time scale, so it
+is not reset).
 """
 mutable struct AmbientHolder <: AbstractAmbient
     ambient::Any
     gradient::Bool
+    t_offset::Float64
 end
-AmbientHolder(ambient = nothing; gradient = true) = AmbientHolder(ambient, gradient)
+AmbientHolder(ambient = nothing; gradient = true, t_offset = 0.0) = AmbientHolder(ambient, gradient, t_offset)
 
 # Where the classic code evaluates `pfield.Uinf(t)`: with an ambient, the uniform
 # term the update adds itself is zero (the ambient went in through add_ambient!).
 (a::AbstractAmbient)(t) = SVector(0.0, 0.0, 0.0)
 
 """
-    add_ambient!(pfield, t)
+    add_ambient!(pfield, t; gradient = true)
 
-Add the ambient velocity at each particle to its U and the ambient gradient to its
-J (`J[(j-1)*3 + i] += ∂u_i/∂x_j`), for the update that follows. A no-op for a
-classic `Uinf(t)`, which the update adds itself.
+Add the ambient velocity at each particle to its U and (with `gradient`) the
+ambient gradient to its J (`J[(j-1)*3 + i] += ∂u_i/∂x_j`), for the update that
+follows. A no-op for a classic `Uinf(t)`, which the update adds itself. Returns
+the 12 x np increments when a gradient went into J (so a caller can take it out
+again; see `remove_ambient_gradient!`), else `nothing`.
 """
-add_ambient!(pfield, t) = _add_ambient!(pfield, pfield.Uinf, t)
+add_ambient!(pfield, t; gradient::Bool = true) = _add_ambient!(pfield, pfield.Uinf, t, gradient)
 
-_add_ambient!(pfield, ::Any, t) = nothing
-_add_ambient!(pfield, a::AmbientHolder, t) =
-    a.ambient === nothing ? nothing : _add_ambient!(pfield, a.ambient, t, a.gradient)
-_add_ambient!(pfield, a, t, gradient::Bool) = _add_ambient!(pfield, a, t)
+"""
+    remove_ambient_gradient!(pfield, increments)
 
-function _add_ambient!(pfield, a::UniformAmbient, t)
+Subtract the gradient [`add_ambient!`](@ref) added: the Euler relaxation must align
+the particles with the vorticity they carry, not with the ambient's.
+"""
+remove_ambient_gradient!(pfield, ::Nothing) = nothing
+function remove_ambient_gradient!(pfield, d)
+    np = size(d, 2)
+    view(pfield.particles, J_INDEX, 1:np) .-= view(d, 4:12, :)
+    return nothing
+end
+
+_add_ambient!(pfield, ::Any, t, gradient::Bool) = nothing
+_add_ambient!(pfield, a::AmbientHolder, t, gradient::Bool) =
+    a.ambient === nothing ? nothing : _add_ambient!(pfield, a.ambient, t + a.t_offset, gradient && a.gradient)
+
+function _add_ambient!(pfield, a::UniformAmbient, t, gradient::Bool)
     np = get_np(pfield)
     np == 0 && return nothing
     R = eltype(pfield.particles)
@@ -84,8 +102,6 @@ end
 
 # Evaluated on the host (threaded) and added in one pass; a device field brings its
 # positions over and the 12 x np increments back, once per stage.
-_add_ambient!(pfield, a::AmbientField, t) = _add_ambient!(pfield, a, t, true)
-
 function _add_ambient!(pfield, a::AmbientField, t, gradient::Bool)
     np = get_np(pfield)
     np == 0 && return nothing
@@ -108,6 +124,7 @@ function _add_ambient!(pfield, a::AmbientField, t, gradient::Bool)
     end
     d = P isa Array ? inc : copyto!(similar(P, R, 12, np), inc)
     view(P, U_INDEX, 1:np) .+= view(d, 1:3, :)
-    gradient && (view(P, J_INDEX, 1:np) .+= view(d, 4:12, :))
-    return nothing
+    gradient || return nothing
+    view(P, J_INDEX, 1:np) .+= view(d, 4:12, :)
+    return d
 end

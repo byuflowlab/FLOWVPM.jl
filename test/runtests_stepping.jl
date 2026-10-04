@@ -146,4 +146,16 @@ end
     for _ in 1:n; vpm.euler(pf, dt); end
     @test pf.particles[vpm.X_INDEX[1], 1] ≈ alpha * z0 * n * dt rtol = 1e-12
     @test pf.particles[vpm.GAMMA_INDEX[1], 1] == 0
+    # the Euler relaxation aligns with the particles' own vorticity, not the ambient's:
+    # u = (alpha z, 0, 0) at z = 0 neither moves nor stretches Gamma along x
+    # (transposed = false), so only a leaked ambient vorticity (along y) would differ
+    function relaxed(Uinf)
+        pf = vpm.ParticleField(4; formulation = vpm.ClassicVPM{Float64}(), kernel = vpm.kernel_gaussianerf,
+                               UJ = vpm.UJ_direct, Uinf, transposed = false)
+        vpm.add_particle(pf, SVector(0.0, 0.0, 0.0), SVector(gamma, 0.0, 0.0), 0.2)
+        vpm.add_particle(pf, SVector(0.0, 0.1, 0.0), SVector(0.0, 0.0, gamma), 0.2)
+        vpm.euler(pf, dt; relax = true)
+        return pf.particles[vpm.GAMMA_INDEX, 1]
+    end
+    @test relaxed(shear) ≈ relaxed(vpm.Uinf_default) rtol = 1e-10
 end

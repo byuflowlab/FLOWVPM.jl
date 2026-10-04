@@ -79,7 +79,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     pfield.SFS(pfield, AfterUJ())
 
     # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
-    add_ambient!(pfield, pfield.t)
+    amb = add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -98,6 +98,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
+        remove_ambient_gradient!(pfield, amb)
         if pfield.particles isa Array
             for i in 1:pfield.np
                 pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
@@ -204,7 +205,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     pfield.SFS(pfield, AfterUJ())
 
     # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
-    add_ambient!(pfield, pfield.t)
+    amb = add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -224,6 +225,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
+        remove_ambient_gradient!(pfield, amb)
         if pfield.particles isa Array
             for i in 1:pfield.np
                 pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
@@ -426,6 +428,8 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         else
             relax_broadcast!(pfield.relaxation, pfield)
         end
+        # U as the stages saw it (the ambient included), for output
+        add_ambient!(pfield, pfield.t + dt; gradient = false)
     end
 
     return nothing
@@ -631,6 +635,8 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         else
             relax_broadcast!(pfield.relaxation, pfield)
         end
+        # U as the stages saw it (the ambient included), for output
+        add_ambient!(pfield, pfield.t + dt; gradient = false)
     end
 
     return nothing
