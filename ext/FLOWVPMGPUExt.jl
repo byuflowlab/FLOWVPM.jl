@@ -1325,51 +1325,6 @@ end
     end
 end
 
-"""
-    ka_launch_sfs!(state; workgroup=64)
-
-Port of `_launch_cuda_sfs!`: TG precompute + accumulator zeroing, then the zeta
-sweep over the full direct pair list. Called only for an evaluation that asks
-for `sfs=true`, after the U/J lifecycle has completed, so `state.output` carries
-a finished J.
-"""
-@kernel function ka_zeta_pairs_kernel!(om, @Const(source_bodies), @Const(cell_ranges),
-        @Const(direct_targets), @Const(direct_sources), npairs, K1, ::Type{T}, ::Val{WG}) where {T,WG}
-    pair_i = @index(Group)
-    tid = @index(Local)
-    half = T(0.5)
-    @inbounds begin
-        target_cell = direct_targets[pair_i]
-        source_cell = direct_sources[pair_i]
-        tfirst = cell_ranges[1, target_cell]
-        tlast = tfirst + cell_ranges[2, target_cell] - 1
-        sfirst = cell_ranges[1, source_cell]
-        slast = sfirst + cell_ranges[2, source_cell] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            xi = source_bodies[1, i]
-            yi = source_bodies[2, i]
-            zi = source_bodies[3, i]
-            o1 = zero(T); o2 = zero(T); o3 = zero(T)
-            for j in sfirst:slast
-                dx = xi - source_bodies[1, j]
-                dy = yi - source_bodies[2, j]
-                dz = zi - source_bodies[3, j]
-                r2 = dx * dx + dy * dy + dz * dz
-                sigma = source_bodies[8, j]
-                z = K1 * exp(-half * r2 / (sigma * sigma)) / (sigma * sigma * sigma)
-                o1 += z * source_bodies[5, j]
-                o2 += z * source_bodies[6, j]
-                o3 += z * source_bodies[7, j]
-            end
-            KA.@atomic om[1, i] += o1
-            KA.@atomic om[2, i] += o2
-            KA.@atomic om[3, i] += o3
-            i += WG
-        end
-    end
-end
-
 # the cell holding sorted body `i`: the last cell whose first body is <= i
 @inline function _ka_cell_of(cell_ranges, n_cells, i)
     lo = 1; hi = n_cells
@@ -1387,7 +1342,7 @@ end
 # target-owned form (see `ka_sfs_zeta_cells_kernel!`): one thread per target
 # body, its cell's source cells in pair-list order, one store per target
 @kernel function ka_zeta_cells_kernel!(om, @Const(source_bodies), @Const(cell_ranges),
-        @Const(direct_sources), @Const(offsets), n_cells, K1, ::Type{T}, n_bodies) where {T}
+        @Const(direct_sources), @Const(offsets), n_cells, K1, inv_row, ::Type{T}, n_bodies) where {T}
     i = @index(Global)
     half = T(0.5)
     @inbounds if i <= n_bodies
@@ -1406,8 +1361,9 @@ end
                 dy = yi - source_bodies[2, j]
                 dz = zi - source_bodies[3, j]
                 r2 = dx * dx + dy * dy + dz * dz
-                sigma = source_bodies[8, j]
-                z = K1 * exp(-half * r2 / (sigma * sigma)) / (sigma * sigma * sigma)
+                # the packed 1/sigma row: 0 for a masked (sigma zeroed) source, which then adds 0
+                is = source_bodies[inv_row, j]
+                z = K1 * exp(-half * r2 * is * is) * (is * is * is)
                 o1 += z * source_bodies[5, j]
                 o2 += z * source_bodies[6, j]
                 o3 += z * source_bodies[7, j]
@@ -1545,28 +1501,54 @@ function _zeta_buffers_for(pfield::GPUField{R}) where R
 end
 
 function FLOWVPM.zeta_fmm(pfield::GPUField)
-    st = FLOWVPM._radix_fmm_coupling!(pfield)
-    # repack X/Γ/σ (Γ changes every conjugate-gradient iteration) and refresh the lists
-    fmm.update_radix_state!(st.cache, (pfield,))
-    nf = fmm.radix_nearfield(st.cache)
-    TF = eltype(nf.output); n = nf.n_bodies; np = pfield.np
-    om, out = _zeta_buffers_for(pfield)
-    backend = KA.get_backend(om); wg = _SFS_WORKGROUP
-    fill!(om, zero(TF))
-    npairs = nf.n_direct
-    if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
-        off = _sfs_pair_offsets!(nf, backend, wg)
-        ka_zeta_cells_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-            nf.n_cells, TF(FLOWVPM._SFS_ZETA_K1), TF, n; ndrange=cld(n, wg) * wg)
-    elseif npairs > 0
-        ka_zeta_pairs_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
-            nf.direct_sources, npairs, TF(FLOWVPM._SFS_ZETA_K1), TF, Val(wg); ndrange=npairs * wg)
+    # The cores the cached geometry cannot admit are masked out of the near-list sweep
+    # and added through the masked grid, as in an evaluation. Evaluated in the tree,
+    # they made the coupling rebuild a much wider stencil (5MW at 1.88M before a core
+    # reset: q 9 -> 22, every later FMM call ~3x slower, 2026-10-03).
+    st0 = get(FLOWVPM._radix_fmm_couplings, pfield, nothing)
+    settings = get(FLOWVPM._radix_fmm_settings, pfield, FLOWVPM.RadixFMMSettings())
+    pol = FLOWVPM._radix_geometry_policy(settings)
+    P = pfield.particles; np = pfield.np
+    idx = if settings.oversize_count < 0
+        Int[]
+    elseif st0 === nothing
+        first(fmm.radix_oversize_select(pol, fmm.radix_geometry_source(pfield),
+            get(FLOWVPM._radix_oversize_thr, pfield, nothing), nothing))
+    else
+        fmm.radix_rows_above(P, FLOWVPM.SIGMA_INDEX, np, fmm.radix_sigma_limit(pol, st0.cache), np)
     end
-    buf = view(out, :, 1:np); fill!(buf, zero(TF))
-    n > 0 && ka_sfs_scatter_kernel!(backend, wg)(buf, om, nf.body_perm, nf.body_system_ids, nf.body_indices, 1, n; ndrange=n)
-    # ζ arrives in global particle order; assigned (the host zeta_fmm zeroes then assigns)
-    view(pfield.particles, FLOWVPM.VORTICITY_INDEX, 1:np) .= buf
-    KA.synchronize(backend)
+    saved = isempty(idx) ? nothing : fmm.radix_mask_bodies!(pfield, idx)
+    try
+        st = st0 === nothing ? FLOWVPM._radix_fmm_coupling!(pfield) : st0
+        # repack X/Γ/σ (Γ changes every conjugate-gradient iteration) and refresh the lists
+        fmm.update_radix_state!(st.cache, (pfield,))
+        nf = fmm.radix_nearfield(st.cache)
+        TF = eltype(nf.output); n = nf.n_bodies
+        om, out = _zeta_buffers_for(pfield)
+        backend = KA.get_backend(om); wg = _SFS_WORKGROUP
+        ir = size(nf.source_bodies, 1)
+        ir == fmm.data_per_body(pfield) + 1 ||
+            throw(AssertionError("zeta_fmm needs the packed 1/sigma row (got $ir source rows)"))
+        K1 = TF(FLOWVPM._SFS_ZETA_K1)
+        fill!(om, zero(TF))
+        if nf.n_direct > 0
+            off = _sfs_pair_offsets!(nf, backend, wg)
+            ka_zeta_cells_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
+                nf.n_cells, K1, ir, TF, n; ndrange=cld(n, wg) * wg)
+        end
+        if saved !== nothing
+            # the masked particles' own term included (mode 4)
+            md = _sfs_masked_device(FLOWVPM._sfs_masked_grid(TF, (; idx, buffer = saved)), nf, backend)
+            _sfs_masked_pairs!(om, om, om, om, nf, md, 4, K1, TF, backend, wg)
+        end
+        buf = view(out, :, 1:np); fill!(buf, zero(TF))
+        n > 0 && ka_sfs_scatter_kernel!(backend, wg)(buf, om, nf.body_perm, nf.body_system_ids, nf.body_indices, 1, n; ndrange=n)
+        # ζ arrives in global particle order; assigned (the host zeta_fmm zeroes then assigns)
+        view(P, FLOWVPM.VORTICITY_INDEX, 1:np) .= buf
+        KA.synchronize(backend)
+    finally
+        saved === nothing || fmm.radix_unmask_bodies!(pfield, idx, saved)
+    end
     return nothing
 end
 
@@ -1611,7 +1593,7 @@ end
                 c = Int32(1) + kx + nx * (ky + ny * kz)
                 for t in offsets[c]:(offsets[c + 1] - Int32(1))
                     s = mslot[t]
-                    if s != i && s > 0
+                    if (s != i || mode == 4) && s > 0
                         dx = xi - mx[1, t]; dy = yi - mx[2, t]; dz = zi - mx[3, t]
                         r2 = dx * dx + dy * dy + dz * dz
                         sigma = ms[t]
@@ -1630,9 +1612,11 @@ end
                                 end
                             else
                                 z = coef * exp(-half * rho2) / (sigma * sigma * sigma)
-                                if mode == 1
+                                if mode == 1 || mode == 4
                                     a1 += z * mg[1, t]; a2 += z * mg[2, t]; a3 += z * mg[3, t]
-                                    b1 += z * tg[1, s]; b2 += z * tg[2, s]; b3 += z * tg[3, s]
+                                    if mode == 1
+                                        b1 += z * tg[1, s]; b2 += z * tg[2, s]; b3 += z * tg[3, s]
+                                    end
                                 else
                                     dz_ = z * (rho2 - three)
                                     a1 += dz_ * mg[1, t]; a2 += dz_ * mg[2, t]; a3 += dz_ * mg[3, t]

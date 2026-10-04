@@ -344,3 +344,28 @@ end
         @test e_warm <= strict_gate
     end
 end
+
+@testset "device zeta_fmm with grown cores keeps the geometry" begin
+    # core-spreading resets evaluate zeta while the grown cores are still in the
+    # field: unmasked, they made the coupling rebuild a much wider stencil (5MW at
+    # 1.88M: q 9 -> 22, later FMM calls ~3x slower, 2026-10-03). They are now masked
+    # out of the sweep and added through the masked grid, self term included.
+    n = 20000
+    rng = MersenneTwister(3)
+    cpu = fmm034_pfield(n, Float32)
+    s0 = 0.8f0 * (1f0 / n)^(1 / 3)
+    for _ in 1:n
+        big = rand(rng) < 0.02
+        vpm_fmm.add_particle(cpu, rand(rng, Float32, 3), (2 .* rand(rng, Float32, 3) .- 1) ./ n,
+            s0 * (big ? 4f0 + 4f0 * rand(rng, Float32) : 1f0 + 0.2f0 * rand(rng, Float32)))
+    end
+    gpu = fmm034_to_gpu(cpu, Float32)
+    vpm_fmm.UJ_fmm(gpu)
+    geometry() = (c = FLOWVPM._radix_fmm_couplings[gpu].cache; (c.ell, c.ell_axes, c.policy.near_radius2))
+    g0 = geometry()
+    vpm_fmm.zeta_fmm(gpu)
+    @test geometry() == g0
+    vpm_fmm.zeta_direct(cpu)
+    W = Array(gpu.particles[vpm_fmm.VORTICITY_INDEX, 1:n]); Wref = cpu.particles[vpm_fmm.VORTICITY_INDEX, 1:n]
+    @test maximum(abs.(W .- Wref)) / maximum(abs.(Wref)) < 1e-4
+end
