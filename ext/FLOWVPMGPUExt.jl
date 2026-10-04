@@ -1140,7 +1140,7 @@ end
 end
 @kernel function ka_sfs_zeta_cells_kernel!(om, q, @Const(tg), @Const(source_bodies),
         @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
-        n_cells, rc2, K1, active_row, ::Type{T}, n_bodies) where {T}
+        n_cells, rc2, K1, active_row, inv_row, ::Type{T}, n_bodies) where {T}
     i = @index(Global)
     half = T(0.5)
     @inbounds if i <= n_bodies
@@ -1160,10 +1160,11 @@ end
                         dy = yi - source_bodies[2, j]
                         dz = zi - source_bodies[3, j]
                         r2 = dx * dx + dy * dy + dz * dz
-                        sigma = source_bodies[8, j]
-                        rho2 = r2 / (sigma * sigma)
-                        if rho2 <= rc2
-                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
+                        # the packed 1/sigma row (0 for sigma <= 0): multiplies, not divides
+                        is = source_bodies[inv_row, j]
+                        rho2 = r2 * is * is
+                        if is > zero(T) && rho2 <= rc2
+                            z = K1 * exp(-half * rho2) * (is * is * is)
                             o1 += z * source_bodies[5, j]
                             o2 += z * source_bodies[6, j]
                             o3 += z * source_bodies[7, j]
@@ -1181,7 +1182,7 @@ end
 end
 
 @kernel function ka_sfs_dj_cells_kernel!(dj, @Const(source_bodies), @Const(cell_ranges),
-        @Const(direct_sources), @Const(offsets), n_cells, rc2, A, active_row,
+        @Const(direct_sources), @Const(offsets), n_cells, rc2, A, active_row, inv_row,
         ::Type{T}, n_bodies) where {T}
     i = @index(Global)
     half = T(0.5)
@@ -1198,13 +1199,13 @@ end
                 sfirst = cell_ranges[1, sc]
                 slast = sfirst + cell_ranges[2, sc] - 1
                 for j in sfirst:slast
-                    sigma = source_bodies[8, j]
-                    if i != j && sigma > zero(T)
+                    is = source_bodies[inv_row, j]    # packed 1/sigma, 0 for sigma <= 0
+                    if i != j && is > zero(T)
                         dx = xi - source_bodies[1, j]
                         dy = yi - source_bodies[2, j]
                         dz = zi - source_bodies[3, j]
                         r2 = dx * dx + dy * dy + dz * dz
-                        rho2 = r2 / (sigma * sigma)
+                        rho2 = r2 * is * is
                         if rho2 <= rc2 && r2 > zero(T)
                             invr = inv(sqrt(r2))
                             G = A * rho2 * sqrt(rho2) * exp(-half * rho2)
@@ -1228,7 +1229,7 @@ end
 
 @kernel function ka_sfs_dzeta_cells_kernel!(dom, dq, @Const(tg), @Const(dt), @Const(source_bodies),
         @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
-        n_cells, rc2, K1, active_row, ::Type{T}, n_bodies) where {T}
+        n_cells, rc2, K1, active_row, inv_row, ::Type{T}, n_bodies) where {T}
     i = @index(Global)
     half = T(0.5)
     three = T(3)
@@ -1249,10 +1250,11 @@ end
                         dy = yi - source_bodies[2, j]
                         dz = zi - source_bodies[3, j]
                         r2 = dx * dx + dy * dy + dz * dz
-                        sigma = source_bodies[8, j]
-                        rho2 = r2 / (sigma * sigma)
-                        if rho2 <= rc2
-                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
+                        # the packed 1/sigma row (0 for sigma <= 0): multiplies, not divides
+                        is = source_bodies[inv_row, j]
+                        rho2 = r2 * is * is
+                        if is > zero(T) && rho2 <= rc2
+                            z = K1 * exp(-half * rho2) * (is * is * is)
                             dz_ = z * (rho2 - three)
                             o1 += dz_ * source_bodies[5, j]
                             o2 += dz_ * source_bodies[6, j]
@@ -1266,6 +1268,59 @@ end
             end
             dom[1, i] = o1; dom[2, i] = o2; dom[3, i] = o3
             dq[1, i] = q1; dq[2, i] = q2; dq[3, i] = q3
+        end
+    end
+end
+
+# ζ and ∂ζ/∂σ in one sweep (the repass of a two-level step needs both; they share the pair's
+# exponential): writes exactly what `ka_sfs_zeta_cells_kernel!` and
+# `ka_sfs_dzeta_cells_kernel!` write, so it runs after `dt` is formed
+@kernel function ka_sfs_zeta_dzeta_cells_kernel!(om, q, dom, dq, @Const(tg), @Const(dt), @Const(source_bodies),
+        @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
+        n_cells, rc2, K1, active_row, inv_row, ::Type{T}, n_bodies) where {T}
+    i = @index(Global)
+    half = T(0.5)
+    three = T(3)
+    @inbounds if i <= n_bodies
+        c = _ka_cell_of(cell_ranges, n_cells, i)
+        p0 = offsets[c]; p1 = offsets[c + 1] - 1
+        if active_row == 0 || !iszero(source_bodies[active_row, i])
+            xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+            o1 = zero(T); o2 = zero(T); o3 = zero(T)
+            q1 = zero(T); q2 = zero(T); q3 = zero(T)
+            e1 = zero(T); e2 = zero(T); e3 = zero(T)
+            f1 = zero(T); f2 = zero(T); f3 = zero(T)
+            for p in p0:p1
+                sc = direct_sources[p]
+                sfirst = cell_ranges[1, sc]
+                slast = sfirst + cell_ranges[2, sc] - 1
+                for j in sfirst:slast
+                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
+                        dx = xi - source_bodies[1, j]
+                        dy = yi - source_bodies[2, j]
+                        dz = zi - source_bodies[3, j]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        is = source_bodies[inv_row, j]
+                        rho2 = r2 * is * is
+                        if is > zero(T) && rho2 <= rc2
+                            z = K1 * exp(-half * rho2) * (is * is * is)
+                            dz_ = z * (rho2 - three)
+                            g1 = source_bodies[5, j]; g2 = source_bodies[6, j]; g3 = source_bodies[7, j]
+                            t1 = tg[1, j]; t2 = tg[2, j]; t3 = tg[3, j]
+                            o1 += z * g1; o2 += z * g2; o3 += z * g3
+                            q1 += z * t1; q2 += z * t2; q3 += z * t3
+                            e1 += dz_ * g1; e2 += dz_ * g2; e3 += dz_ * g3
+                            f1 += dz_ * t1 + z * dt[1, j]
+                            f2 += dz_ * t2 + z * dt[2, j]
+                            f3 += dz_ * t3 + z * dt[3, j]
+                        end
+                    end
+                end
+            end
+            om[1, i] = o1; om[2, i] = o2; om[3, i] = o3
+            q[1, i] = q1; q[2, i] = q2; q[3, i] = q3
+            dom[1, i] = e1; dom[2, i] = e2; dom[3, i] = e3
+            dq[1, i] = f1; dq[2, i] = f2; dq[3, i] = f3
         end
     end
 end
@@ -1391,25 +1446,33 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     tv = ctx.transposed ? Val(true) : Val(false)
     rc2 = FLOWVPM._sfs_saturation_rc2(TF); K1 = TF(FLOWVPM._SFS_ZETA_K1); A = TF(fmm._GAUSSERF_A)
     md = masked === nothing ? nothing : _sfs_masked_device(FLOWVPM._sfs_masked_grid(TF, masked), nf, backend)
+    # the cell sweeps read 1/sigma from the packed source rows: FastMultipole's KA cache packs it
+    # as the last row for a regularized kernel (0 for sigma <= 0)
+    ir = size(nf.source_bodies, 1)
+    ir == fmm.data_per_body(pfield) + 1 ||
+        throw(AssertionError("the SFS sweeps need the packed 1/sigma row (got $ir source rows)"))
+    target_major = nf.n_direct > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
     ka_sfs_tg_kernel!(backend, wg)(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, TF, tv, n; ndrange=n)
     md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.tg, nf.output, 5, md.mg, md.mslot, tv, md.K;
         ndrange=cld(md.K, wg) * wg)
     npairs = nf.n_direct
-    if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
+    fused = dsigma && target_major      # ζ waits for dt and shares the ∂ζ sweep (below)
+    if fused
+    elseif target_major
         off = _sfs_pair_offsets!(nf, backend, wg)
         ka_sfs_zeta_cells_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-            nf.n_cells, rc2, K1, 9, TF, n; ndrange=cld(n, wg) * wg)
+            nf.n_cells, rc2, K1, 9, ir, TF, n; ndrange=cld(n, wg) * wg)
     elseif npairs > 0
         ka_sfs_zeta_pairs_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
             nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
     end
-    md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
+    fused || md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
     if dsigma
         fill!(view(ctx.dj, :, 1:n), zero(TF))
         if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dj_cells_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, nf.n_cells,
-                rc2, A, 9, TF, n; ndrange=cld(n, wg) * wg)
+                rc2, A, 9, ir, TF, n; ndrange=cld(n, wg) * wg)
         elseif npairs > 0
             ka_sfs_dj_pairs_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
                 nf.direct_sources, npairs, rc2, A, 9, TF, Val(wg); ndrange=npairs * wg)
@@ -1418,10 +1481,11 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
         md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.dt, ctx.dj, 1, md.mg, md.mslot, tv, md.K;
             ndrange=cld(md.K, wg) * wg)
-        if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
+        if fused
             off = _sfs_pair_offsets!(nf, backend, wg)
-            ka_sfs_dzeta_cells_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
-                nf.n_cells, rc2, K1, 9, TF, n; ndrange=cld(n, wg) * wg)
+            ka_sfs_zeta_dzeta_cells_kernel!(backend, wg)(ctx.om, ctx.q, ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies,
+                nf.cell_ranges, nf.direct_sources, off, nf.n_cells, rc2, K1, 9, ir, TF, n; ndrange=cld(n, wg) * wg)
+            md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
         elseif npairs > 0
             ka_sfs_dzeta_pairs_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
                 nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
