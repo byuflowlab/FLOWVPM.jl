@@ -465,7 +465,7 @@ end # FLOWVPM._FMM_HAS_RADIX
 #------- direct-sum kernels (KernelAbstractions, any GPU backend) -------#
 
 # Each thread handles one target and loops directly over all sources in
-# global (device) memory. Math mirrors FLOWVPMCUDAExt.jl's gpu_interaction!.
+# global (device) memory.
 @kernel function ka_direct_kernel!(out, @Const(s), n::Int32, kernel)
     j_target = @index(Global)
     if j_target <= n
@@ -567,8 +567,7 @@ function FLOWVPM.gpu_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel
 end
 
 # Each thread handles one target and brute-force loops over every source
-# directly from global memory. Mirrors FLOWVPMCUDAExt.jl's
-# gpu_zeta_direct_kernel!.
+# directly from global memory.
 @kernel function ka_zeta_direct_kernel!(out, @Const(s), n::Int32, zeta)
     j_target = @index(Global)
     if j_target <= n
@@ -635,8 +634,7 @@ function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
 end
 
 # Each thread handles one target and brute-force loops over every source
-# directly from global memory. Mirrors FLOWVPMCUDAExt.jl's
-# gpu_estr_direct_kernel!.
+# directly from global memory.
 @kernel function ka_estr_direct_kernel!(sfs_out, @Const(P), n::Int32, zeta, transposed::Bool,
                                          static_row::Int32, j1::Int32, j2::Int32, j3::Int32,
                                          j4::Int32, j5::Int32, j6::Int32, j7::Int32, j8::Int32, j9::Int32)
@@ -754,10 +752,6 @@ end
 # The `any(isnan, C1r)` guard the broadcast path ends with is folded in as a
 # device flag: as an `any` over an `np`-length view it compiled a fresh kernel
 # for every distinct particle count (see FastMultipole's _device_row_extrema).
-
-# Escape hatch and gate handle: set false to fall back to the broadcast chain
-# in src/FLOWVPM_subfilterscale_gpu.jl (the reference these are checked against).
-const SFS_FUSED = Ref(true)
 
 # FLOWVPM.any_outside_core_band on the device: one flag, set by any particle
 # outside the band or not finite (a benign race: every writer stores 1). The
@@ -886,9 +880,6 @@ _sfs_wg(backend) = 256
 function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
         alpha::Real, rlxf::Real, minC::Real, maxC::Real; force_positive::Bool=false,
         twolevel::Bool=false)
-    SFS_FUSED[] || return invoke(FLOWVPM._pseudo3level_afterUJ_broadcast!,
-        Tuple{Any,Any,Real,Real,Real,Real}, pfield, SFS, alpha, rlxf, minC, maxC;
-        force_positive, twolevel)
     np = pfield.np
     np == 0 && return nothing
     R = eltype(pfield.particles)
@@ -909,8 +900,6 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
 end
 
 function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha::Real)
-    SFS_FUSED[] || return invoke(FLOWVPM._pseudo3level_beforeUJ_broadcast!,
-        Tuple{Any,Any,Real}, pfield, SFS, alpha)
     np = pfield.np
     np == 0 && return nothing
     R = eltype(pfield.particles)
@@ -1031,39 +1020,6 @@ end
     end
 end
 
-@kernel function ka_pair_offsets_kernel!(offsets, @Const(direct_targets), n_direct, n_cells)
-    p = @index(Global)
-    @inbounds if p <= n_direct
-        t = Int(direct_targets[p])
-        tprev = p == 1 ? 0 : Int(direct_targets[p - 1])
-        c = tprev + 1
-        while c <= t
-            offsets[c] = Int32(p)
-            c += 1
-        end
-        if p == n_direct
-            c = t + 1
-            while c <= n_cells + 1
-                offsets[c] = Int32(n_direct + 1)
-                c += 1
-            end
-        end
-    end
-end
-# the cell holding sorted body `i`: the last cell whose first body is <= i
-@inline function _ka_cell_of(cell_ranges, n_cells, i)
-    lo = 1; hi = n_cells
-    while lo < hi
-        mid = (lo + hi + 1) >>> 1
-        if cell_ranges[1, mid] <= i
-            lo = mid
-        else
-            hi = mid - 1
-        end
-    end
-    return lo
-end
-
 # target-owned form (see `ka_sfs_zeta_tiled_kernel!`): one thread per target
 # body, its cell's source cells in pair-list order, one store per target
 @kernel function ka_zeta_cells_kernel!(om, @Const(source_bodies), @Const(cell_ranges),
@@ -1071,7 +1027,7 @@ end
     i = @index(Global)
     half = T(0.5)
     @inbounds if i <= n_bodies
-        c = _ka_cell_of(cell_ranges, n_cells, i)
+        c = fmm.radix_cell_of(cell_ranges, n_cells, i)
         p0 = offsets[c]; p1 = offsets[c + 1] - 1
         xi = source_bodies[1, i]
         yi = source_bodies[2, i]
@@ -1110,47 +1066,13 @@ end
 
 const _SFS_TILE = 32
 
-# chunk k -> its cell: the last cell whose chunk offset is < k
-@inline function _sfs_chunk_cell(offsets, n_cells, k)
-    lo = 1; hi = n_cells
-    while lo < hi
-        mid = (lo + hi + 1) >>> 1
-        if offsets[mid] < k
-            lo = mid
-        else
-            hi = mid - 1
-        end
-    end
-    return lo
-end
-
-@kernel function ka_sfs_chunk_counts_kernel!(counts, @Const(cell_ranges), ::Val{WG}) where WG
-    c = @index(Global)
-    @inbounds counts[c] = c == 1 ? Int32(0) : Int32(cld(cell_ranges[2, c - 1], WG))
-end
-
-# per-cell chunk offsets (cached per near field like the pair offsets), for chunks
-# of C targets (C = _SFS_TILE, or 2 * _SFS_TILE for the two-target zeta sweep)
-const _sfs_chunk_scratch = IdDict{Any,Any}()
-function _sfs_chunk_offsets!(nf, backend, ::Val{C}=Val(_SFS_TILE)) where C
-    need = nf.n_cells + 1
-    cap = size(nf.cell_ranges, 2) + 1
-    sc = get(_sfs_chunk_scratch, (nf.cell_ranges, C), nothing)
-    if sc === nothing || length(sc.counts) < cap
-        sc = (; counts=KA.zeros(backend, Int32, cap), offsets=KA.zeros(backend, Int32, cap))
-        _sfs_chunk_scratch[(nf.cell_ranges, C)] = sc
-    end
-    ka_sfs_chunk_counts_kernel!(backend, 256)(sc.counts, nf.cell_ranges, Val(C); ndrange=need)
-    accumulate!(+, view(sc.offsets, 1:need), view(sc.counts, 1:need))
-    return sc.offsets
-end
 _sfs_tiled_ndrange(nf, C=_SFS_TILE) = (nf.n_cells + cld(nf.n_bodies, C)) * _SFS_TILE
 
 # the chunk's cell, pair range and this lane's target (uniform per workgroup but i)
 @inline function _sfs_chunk_setup(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
     nchunks = chunk_offsets[n_cells + 1]
     live = k <= nchunks
-    c = live ? _sfs_chunk_cell(chunk_offsets, n_cells, k) : 1
+    c = live ? fmm.radix_chunk_cell(chunk_offsets, n_cells, k) : 1
     p0 = live ? Int(offsets[c]) : 1
     p1 = live ? Int(offsets[c + 1]) - 1 : 0
     i = cell_ranges[1, c] + (k - 1 - chunk_offsets[c]) * WG + l - 1
@@ -1162,7 +1084,7 @@ end
 @inline function _sfs_chunk_setup2(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
     nchunks = chunk_offsets[n_cells + 1]
     live = k <= nchunks
-    c = live ? _sfs_chunk_cell(chunk_offsets, n_cells, k) : 1
+    c = live ? fmm.radix_chunk_cell(chunk_offsets, n_cells, k) : 1
     p0 = live ? Int(offsets[c]) : 1
     p1 = live ? Int(offsets[c + 1]) - 1 : 0
     last = cell_ranges[1, c] + cell_ranges[2, c] - 1
@@ -1394,21 +1316,6 @@ end
 
 #------- the SFS pass on the device (kernels above, verbatim from FastMultipole's KA extension) -------#
 
-# offsets[c] = first direct pair whose target cell is c, cached per near-field
-# (keyed by the cache's cell_ranges array), for the target-major sweeps
-const _sfs_pair_offsets = IdDict{Any,Any}()
-function _sfs_pair_offsets!(nf, backend, workgroup)
-    n_cells = nf.n_cells; n_direct = nf.n_direct
-    cap = size(nf.cell_ranges, 2) + 1
-    off = get(_sfs_pair_offsets, nf.cell_ranges, nothing)
-    if off === nothing || length(off) < cap
-        off = KA.zeros(backend, Int32, cap); _sfs_pair_offsets[nf.cell_ranges] = off
-    end
-    fill!(view(off, 1:n_cells + 1), Int32(n_direct + 1))
-    n_direct > 0 && ka_pair_offsets_kernel!(backend, workgroup)(off, nf.direct_targets, n_direct, n_cells; ndrange=n_direct)
-    return off
-end
-
 const _SFS_WORKGROUP = 64
 
 # stages (a) and (b), and the core-scaling channel's own ∂J sweep (no fused near field)
@@ -1430,27 +1337,27 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     md === nothing || _sfs_masked_t!(ctx.tg, nf.output, 5, md, tv, backend, wg)
     fused = dsigma && target_major      # ζ waits for dt and shares the ∂ζ sweep (below)
     if target_major && !fused
-        off = _sfs_pair_offsets!(nf, backend, wg)
+        off = fmm.radix_pair_offsets(nf.direct_targets, nf.n_direct, nf.n_cells, backend)
         ka_sfs_zeta_tiled_kernel!(backend, _SFS_TILE)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
-            nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend, Val(2 * _SFS_TILE)), nf.n_cells, rc2, K1, 9, ir, TF,
+            nf.direct_sources, off, fmm.radix_chunk_offsets(nf.cell_ranges, nf.n_cells, 2 * _SFS_TILE, backend), nf.n_cells, rc2, K1, 9, ir, TF,
             Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf, 2 * _SFS_TILE))
     end
     fused || md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
     if dsigma
         fill!(view(ctx.dj, :, 1:n), zero(TF))
         if target_major
-            off = _sfs_pair_offsets!(nf, backend, wg)
+            off = fmm.radix_pair_offsets(nf.direct_targets, nf.n_direct, nf.n_cells, backend)
             ka_sfs_dj_tiled_kernel!(backend, _SFS_TILE)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_sources,
-                off, _sfs_chunk_offsets!(nf, backend), nf.n_cells, rc2, A, 9, ir, TF, Val(_SFS_TILE);
+                off, fmm.radix_chunk_offsets(nf.cell_ranges, nf.n_cells, _SFS_TILE, backend), nf.n_cells, rc2, A, 9, ir, TF, Val(_SFS_TILE);
                 ndrange=_sfs_tiled_ndrange(nf))
         end
         md === nothing || _sfs_masked_pairs!(ctx.dj, ctx.dj, ctx.tg, ctx.dt, nf, md, 2, A, TF, backend, wg)
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
         md === nothing || _sfs_masked_t!(ctx.dt, ctx.dj, 1, md, tv, backend, wg)
         if fused
-            off = _sfs_pair_offsets!(nf, backend, wg)
+            off = fmm.radix_pair_offsets(nf.direct_targets, nf.n_direct, nf.n_cells, backend)
             ka_sfs_zeta_dzeta_tiled_kernel!(backend, _SFS_TILE)(ctx.om, ctx.q, ctx.dom, ctx.dq, ctx.tg, ctx.dt,
-                nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend),
+                nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, fmm.radix_chunk_offsets(nf.cell_ranges, nf.n_cells, _SFS_TILE, backend),
                 nf.n_cells, rc2, K1, 9, ir, TF, Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf))
             md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
         end
@@ -1540,7 +1447,7 @@ function FLOWVPM.zeta_fmm(pfield::GPUField)
         K1 = TF(FLOWVPM._SFS_ZETA_K1)
         fill!(om, zero(TF))
         if nf.n_direct > 0
-            off = _sfs_pair_offsets!(nf, backend, wg)
+            off = fmm.radix_pair_offsets(nf.direct_targets, nf.n_direct, nf.n_cells, backend)
             ka_zeta_cells_kernel!(backend, wg)(om, nf.source_bodies, nf.cell_ranges, nf.direct_sources, off,
                 nf.n_cells, K1, ir, TF, n; ndrange=cld(n, wg) * wg)
         end
@@ -1691,30 +1598,6 @@ function _sfs_masked_t!(t, jsrc, joff, md, tv, backend, wg)
     return nothing
 end
 
-# the cell holding sorted body `i` (FastMultipole's `_ka_cell_of`) and a Morton key's
-# level-l coordinates (`_ka_morton_decode3`)
-@inline function _sfs_cell_of(cell_ranges, n_cells, i)
-    lo = 1; hi = n_cells
-    while lo < hi
-        mid = (lo + hi + 1) >>> 1
-        if cell_ranges[1, mid] <= i
-            lo = mid
-        else
-            hi = mid - 1
-        end
-    end
-    return lo
-end
-@inline function _sfs_morton_decode3(key::UInt64, l::Int)
-    i = 0; j = 0; k = 0
-    for bit in 0:(l - 1)
-        i |= Int((key >> (3 * bit)) & UInt64(1)) << bit
-        j |= Int((key >> (3 * bit + 1)) & UInt64(1)) << bit
-        k |= Int((key >> (3 * bit + 2)) & UInt64(1)) << bit
-    end
-    return i, j, k
-end
-
 # one masked pair's terms (the flat-grid kernel's arithmetic): `mode` 1 ζ (om, q),
 # 2 ∂J (dj rows 1:9), 3 ∂ζ (dom, dq); (a1..a3, b1..b3, d7..d9)
 @inline function _sfs_masked_terms(mode, dx, dy, dz, r2, rho2, sigma, buf, jj, tg, dt, s, coef, ::Type{T}) where T
@@ -1758,8 +1641,8 @@ end
         active_row, mode, ::Type{T}, n) where T
     i = @index(Global)
     @inbounds if i <= n && (active_row == 0 || !iszero(source_bodies[active_row, i]))
-        c = _sfs_cell_of(cell_ranges, n_cells, i)
-        cx, cy, cz = _sfs_morton_decode3(cell_keys[c] >> shift, l)
+        c = fmm.radix_cell_of(cell_ranges, n_cells, i)
+        cx, cy, cz = fmm.radix_morton_decode3(cell_keys[c] >> shift, l)
         Gl = 1 << l
         xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
         a1 = zero(T); a2 = zero(T); a3 = zero(T); b1 = zero(T); b2 = zero(T); b3 = zero(T)

@@ -302,7 +302,7 @@ function _validate_radix_fmm_settings(settings::RadixFMMSettings)
     TF = something(settings.precision, Float64)
     TF in (Float32, Float64) || throw(ArgumentError(
         "RadixFMMSettings.precision must be Float32, Float64, or nothing; got $TF"))
-    fmm.CUDARadixLifecycleOptions(;
+    fmm.RadixLifecycleOptions(;
         precision=TF, operator, m2l_strategy) # actual strategy/precision contract
 
     settings.level_radii2 === nothing ||
@@ -391,7 +391,7 @@ const _radix_fmm_couplings = WeakKeyDict{Any,Any}()
 Set radix FMM coupling overrides for `pfield` (see [`RadixFMMSettings`](@ref))
 and invalidate any existing cache so the next evaluation rebuilds with the new
 settings. GPU mechanism tunables (FastMultipole's radix settings, e.g.
-`CUDA_NEARFIELD_GH_MODE`) may be passed as `gpu=(; CUDA_NEARFIELD_GH_MODE=:shipped)`;
+`NEARFIELD_GH_MODE`) may be passed as `gpu=(; NEARFIELD_GH_MODE=:shipped)`;
 they are validated and atomically applied by `FastMultipole.set_radix_settings!` before the
 cache invalidation so construction-locked settings take effect on the rebuild. Not exported; internal tuning surface (task 035 owns performance).
 """
@@ -575,7 +575,7 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
     K = settings.window_classes === nothing ? (device ? 256 : nothing) :
         settings.window_classes
     m2l_strategy, operator = _radix_m2l_strategy(settings)
-    opts = fmm.CUDARadixLifecycleOptions(; precision=TF, operator, m2l_strategy)
+    opts = fmm.RadixLifecycleOptions(; precision=TF, operator, m2l_strategy)
 
     # Capacity contract: sized once to maxparticles; live np may vary below it
     # (particles added/removed between steps) with no reallocation.

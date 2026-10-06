@@ -401,12 +401,12 @@ end
     @test haskey(FLOWVPM._radix_fmm_couplings, atomic_field)
     coupling_before = FLOWVPM._radix_fmm_couplings[atomic_field]
     cache_before = coupling_before.cache
-    gh_before = vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE)
+    gh_before = vpm_fmm.fmm.radix_setting(:NEARFIELD_GH_MODE)
     gh_proposed = gh_before === :shipped ? :fp32 : :shipped
     @test_throws ArgumentError FLOWVPM.radix_fmm_settings!(atomic_field;
-        gpu=(; CUDA_NEARFIELD_GH_MODE=gh_proposed),
+        gpu=(; NEARFIELD_GH_MODE=gh_proposed),
         direct_kernel=:bogus, rectangular=false)
-    @test vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE) === gh_before
+    @test vpm_fmm.fmm.radix_setting(:NEARFIELD_GH_MODE) === gh_before
     @test FLOWVPM._radix_fmm_settings[atomic_field] === atomic_before
     @test FLOWVPM._radix_fmm_couplings[atomic_field] === coupling_before
     @test FLOWVPM._radix_fmm_couplings[atomic_field].cache === cache_before
@@ -434,8 +434,8 @@ end
     )
     for local_kwargs in invalid_local
         @test_throws ArgumentError FLOWVPM.radix_fmm_settings!(atomic_field;
-            gpu=(; CUDA_NEARFIELD_GH_MODE=gh_proposed), local_kwargs...)
-        @test vpm_fmm.fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE) === gh_before
+            gpu=(; NEARFIELD_GH_MODE=gh_proposed), local_kwargs...)
+        @test vpm_fmm.fmm.radix_setting(:NEARFIELD_GH_MODE) === gh_before
         @test FLOWVPM._radix_fmm_settings[atomic_field] === atomic_before
         @test FLOWVPM._radix_fmm_couplings[atomic_field] === coupling_before
         @test FLOWVPM._radix_fmm_couplings[atomic_field].cache === cache_before

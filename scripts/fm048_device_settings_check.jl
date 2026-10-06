@@ -26,20 +26,20 @@ end
 @testset "047 device construction-lock (late flip errors loudly)" begin
     # first evaluation builds the device cache (snapshot taken at construction)
     vpm.UJ_fmm(pfield; reset=true, autotune=false)
-    old = fmm.radix_setting(:CUDA_NEARFIELD_GH_MODE)
+    old = fmm.radix_setting(:NEARFIELD_GH_MODE)
     flipped = old === :shipped ? :fp32 : :shipped
-    fmm.set_radix_setting!(:CUDA_NEARFIELD_GH_MODE, flipped)
+    fmm.set_radix_setting!(:NEARFIELD_GH_MODE, flipped)
     err = try
         vpm.UJ_fmm(pfield; reset=true, autotune=false)
         nothing
     catch e
         e
     end
-    fmm.set_radix_setting!(:CUDA_NEARFIELD_GH_MODE, old)
+    fmm.set_radix_setting!(:NEARFIELD_GH_MODE, old)
     @test err !== nothing
     msg = err === nothing ? "" : sprint(showerror, err)
     @test occursin("construction-locked", msg)
-    @test occursin("CUDA_NEARFIELD_GH_MODE", msg)
+    @test occursin("NEARFIELD_GH_MODE", msg)
     # restored value steps cleanly again
     vpm.UJ_fmm(pfield; reset=true, autotune=false)
     @test true
