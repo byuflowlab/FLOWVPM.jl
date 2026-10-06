@@ -708,6 +708,26 @@ function _get_particleiterator(pfield::ParticleField; start_i::Int=1, end_i::Int
 end
 
 """
+  `any_outside_core_band(pfield, sigma_lo, sigma_hi) -> Bool`
+
+Whether any particle's core lies outside `[sigma_lo, sigma_hi]` or any of its
+position, strength or core is not finite. A GPU field answers on the device
+(GPU extension), without downloading the particles.
+"""
+# (first argument untyped: the GPU method, on a `ParticleField` whose storage is a
+# GPU array of its own eltype, does not rank as more specific than `::ParticleField`)
+function any_outside_core_band(pfield, sigma_lo, sigma_hi)
+    P = pfield.particles
+    @inbounds for i in 1:get_np(pfield)
+        sigma_lo <= P[SIGMA_INDEX, i] <= sigma_hi || return true
+        for r in first(X_INDEX):SIGMA_INDEX
+            isfinite(P[r, i]) || return true
+        end
+    end
+    return false
+end
+
+"""
   `remove_particle(pfield::ParticleField, i)`
 
 Remove the i-th particle in the field. This is done by moving the last particle

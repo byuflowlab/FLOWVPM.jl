@@ -759,6 +759,32 @@ end
 # in src/FLOWVPM_subfilterscale_gpu.jl (the reference these are checked against).
 const SFS_FUSED = Ref(true)
 
+# FLOWVPM.any_outside_core_band on the device: one flag, set by any particle
+# outside the band or not finite (a benign race: every writer stores 1). The
+# bounds are rounded inward to the field's precision, so a particle is flagged
+# exactly when the host comparison in the bounds' own precision would flag it.
+const _BAND_FLAG = Dict{Any,Any}()
+@kernel function ka_core_band_flag_kernel!(flag, @Const(P), np, lo, hi, isig, r0, r1)
+    i = @index(Global)
+    @inbounds if i <= np
+        ok = lo <= P[isig, i] <= hi
+        for r in r0:r1
+            ok &= isfinite(P[r, i])
+        end
+        ok || (flag[1] = Int32(1))
+    end
+end
+function FLOWVPM.any_outside_core_band(pfield::GPUField, sigma_lo, sigma_hi)
+    np = pfield.np
+    np == 0 && return false
+    P = pfield.particles; T = eltype(P); backend = KA.get_backend(P)
+    flag = get!(() -> KA.zeros(backend, Int32, 1), _BAND_FLAG, typeof(backend))
+    fill!(flag, Int32(0))
+    ka_core_band_flag_kernel!(backend, 256)(flag, P, np, T(sigma_lo, RoundUp), T(sigma_hi, RoundDown),
+        FLOWVPM.SIGMA_INDEX, first(FLOWVPM.X_INDEX), FLOWVPM.SIGMA_INDEX; ndrange = cld(np, 256) * 256)
+    return Array(flag)[1] != 0
+end
+
 const _SFS_NAN_FLAG = Dict{Any,Any}()
 _sfs_nan_flag(backend) = get!(() -> KA.zeros(backend, Int32, 1), _SFS_NAN_FLAG, typeof(backend))
 
@@ -1103,21 +1129,22 @@ end
     @inbounds counts[c] = c == 1 ? Int32(0) : Int32(cld(cell_ranges[2, c - 1], WG))
 end
 
-# per-cell chunk offsets (cached per near field like the pair offsets)
+# per-cell chunk offsets (cached per near field like the pair offsets), for chunks
+# of C targets (C = _SFS_TILE, or 2 * _SFS_TILE for the two-target zeta sweep)
 const _sfs_chunk_scratch = IdDict{Any,Any}()
-function _sfs_chunk_offsets!(nf, backend)
+function _sfs_chunk_offsets!(nf, backend, ::Val{C}=Val(_SFS_TILE)) where C
     need = nf.n_cells + 1
     cap = size(nf.cell_ranges, 2) + 1
-    sc = get(_sfs_chunk_scratch, nf.cell_ranges, nothing)
+    sc = get(_sfs_chunk_scratch, (nf.cell_ranges, C), nothing)
     if sc === nothing || length(sc.counts) < cap
         sc = (; counts=KA.zeros(backend, Int32, cap), offsets=KA.zeros(backend, Int32, cap))
-        _sfs_chunk_scratch[nf.cell_ranges] = sc
+        _sfs_chunk_scratch[(nf.cell_ranges, C)] = sc
     end
-    ka_sfs_chunk_counts_kernel!(backend, 256)(sc.counts, nf.cell_ranges, Val(_SFS_TILE); ndrange=need)
+    ka_sfs_chunk_counts_kernel!(backend, 256)(sc.counts, nf.cell_ranges, Val(C); ndrange=need)
     accumulate!(+, view(sc.offsets, 1:need), view(sc.counts, 1:need))
     return sc.offsets
 end
-_sfs_tiled_ndrange(nf) = (nf.n_cells + cld(nf.n_bodies, _SFS_TILE)) * _SFS_TILE
+_sfs_tiled_ndrange(nf, C=_SFS_TILE) = (nf.n_cells + cld(nf.n_bodies, C)) * _SFS_TILE
 
 # the chunk's cell, pair range and this lane's target (uniform per workgroup but i)
 @inline function _sfs_chunk_setup(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
@@ -1131,52 +1158,84 @@ _sfs_tiled_ndrange(nf) = (nf.n_cells + cld(nf.n_bodies, _SFS_TILE)) * _SFS_TILE
     return p0, p1, i, inb
 end
 
+# the same for a chunk of 2WG targets: lane l holds targets i and i + WG
+@inline function _sfs_chunk_setup2(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
+    nchunks = chunk_offsets[n_cells + 1]
+    live = k <= nchunks
+    c = live ? _sfs_chunk_cell(chunk_offsets, n_cells, k) : 1
+    p0 = live ? Int(offsets[c]) : 1
+    p1 = live ? Int(offsets[c + 1]) - 1 : 0
+    last = cell_ranges[1, c] + cell_ranges[2, c] - 1
+    i = cell_ranges[1, c] + (k - 1 - chunk_offsets[c]) * 2WG + l - 1
+    return p0, p1, i, live && i <= last, i + WG, live && i + WG <= last
+end
+
+# Two targets per lane (chunks of 2WG, `_sfs_chunk_setup2`): each tile load serves
+# both. The source's active flag is folded into its 1/sigma (an inactive source
+# enters with 0, which the sweep skips), and the loop counters are Int32: 101 ->
+# 75 ms per sweep on the 1.88M 5MW wake (GH200), bitwise unchanged.
 @kernel function ka_sfs_zeta_tiled_kernel!(om, q, @Const(tg), @Const(source_bodies),
         @Const(cell_ranges), @Const(direct_sources), @Const(offsets), @Const(chunk_offsets),
         n_cells, rc2, K1, active_row, inv_row, ::Type{T}, ::Val{WG}) where {T,WG}
     k = @index(Group, Linear); l = @index(Local, Linear)
-    tile = @localmem T (WG, 11)
+    tile = @localmem T (WG, 10)
     half = T(0.5)
     @inbounds begin
-        p0, p1, i, inb = _sfs_chunk_setup(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
-        active = inb && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        p0, p1, i, inb, i2, inb2 = _sfs_chunk_setup2(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
+        a1 = inb && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        a2 = inb2 && (active_row == 0 || !iszero(source_bodies[active_row, i2]))
+        i_32 = i % Int32; i2_32 = i2 % Int32; l32 = l % Int32
         xi = inb ? source_bodies[1, i] : zero(T)
         yi = inb ? source_bodies[2, i] : zero(T)
         zi = inb ? source_bodies[3, i] : zero(T)
+        xj = inb2 ? source_bodies[1, i2] : zero(T)
+        yj = inb2 ? source_bodies[2, i2] : zero(T)
+        zj = inb2 ? source_bodies[3, i2] : zero(T)
         o1 = zero(T); o2 = zero(T); o3 = zero(T)
         q1 = zero(T); q2 = zero(T); q3 = zero(T)
-        for p in p0:p1
+        u1 = zero(T); u2 = zero(T); u3 = zero(T)
+        w1 = zero(T); w2 = zero(T); w3 = zero(T)
+        for p in (p0 % Int32):(p1 % Int32)
             sc = direct_sources[p]
-            sfirst = cell_ranges[1, sc]
-            slast = sfirst + cell_ranges[2, sc] - 1
-            for t0 in sfirst:WG:slast
-                j = t0 + l - 1
+            sfirst = cell_ranges[1, sc] % Int32
+            slast = (sfirst + cell_ranges[2, sc] - 1) % Int32
+            for t0 in sfirst:Int32(WG):slast
+                j = t0 + l32 - Int32(1)
                 if j <= slast
                     tile[l, 1] = source_bodies[1, j]; tile[l, 2] = source_bodies[2, j]
-                    tile[l, 3] = source_bodies[3, j]; tile[l, 4] = source_bodies[inv_row, j]
-                    tile[l, 5] = active_row == 0 ? one(T) : source_bodies[active_row, j]
-                    tile[l, 6] = source_bodies[5, j]; tile[l, 7] = source_bodies[6, j]
-                    tile[l, 8] = source_bodies[7, j]
-                    tile[l, 9] = tg[1, j]; tile[l, 10] = tg[2, j]; tile[l, 11] = tg[3, j]
+                    tile[l, 3] = source_bodies[3, j]
+                    tile[l, 4] = (active_row == 0 || !iszero(source_bodies[active_row, j])) ?
+                        source_bodies[inv_row, j] : zero(T)
+                    tile[l, 5] = source_bodies[5, j]; tile[l, 6] = source_bodies[6, j]
+                    tile[l, 7] = source_bodies[7, j]
+                    tile[l, 8] = tg[1, j]; tile[l, 9] = tg[2, j]; tile[l, 10] = tg[3, j]
                 end
                 @synchronize
-                if active
-                    for s in 1:min(WG, slast - t0 + 1)
-                        if t0 + s - 1 != i && !iszero(tile[s, 5])
-                            dx = xi - tile[s, 1]
-                            dy = yi - tile[s, 2]
-                            dz = zi - tile[s, 3]
-                            r2 = dx * dx + dy * dy + dz * dz
-                            is = tile[s, 4]
-                            rho2 = r2 * is * is
-                            if is > zero(T) && rho2 <= rc2
-                                z = K1 * exp(-half * rho2) * (is * is * is)
-                                o1 += z * tile[s, 6]
-                                o2 += z * tile[s, 7]
-                                o3 += z * tile[s, 8]
-                                q1 += z * tile[s, 9]
-                                q2 += z * tile[s, 10]
-                                q3 += z * tile[s, 11]
+                if a1 || a2
+                    for s in Int32(1):min(Int32(WG), slast - t0 + Int32(1))
+                        is = tile[s, 4]
+                        if is > zero(T)
+                            sx = tile[s, 1]; sy = tile[s, 2]; sz = tile[s, 3]
+                            js = t0 + s - Int32(1)
+                            if a1 && js != i_32
+                                dx = xi - sx; dy = yi - sy; dz = zi - sz
+                                r2 = dx * dx + dy * dy + dz * dz
+                                rho2 = r2 * is * is
+                                if rho2 <= rc2
+                                    z = K1 * exp(-half * rho2) * (is * is * is)
+                                    o1 += z * tile[s, 5]; o2 += z * tile[s, 6]; o3 += z * tile[s, 7]
+                                    q1 += z * tile[s, 8]; q2 += z * tile[s, 9]; q3 += z * tile[s, 10]
+                                end
+                            end
+                            if a2 && js != i2_32
+                                dx = xj - sx; dy = yj - sy; dz = zj - sz
+                                r2 = dx * dx + dy * dy + dz * dz
+                                rho2 = r2 * is * is
+                                if rho2 <= rc2
+                                    z = K1 * exp(-half * rho2) * (is * is * is)
+                                    u1 += z * tile[s, 5]; u2 += z * tile[s, 6]; u3 += z * tile[s, 7]
+                                    w1 += z * tile[s, 8]; w2 += z * tile[s, 9]; w3 += z * tile[s, 10]
+                                end
                             end
                         end
                     end
@@ -1184,9 +1243,13 @@ end
                 @synchronize
             end
         end
-        if active
+        if a1
             om[1, i] = o1; om[2, i] = o2; om[3, i] = o3
             q[1, i] = q1; q[2, i] = q2; q[3, i] = q3
+        end
+        if a2
+            om[1, i2] = u1; om[2, i2] = u2; om[3, i2] = u3
+            q[1, i2] = w1; q[2, i2] = w2; q[3, i2] = w3
         end
     end
 end
@@ -1200,18 +1263,19 @@ end
     @inbounds begin
         p0, p1, i, inb = _sfs_chunk_setup(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
         active = inb && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        i32 = i % Int32; l32 = l % Int32
         xi = inb ? source_bodies[1, i] : zero(T)
         yi = inb ? source_bodies[2, i] : zero(T)
         zi = inb ? source_bodies[3, i] : zero(T)
         d1 = zero(T); d2 = zero(T); d3 = zero(T)
         d4 = zero(T); d5 = zero(T); d6 = zero(T)
         d7 = zero(T); d8 = zero(T); d9 = zero(T)
-        for p in p0:p1
+        for p in (p0 % Int32):(p1 % Int32)
             sc = direct_sources[p]
-            sfirst = cell_ranges[1, sc]
-            slast = sfirst + cell_ranges[2, sc] - 1
-            for t0 in sfirst:WG:slast
-                j = t0 + l - 1
+            sfirst = cell_ranges[1, sc] % Int32
+            slast = (sfirst + cell_ranges[2, sc] - 1) % Int32
+            for t0 in sfirst:Int32(WG):slast
+                j = t0 + l32 - Int32(1)
                 if j <= slast
                     tile[l, 1] = source_bodies[1, j]; tile[l, 2] = source_bodies[2, j]
                     tile[l, 3] = source_bodies[3, j]; tile[l, 4] = source_bodies[inv_row, j]
@@ -1220,9 +1284,9 @@ end
                 end
                 @synchronize
                 if active
-                    for s in 1:min(WG, slast - t0 + 1)
+                    for s in Int32(1):min(Int32(WG), slast - t0 + Int32(1))
                         is = tile[s, 4]
-                        if t0 + s - 1 != i && is > zero(T)
+                        if t0 + s - Int32(1) != i32 && is > zero(T)
                             dx = xi - tile[s, 1]
                             dy = yi - tile[s, 2]
                             dz = zi - tile[s, 3]
@@ -1260,12 +1324,13 @@ end
         @Const(chunk_offsets), n_cells, rc2, K1, active_row, inv_row, ::Type{T},
         ::Val{WG}) where {T,WG}
     k = @index(Group, Linear); l = @index(Local, Linear)
-    tile = @localmem T (WG, 14)
+    tile = @localmem T (WG, 13)
     half = T(0.5)
     three = T(3)
     @inbounds begin
         p0, p1, i, inb = _sfs_chunk_setup(chunk_offsets, offsets, cell_ranges, n_cells, k, l, WG)
         active = inb && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        i32 = i % Int32; l32 = l % Int32
         xi = inb ? source_bodies[1, i] : zero(T)
         yi = inb ? source_bodies[2, i] : zero(T)
         zi = inb ? source_bodies[3, i] : zero(T)
@@ -1273,42 +1338,44 @@ end
         q1 = zero(T); q2 = zero(T); q3 = zero(T)
         e1 = zero(T); e2 = zero(T); e3 = zero(T)
         f1 = zero(T); f2 = zero(T); f3 = zero(T)
-        for p in p0:p1
+        for p in (p0 % Int32):(p1 % Int32)
             sc = direct_sources[p]
-            sfirst = cell_ranges[1, sc]
-            slast = sfirst + cell_ranges[2, sc] - 1
-            for t0 in sfirst:WG:slast
-                j = t0 + l - 1
+            sfirst = cell_ranges[1, sc] % Int32
+            slast = (sfirst + cell_ranges[2, sc] - 1) % Int32
+            for t0 in sfirst:Int32(WG):slast
+                j = t0 + l32 - Int32(1)
                 if j <= slast
+                    # an inactive source enters with 1/sigma = 0, which the sweep skips
                     tile[l, 1] = source_bodies[1, j]; tile[l, 2] = source_bodies[2, j]
-                    tile[l, 3] = source_bodies[3, j]; tile[l, 4] = source_bodies[inv_row, j]
-                    tile[l, 5] = active_row == 0 ? one(T) : source_bodies[active_row, j]
-                    tile[l, 6] = source_bodies[5, j]; tile[l, 7] = source_bodies[6, j]
-                    tile[l, 8] = source_bodies[7, j]
-                    tile[l, 9] = tg[1, j]; tile[l, 10] = tg[2, j]; tile[l, 11] = tg[3, j]
-                    tile[l, 12] = dt[1, j]; tile[l, 13] = dt[2, j]; tile[l, 14] = dt[3, j]
+                    tile[l, 3] = source_bodies[3, j]
+                    tile[l, 4] = (active_row == 0 || !iszero(source_bodies[active_row, j])) ?
+                        source_bodies[inv_row, j] : zero(T)
+                    tile[l, 5] = source_bodies[5, j]; tile[l, 6] = source_bodies[6, j]
+                    tile[l, 7] = source_bodies[7, j]
+                    tile[l, 8] = tg[1, j]; tile[l, 9] = tg[2, j]; tile[l, 10] = tg[3, j]
+                    tile[l, 11] = dt[1, j]; tile[l, 12] = dt[2, j]; tile[l, 13] = dt[3, j]
                 end
                 @synchronize
                 if active
-                    for s in 1:min(WG, slast - t0 + 1)
-                        if t0 + s - 1 != i && !iszero(tile[s, 5])
+                    for s in Int32(1):min(Int32(WG), slast - t0 + Int32(1))
+                        is = tile[s, 4]
+                        if t0 + s - Int32(1) != i32 && is > zero(T)
                             dx = xi - tile[s, 1]
                             dy = yi - tile[s, 2]
                             dz = zi - tile[s, 3]
                             r2 = dx * dx + dy * dy + dz * dz
-                            is = tile[s, 4]
                             rho2 = r2 * is * is
-                            if is > zero(T) && rho2 <= rc2
+                            if rho2 <= rc2
                                 z = K1 * exp(-half * rho2) * (is * is * is)
                                 dz_ = z * (rho2 - three)
-                                g1 = tile[s, 6]; g2 = tile[s, 7]; g3 = tile[s, 8]
-                                t1 = tile[s, 9]; t2 = tile[s, 10]; t3 = tile[s, 11]
+                                g1 = tile[s, 5]; g2 = tile[s, 6]; g3 = tile[s, 7]
+                                t1 = tile[s, 8]; t2 = tile[s, 9]; t3 = tile[s, 10]
                                 o1 += z * g1; o2 += z * g2; o3 += z * g3
                                 q1 += z * t1; q2 += z * t2; q3 += z * t3
                                 e1 += dz_ * g1; e2 += dz_ * g2; e3 += dz_ * g3
-                                f1 += dz_ * t1 + z * tile[s, 12]
-                                f2 += dz_ * t2 + z * tile[s, 13]
-                                f3 += dz_ * t3 + z * tile[s, 14]
+                                f1 += dz_ * t1 + z * tile[s, 11]
+                                f2 += dz_ * t2 + z * tile[s, 12]
+                                f3 += dz_ * t3 + z * tile[s, 13]
                             end
                         end
                     end
@@ -1352,7 +1419,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     backend = KA.get_backend(nf.output); wg = _SFS_WORKGROUP
     tv = ctx.transposed ? Val(true) : Val(false)
     rc2 = FLOWVPM._sfs_saturation_rc2(TF); K1 = TF(FLOWVPM._SFS_ZETA_K1); A = TF(fmm._GAUSSERF_A)
-    md = masked === nothing ? nothing : _sfs_masked_device(FLOWVPM._sfs_masked_grid(TF, masked), nf, backend)
+    md = masked === nothing ? nothing : _sfs_masked_source(pfield, nf, masked, TF, backend)
     # the cell sweeps read 1/sigma from the packed source rows: FastMultipole's KA cache packs it
     # as the last row for a regularized kernel (0 for sigma <= 0)
     ir = size(nf.source_bodies, 1)
@@ -1360,14 +1427,13 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         throw(AssertionError("the SFS sweeps need the packed 1/sigma row (got $ir source rows)"))
     target_major = nf.n_direct > 0
     ka_sfs_tg_kernel!(backend, wg)(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, TF, tv, n; ndrange=n)
-    md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.tg, nf.output, 5, md.mg, md.mslot, tv, md.K;
-        ndrange=cld(md.K, wg) * wg)
+    md === nothing || _sfs_masked_t!(ctx.tg, nf.output, 5, md, tv, backend, wg)
     fused = dsigma && target_major      # ζ waits for dt and shares the ∂ζ sweep (below)
     if target_major && !fused
         off = _sfs_pair_offsets!(nf, backend, wg)
         ka_sfs_zeta_tiled_kernel!(backend, _SFS_TILE)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
-            nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend), nf.n_cells, rc2, K1, 9, ir, TF,
-            Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf))
+            nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend, Val(2 * _SFS_TILE)), nf.n_cells, rc2, K1, 9, ir, TF,
+            Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf, 2 * _SFS_TILE))
     end
     fused || md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
     if dsigma
@@ -1380,8 +1446,7 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
         end
         md === nothing || _sfs_masked_pairs!(ctx.dj, ctx.dj, ctx.tg, ctx.dt, nf, md, 2, A, TF, backend, wg)
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
-        md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.dt, ctx.dj, 1, md.mg, md.mslot, tv, md.K;
-            ndrange=cld(md.K, wg) * wg)
+        md === nothing || _sfs_masked_t!(ctx.dt, ctx.dj, 1, md, tv, backend, wg)
         if fused
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_zeta_dzeta_tiled_kernel!(backend, _SFS_TILE)(ctx.om, ctx.q, ctx.dom, ctx.dq, ctx.tg, ctx.dt,
@@ -1591,8 +1656,181 @@ function _sfs_masked_device(m, nf, backend)
     return merge(g, (; mg))
 end
 
+#------- the masked particles' pairs over the multilevel direct lists -------#
+#
+# FastMultipole's multilevel insertion puts each masked particle back in the tree at
+# the level its reach admits, and sums it directly over the level cells within that
+# level's stencil (`FastMultipole.radix_multilevel_lists`). The SFS pass takes its
+# masked pairs from the same lists: one thread per target over the masked bodies in
+# the level cells within the stencil of its own, level by level, then the loose ones
+# (no level admits them) all-pairs, each pair still cut at the SFS reach. The lists
+# hold every pair within the insertion reach (1.03 rho_t sigma), not the SFS cutoff
+# (6.5 sigma); on the 1.88M NREL 5MW wake they held all of them (2026-10-06: 215M of
+# 215M pairs, SFS bitwise equal to the flat masked grid, which scanned ~2000
+# candidates per target through 52.8 m cells sized by the largest masked core).
+
+# the masked set's lists when the evaluation recorded them, else the flat grid
+function _sfs_masked_source(pfield, nf, masked, ::Type{TF}, backend) where TF
+    st = get(FLOWVPM._radix_fmm_couplings, pfield, nothing)
+    rec = st === nothing ? nothing : fmm.radix_multilevel_lists(st.cache)
+    rec !== nothing && rec.buffer === masked.buffer && return (; lists = rec)
+    return _sfs_masked_device(FLOWVPM._sfs_masked_grid(TF, masked), nf, backend)
+end
+
+# T = op(J)Γ at the masked slots from their saved Γ (packed rows 5:7)
+function _sfs_masked_t!(t, jsrc, joff, md, tv, backend, wg)
+    if hasproperty(md, :lists)
+        for s in (md.lists.sets..., md.lists.loose)
+            K = length(s.slot)
+            K > 0 && ka_sfs_masked_t_kernel!(backend, wg)(t, jsrc, joff, view(s.buf, 5:7, :), s.slot, tv, K;
+                ndrange=cld(K, wg) * wg)
+        end
+    else
+        ka_sfs_masked_t_kernel!(backend, wg)(t, jsrc, joff, md.mg, md.mslot, tv, md.K; ndrange=cld(md.K, wg) * wg)
+    end
+    return nothing
+end
+
+# the cell holding sorted body `i` (FastMultipole's `_ka_cell_of`) and a Morton key's
+# level-l coordinates (`_ka_morton_decode3`)
+@inline function _sfs_cell_of(cell_ranges, n_cells, i)
+    lo = 1; hi = n_cells
+    while lo < hi
+        mid = (lo + hi + 1) >>> 1
+        if cell_ranges[1, mid] <= i
+            lo = mid
+        else
+            hi = mid - 1
+        end
+    end
+    return lo
+end
+@inline function _sfs_morton_decode3(key::UInt64, l::Int)
+    i = 0; j = 0; k = 0
+    for bit in 0:(l - 1)
+        i |= Int((key >> (3 * bit)) & UInt64(1)) << bit
+        j |= Int((key >> (3 * bit + 1)) & UInt64(1)) << bit
+        k |= Int((key >> (3 * bit + 2)) & UInt64(1)) << bit
+    end
+    return i, j, k
+end
+
+# one masked pair's terms (the flat-grid kernel's arithmetic): `mode` 1 ζ (om, q),
+# 2 ∂J (dj rows 1:9), 3 ∂ζ (dom, dq); (a1..a3, b1..b3, d7..d9)
+@inline function _sfs_masked_terms(mode, dx, dy, dz, r2, rho2, sigma, buf, jj, tg, dt, s, coef, ::Type{T}) where T
+    half = T(0.5); three = T(3); z0 = zero(T)
+    @inbounds if mode == 2
+        r2 > zero(T) || return (z0, z0, z0, z0, z0, z0, z0, z0, z0)
+        invr = inv(sqrt(r2))
+        G = coef * rho2 * sqrt(rho2) * exp(-half * rho2)
+        _, _, _, _, h1, h2, h3, h4, h5, h6, h7, h8, h9 =
+            fmm._vortex_pair_ugh(dx, dy, dz, r2, invr, buf[5, jj], buf[6, jj], buf[7, jj], -G, rho2 * G)
+        return (h1, h2, h3, h4, h5, h6, h7, h8, h9)
+    else
+        z = coef * exp(-half * rho2) / (sigma * sigma * sigma)
+        if mode == 1
+            return (z * buf[5, jj], z * buf[6, jj], z * buf[7, jj], z * tg[1, s], z * tg[2, s], z * tg[3, s], z0, z0, z0)
+        else
+            dz_ = z * (rho2 - three)
+            return (dz_ * buf[5, jj], dz_ * buf[6, jj], dz_ * buf[7, jj],
+                    dz_ * tg[1, s] + z * dt[1, s], dz_ * tg[2, s] + z * dt[2, s], dz_ * tg[3, s] + z * dt[3, s],
+                    z0, z0, z0)
+        end
+    end
+end
+
+@inline function _sfs_masked_write!(a, b, i, mode, a1, a2, a3, b1, b2, b3, d7, d8, d9)
+    @inbounds if mode == 2
+        a[1, i] += a1; a[2, i] += a2; a[3, i] += a3
+        a[4, i] += b1; a[5, i] += b2; a[6, i] += b3
+        a[7, i] += d7; a[8, i] += d8; a[9, i] += d9
+    else
+        a[1, i] += a1; a[2, i] += a2; a[3, i] += a3
+        b[1, i] += b1; b[2, i] += b2; b[3, i] += b3
+    end
+    return nothing
+end
+
+# one level's list: the masked bodies in the level-l cells within radius² `q` of the
+# target's own level-l cell (FastMultipole's `_ml_near_kernel!` loop)
+@kernel function ka_sfs_ml_pairs_kernel!(a, b, @Const(tg), @Const(dt), @Const(source_bodies), @Const(cell_ranges),
+        @Const(cell_keys), @Const(offs), @Const(buf), @Const(slot), n_cells, shift, l, q, r, rc2, coef,
+        active_row, mode, ::Type{T}, n) where T
+    i = @index(Global)
+    @inbounds if i <= n && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        c = _sfs_cell_of(cell_ranges, n_cells, i)
+        cx, cy, cz = _sfs_morton_decode3(cell_keys[c] >> shift, l)
+        Gl = 1 << l
+        xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+        a1 = zero(T); a2 = zero(T); a3 = zero(T); b1 = zero(T); b2 = zero(T); b3 = zero(T)
+        d7 = zero(T); d8 = zero(T); d9 = zero(T)
+        for oz in -r:r, oy in -r:r, ox in -r:r
+            x = cx + ox; y = cy + oy; z = cz + oz
+            if ox * ox + oy * oy + oz * oz <= q && 0 <= x < Gl && 0 <= y < Gl && 0 <= z < Gl
+                k = x + (y + z * Gl) * Gl
+                for jj in Int(offs[k + 1]):(Int(offs[k + 2]) - 1)
+                    s = slot[jj]
+                    if s != i && s > 0
+                        dx = xi - buf[1, jj]; dy = yi - buf[2, jj]; dz = zi - buf[3, jj]
+                        r2 = dx * dx + dy * dy + dz * dz
+                        sigma = buf[8, jj]
+                        rho2 = r2 / (sigma * sigma)
+                        if rho2 <= rc2
+                            t1, t2, t3, t4, t5, t6, t7, t8, t9 =
+                                _sfs_masked_terms(mode, dx, dy, dz, r2, rho2, sigma, buf, jj, tg, dt, s, coef, T)
+                            a1 += t1; a2 += t2; a3 += t3; b1 += t4; b2 += t5; b3 += t6
+                            d7 += t7; d8 += t8; d9 += t9
+                        end
+                    end
+                end
+            end
+        end
+        _sfs_masked_write!(a, b, i, mode, a1, a2, a3, b1, b2, b3, d7, d8, d9)
+    end
+end
+
+# the loose masked bodies (no level admits them): all-pairs, as in the U/J
+@kernel function ka_sfs_ml_loose_kernel!(a, b, @Const(tg), @Const(dt), @Const(source_bodies), @Const(buf),
+        @Const(slot), nl, rc2, coef, active_row, mode, ::Type{T}, n) where T
+    i = @index(Global)
+    @inbounds if i <= n && (active_row == 0 || !iszero(source_bodies[active_row, i]))
+        xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
+        a1 = zero(T); a2 = zero(T); a3 = zero(T); b1 = zero(T); b2 = zero(T); b3 = zero(T)
+        d7 = zero(T); d8 = zero(T); d9 = zero(T)
+        for jj in 1:nl
+            s = slot[jj]
+            if s != i && s > 0
+                dx = xi - buf[1, jj]; dy = yi - buf[2, jj]; dz = zi - buf[3, jj]
+                r2 = dx * dx + dy * dy + dz * dz
+                sigma = buf[8, jj]
+                rho2 = r2 / (sigma * sigma)
+                if rho2 <= rc2
+                    t1, t2, t3, t4, t5, t6, t7, t8, t9 =
+                        _sfs_masked_terms(mode, dx, dy, dz, r2, rho2, sigma, buf, jj, tg, dt, s, coef, T)
+                    a1 += t1; a2 += t2; a3 += t3; b1 += t4; b2 += t5; b3 += t6
+                    d7 += t7; d8 += t8; d9 += t9
+                end
+            end
+        end
+        _sfs_masked_write!(a, b, i, mode, a1, a2, a3, b1, b2, b3, d7, d8, d9)
+    end
+end
+
 function _sfs_masked_pairs!(a, b, tg, dt, nf, md, mode, coef, ::Type{TF}, backend, wg) where TF
     n = nf.n_bodies
+    rc2 = FLOWVPM._sfs_saturation_rc2(TF)
+    if hasproperty(md, :lists)
+        L = md.lists
+        for s in L.sets
+            ka_sfs_ml_pairs_kernel!(backend, wg)(a, b, tg, dt, nf.source_bodies, nf.cell_ranges, L.cell_keys,
+                s.offs, s.buf, s.slot, nf.n_cells, 3 * (L.ell - s.l), s.l, s.q, isqrt(s.q), rc2, coef, 9, mode,
+                TF, n; ndrange = cld(n, wg) * wg)
+        end
+        nl = length(L.loose.slot)
+        nl > 0 && ka_sfs_ml_loose_kernel!(backend, wg)(a, b, tg, dt, nf.source_bodies, L.loose.buf, L.loose.slot,
+            nl, rc2, coef, 9, mode, TF, n; ndrange = cld(n, wg) * wg)
+        return nothing
+    end
     ka_sfs_masked_pairs_kernel!(backend, wg)(a, b, tg, dt, nf.source_bodies, md.mx, md.mg, md.ms,
         md.mslot, md.offsets, md.o[1], md.o[2], md.o[3], md.h, md.dims[1], md.dims[2], md.dims[3],
         FLOWVPM._sfs_saturation_rc2(TF), coef, 9, mode, TF, n; ndrange = cld(n, wg) * wg)
