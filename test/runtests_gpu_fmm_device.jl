@@ -345,11 +345,75 @@ end
     end
 end
 
+# a 2% tail of 3-4x cores, on the device
+function fmm034_tail_field(n, seed, big_scale)
+    rng = MersenneTwister(seed)
+    cpu = fmm034_pfield(n, Float32)
+    s0 = 0.8f0 * (1f0 / n)^(1 / 3)
+    for _ in 1:n
+        big = rand(rng) < 0.02
+        vpm_fmm.add_particle(cpu, rand(rng, Float32, 3), (2 .* rand(rng, Float32, 3) .- 1) ./ n,
+            s0 * (big ? big_scale * (1f0 + rand(rng, Float32)) : 1f0 + 0.2f0 * rand(rng, Float32)))
+    end
+    return fmm034_to_gpu(cpu, Float32)
+end
+
+@testset "device large cores out of the leaf cells: no error beyond the tree's" begin
+    # the large cores' source copies leave their leaf cells and come back through
+    # their groups in the same direct list. Against the direct sum, U and J match
+    # the same field with the tail shrunk to ordinary cores (the same grid, no
+    # split); a grid sized for the largest core is coarser and so more accurate
+    # (and slower), which says nothing about the split. The SFS estimator and the
+    # core-scaling channel, built from J, differ from that coarser evaluation only
+    # by the two grids' J difference.
+    n = 20000
+    function run(K; shrink=false)
+        gpu = fmm034_tail_field(n, 7, shrink ? 1.1f0 / 2 : 3f0)
+        vpm_fmm.radix_fmm_settings!(gpu; oversize_count = K)
+        vpm_fmm._sfs_dsigma_request!(gpu, true)
+        vpm_fmm.UJ_fmm_gpu!(gpu; reset = true, reset_sfs = true, sfs = true)
+        nf = vpm_fmm.fmm.radix_nearfield(FLOWVPM._radix_fmm_couplings[gpu].cache)
+        return gpu, Array(gpu.particles[:, 1:n]), nf.n_sources - nf.n_bodies
+    end
+    ga, A, kA = run(0)
+    gc, _, kC = run(0; shrink = true)
+    _, B, kB = run(-1)
+    @test kA > 0 && kB == 0 && kC == 0
+    @test FLOWVPM._radix_fmm_couplings[ga].cache.ell == FLOWVPM._radix_fmm_couplings[gc].cache.ell
+    ref_a = fmm034_tail_field(n, 7, 3f0); vpm_fmm.UJ_direct(ref_a)
+    ref_c = fmm034_tail_field(n, 7, 1.1f0 / 2); vpm_fmm.UJ_direct(ref_c)
+    ea = fmm034_uj_errors(ga.particles, ref_a.particles, n)
+    ec = fmm034_uj_errors(gc.particles, ref_c.particles, n)
+    @info "large cores vs the same grid without them" kA ea.u_rel_rms ec.u_rel_rms ea.j_rel_rms ec.j_rel_rms
+    @test ea.u_rel_rms <= 1.2 * ec.u_rel_rms + 1e-6
+    @test ea.j_rel_rms <= 1.2 * ec.j_rel_rms + 1e-6
+    rel(rows) = maximum(abs.(A[rows, :] .- B[rows, :])) / maximum(abs.(B[rows, :]))
+    dj = rel(vpm_fmm.J_INDEX)
+    m0 = first(vpm_fmm.M_INDEX)
+    @test rel(vpm_fmm.SFS_INDEX) < 3 * dj + 1e-5
+    @test rel(m0:m0+5) < 3 * dj + 1e-5
+end
+
+@testset "device radix state restore with large cores keeps the geometry" begin
+    n = 20000
+    gpu = fmm034_tail_field(n, 3, 4f0)
+    vpm_fmm.radix_fmm_settings!(gpu; padding = 1.0, rectangular = true)
+    evaluate() = (vpm_fmm._reset_particles(gpu); vpm_fmm.UJ_fmm_gpu!(gpu; reset = true);
+                  Array(gpu.particles[:, 1:n]))
+    cache() = FLOWVPM._radix_fmm_couplings[gpu].cache
+    geometry() = (c = cache(); (c.ell, c.ell_axes, c.policy.near_radius2))
+    evaluate(); live = geometry(); A = evaluate()
+    nf = vpm_fmm.fmm.radix_nearfield(cache())
+    @test nf.n_sources > nf.n_bodies
+    vpm_fmm.restore_radix_state!(gpu, vpm_fmm.radix_state(gpu))
+    @test geometry() == live
+    @test evaluate() == A
+end
+
 @testset "device zeta_fmm with grown cores keeps the geometry" begin
     # core-spreading resets evaluate zeta while the grown cores are still in the
-    # field: unmasked, they made the coupling rebuild a much wider stencil (5MW at
-    # 1.88M: q 9 -> 22, later FMM calls ~3x slower, 2026-10-03). They are now masked
-    # out of the sweep and added through the masked grid, self term included.
+    # field: the cache takes them out of the leaf cells and sums them through their
+    # coarser-level groups (own term included), so the geometry stays put
     n = 20000
     rng = MersenneTwister(3)
     cpu = fmm034_pfield(n, Float32)

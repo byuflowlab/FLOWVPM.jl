@@ -268,60 +268,6 @@ end
     @test all(isfinite, b.particles[rows, 1:3])                # Γ = 0 stays finite
 end
 
-@testset "SFS with oversize particles masked matches the unmasked field" begin
-    # The masked cores are packed with zero strength and core, so the pair sweeps
-    # skipped them and their T was formed from Γ = 0: 2% of a field masked put the
-    # estimator and the core-scaling channel 2e-2 off (2026-10-03). With their
-    # pairs and T restored, masked and unmasked agree to the FMM's own level.
-    n = 4000
-    function masked_run(K)
-        rng = MersenneTwister(7)
-        pf = fmm034_pfield(n, Float32)
-        s0 = 0.8f0 * (1f0 / n)^(1 / 3)
-        for _ in 1:n
-            big = rand(rng) < 0.02
-            vpm_fmm.add_particle(pf, rand(rng, Float32, 3), (2 .* rand(rng, Float32, 3) .- 1) ./ n,
-                s0 * (big ? 3f0 + rand(rng, Float32) : 1f0 + 0.2f0 * rand(rng, Float32)))
-        end
-        vpm_fmm.radix_fmm_settings!(pf; oversize_count = K)
-        vpm_fmm._sfs_dsigma_request!(pf, true)
-        vpm_fmm.UJ_fmm_gpu!(pf; reset = true, reset_sfs = true, sfs = true)
-        m = vpm_fmm.fmm.radix_nearfield(vpm_fmm._radix_fmm_couplings[pf].cache).masked
-        return copy(pf.particles[:, 1:n]), m === nothing ? 0 : length(m.idx)
-    end
-    A, nA = masked_run(64)
-    B, nB = masked_run(-1)
-    @test nA > 0 && nB == 0
-    rel(rows) = maximum(abs.(A[rows, :] .- B[rows, :])) / maximum(abs.(B[rows, :]))
-    @test rel(vpm_fmm.J_INDEX) < 1e-4
-    @test rel(vpm_fmm.SFS_INDEX) < 1e-4
-    m0 = first(vpm_fmm.M_INDEX)
-    @test rel(m0:m0+5) < 1e-4
-end
-
-@testset "radix state restore with oversize cores keeps the geometry" begin
-    # restore_radix_state! builds the cache from the saved geometry; built on the
-    # unmasked cores, its adequacy gate demoted it to the all-direct cache for the
-    # rest of the run (5MW step-3024 checkpoint, 2026-10-03)
-    n = 4000
-    rng = MersenneTwister(3)
-    pf = fmm034_pfield(n, Float32)
-    s0 = 0.8f0 * (1f0 / n)^(1 / 3)
-    for _ in 1:n
-        big = rand(rng) < 0.02
-        vpm_fmm.add_particle(pf, rand(rng, Float32, 3), (2 .* rand(rng, Float32, 3) .- 1) ./ n,
-            s0 * (big ? 4f0 + 4f0 * rand(rng, Float32) : 1f0 + 0.2f0 * rand(rng, Float32)))
-    end
-    vpm_fmm.radix_fmm_settings!(pf; padding = 1.0, rectangular = true)
-    evaluate() = (vpm_fmm._reset_particles(pf); vpm_fmm.UJ_fmm_gpu!(pf; reset = true); copy(pf.particles[:, 1:n]))
-    geometry() = (c = vpm_fmm._radix_fmm_couplings[pf].cache; (c.ell, c.ell_axes, c.policy.near_radius2))
-    evaluate(); live = geometry(); A = evaluate()
-    @test vpm_fmm.fmm.radix_nearfield(vpm_fmm._radix_fmm_couplings[pf].cache).masked !== nothing
-    vpm_fmm.restore_radix_state!(pf, vpm_fmm.radix_state(pf))
-    @test geometry() == live
-    @test evaluate() == A
-end
-
 # =========================================================================
 # Part A: host-resident (transfer-based) coupling, CPU only
 # =========================================================================
@@ -612,9 +558,7 @@ end
         vpm_fmm.add_particle(pfield, Xs[i], Gs[i], sigma0)
         vpm_fmm.add_particle(ref, Xs[i], Gs[i], sigma0)
     end
-    # oversize masking off: with it, the fat core below would be masked out of the
-    # tree (the threshold is capped at the cached grid's limit) and the
-    # rebuild path under test would not run; the masked case is checked after
+    # no oversize allowance (a host cache takes no cores out of its cells anyway)
     FLOWVPM.radix_fmm_settings!(pfield; oversize_count=-1)
     vpm_fmm.UJ_fmm_gpu!(pfield)
     st0 = FLOWVPM._radix_fmm_couplings[pfield]
@@ -637,20 +581,6 @@ end
     vpm_fmm.UJ_fmm_gpu!(pfield)
     @test FLOWVPM._radix_fmm_couplings[pfield] === st1
 
-    # default (adaptive) masking: the same fat core is masked, the cached grid
-    # is kept, and the answer stays accurate
-    pfield3 = fmm034_pfield(n)
-    for i in 1:n
-        vpm_fmm.add_particle(pfield3, Xs[i], Gs[i], sigma0)
-    end
-    vpm_fmm.UJ_fmm_gpu!(pfield3)
-    st3 = FLOWVPM._radix_fmm_couplings[pfield3]
-    vpm_fmm.get_sigma(pfield3, 1) .= 1.05 * FLOWVPM.fmm.radix_sigma_limit(FLOWVPM._radix_geometry_policy(st3.settings), st3.cache)
-    vpm_fmm.get_sigma(ref, 1) .= vpm_fmm.get_sigma(pfield3, 1)
-    vpm_fmm.UJ_direct(ref)
-    vpm_fmm.UJ_fmm_gpu!(pfield3)
-    @test FLOWVPM._radix_fmm_couplings[pfield3] === st3
-    @test fmm034_uj_errors(pfield3.particles, ref.particles, n).u_rel_rms <= FMM034_U_GATE
 
     # user-fixed ell is a promise: FLOWVPM never rebuilds the coupling. An
     # outgrown geometry is demoted by FastMultipole to the all-direct zero-M2L
