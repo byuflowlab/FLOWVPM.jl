@@ -1189,51 +1189,6 @@ end
         end
     end
 end
-@kernel function ka_sfs_dzeta_cells_kernel!(dom, dq, @Const(tg), @Const(dt), @Const(source_bodies),
-        @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
-        n_cells, rc2, K1, active_row, inv_row, ::Type{T}, n_bodies) where {T}
-    i = @index(Global)
-    half = T(0.5)
-    three = T(3)
-    @inbounds if i <= n_bodies
-        c = _ka_cell_of(cell_ranges, n_cells, i)
-        p0 = offsets[c]; p1 = offsets[c + 1] - 1
-        if active_row == 0 || !iszero(source_bodies[active_row, i])
-            xi = source_bodies[1, i]; yi = source_bodies[2, i]; zi = source_bodies[3, i]
-            o1 = zero(T); o2 = zero(T); o3 = zero(T)
-            q1 = zero(T); q2 = zero(T); q3 = zero(T)
-            for p in p0:p1
-                sc = direct_sources[p]
-                sfirst = cell_ranges[1, sc]
-                slast = sfirst + cell_ranges[2, sc] - 1
-                for j in sfirst:slast
-                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
-                        dx = xi - source_bodies[1, j]
-                        dy = yi - source_bodies[2, j]
-                        dz = zi - source_bodies[3, j]
-                        r2 = dx * dx + dy * dy + dz * dz
-                        # the packed 1/sigma row (0 for sigma <= 0): multiplies, not divides
-                        is = source_bodies[inv_row, j]
-                        rho2 = r2 * is * is
-                        if is > zero(T) && rho2 <= rc2
-                            z = K1 * exp(-half * rho2) * (is * is * is)
-                            dz_ = z * (rho2 - three)
-                            o1 += dz_ * source_bodies[5, j]
-                            o2 += dz_ * source_bodies[6, j]
-                            o3 += dz_ * source_bodies[7, j]
-                            q1 += dz_ * tg[1, j] + z * dt[1, j]
-                            q2 += dz_ * tg[2, j] + z * dt[2, j]
-                            q3 += dz_ * tg[3, j] + z * dt[3, j]
-                        end
-                    end
-                end
-            end
-            dom[1, i] = o1; dom[2, i] = o2; dom[3, i] = o3
-            dq[1, i] = q1; dq[2, i] = q2; dq[3, i] = q3
-        end
-    end
-end
-
 # the cell holding sorted body `i`: the last cell whose first body is <= i
 @inline function _ka_cell_of(cell_ranges, n_cells, i)
     lo = 1; hi = n_cells
@@ -1463,8 +1418,8 @@ end
 end
 
 # ζ and ∂ζ/∂σ in one sweep (the repass of a two-level step needs both; they share the
-# pair's exponential): writes what `ka_sfs_zeta_tiled_kernel!` and
-# `ka_sfs_dzeta_cells_kernel!` write, so it runs after `dt` is formed
+# pair's exponential): writes the zeta sums and their sigma derivatives, so it runs
+# after `dt` is formed
 @kernel function ka_sfs_zeta_dzeta_tiled_kernel!(om, q, dom, dq, @Const(tg), @Const(dt),
         @Const(source_bodies), @Const(cell_ranges), @Const(direct_sources), @Const(offsets),
         @Const(chunk_offsets), n_cells, rc2, K1, active_row, inv_row, ::Type{T},
