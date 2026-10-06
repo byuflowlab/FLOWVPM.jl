@@ -928,58 +928,6 @@ end
     end
 end
 
-@kernel function ka_sfs_zeta_pairs_kernel!(om, q, @Const(tg), @Const(source_bodies),
-        @Const(cell_ranges), @Const(direct_targets), @Const(direct_sources),
-        npairs, rc2, K1, active_row, ::Type{T}, ::Val{WG}) where {T,WG}
-    pair_i = @index(Group)
-    tid = @index(Local)
-    half = T(0.5)
-    @inbounds begin
-        target_cell = direct_targets[pair_i]
-        source_cell = direct_sources[pair_i]
-        tfirst = cell_ranges[1, target_cell]
-        tlast = tfirst + cell_ranges[2, target_cell] - 1
-        sfirst = cell_ranges[1, source_cell]
-        slast = sfirst + cell_ranges[2, source_cell] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]
-                yi = source_bodies[2, i]
-                zi = source_bodies[3, i]
-                o1 = zero(T); o2 = zero(T); o3 = zero(T)
-                q1 = zero(T); q2 = zero(T); q3 = zero(T)
-                for j in sfirst:slast
-                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
-                        dx = xi - source_bodies[1, j]
-                        dy = yi - source_bodies[2, j]
-                        dz = zi - source_bodies[3, j]
-                        r2 = dx * dx + dy * dy + dz * dz
-                        sigma = source_bodies[8, j]
-                        rho2 = r2 / (sigma * sigma)
-                        if rho2 <= rc2
-                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
-                            o1 += z * source_bodies[5, j]
-                            o2 += z * source_bodies[6, j]
-                            o3 += z * source_bodies[7, j]
-                            q1 += z * tg[1, j]
-                            q2 += z * tg[2, j]
-                            q3 += z * tg[3, j]
-                        end
-                    end
-                end
-                KA.@atomic om[1, i] += o1
-                KA.@atomic om[2, i] += o2
-                KA.@atomic om[3, i] += o3
-                KA.@atomic q[1, i] += q1
-                KA.@atomic q[2, i] += q2
-                KA.@atomic q[3, i] += q3
-            end
-            i += WG
-        end
-    end
-end
-
 @kernel function ka_sfs_form_e_kernel!(tg, @Const(om), @Const(q), @Const(output),
         ::Val{TRANSPOSED}, n_bodies) where TRANSPOSED
     i = @index(Global)
@@ -1008,64 +956,6 @@ end
     end
 end
 
-@kernel function ka_sfs_dj_pairs_kernel!(dj, @Const(source_bodies),
-        @Const(cell_ranges), @Const(direct_targets), @Const(direct_sources),
-        npairs, rc2, A, active_row, ::Type{T}, ::Val{WG}) where {T,WG}
-    pair_i = @index(Group)
-    tid = @index(Local)
-    half = T(0.5)
-    @inbounds begin
-        target_cell = direct_targets[pair_i]
-        source_cell = direct_sources[pair_i]
-        tfirst = cell_ranges[1, target_cell]
-        tlast = tfirst + cell_ranges[2, target_cell] - 1
-        sfirst = cell_ranges[1, source_cell]
-        slast = sfirst + cell_ranges[2, source_cell] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]
-                yi = source_bodies[2, i]
-                zi = source_bodies[3, i]
-                d1 = zero(T); d2 = zero(T); d3 = zero(T)
-                d4 = zero(T); d5 = zero(T); d6 = zero(T)
-                d7 = zero(T); d8 = zero(T); d9 = zero(T)
-                for j in sfirst:slast
-                    sigma = source_bodies[8, j]
-                    if i != j && sigma > zero(T)
-                        dx = xi - source_bodies[1, j]
-                        dy = yi - source_bodies[2, j]
-                        dz = zi - source_bodies[3, j]
-                        r2 = dx * dx + dy * dy + dz * dz
-                        rho2 = r2 / (sigma * sigma)
-                        if rho2 <= rc2 && r2 > zero(T)
-                            invr = inv(sqrt(r2))
-                            G = A * rho2 * sqrt(rho2) * exp(-half * rho2)
-                            _, _, _, _, h1, h2, h3, h4, h5, h6, h7, h8, h9 =
-                                fmm._vortex_pair_ugh(dx, dy, dz, r2, invr,
-                                    source_bodies[5, j], source_bodies[6, j],
-                                    source_bodies[7, j], -G, rho2 * G)
-                            d1 += h1; d2 += h2; d3 += h3
-                            d4 += h4; d5 += h5; d6 += h6
-                            d7 += h7; d8 += h8; d9 += h9
-                        end
-                    end
-                end
-                KA.@atomic dj[1, i] += d1
-                KA.@atomic dj[2, i] += d2
-                KA.@atomic dj[3, i] += d3
-                KA.@atomic dj[4, i] += d4
-                KA.@atomic dj[5, i] += d5
-                KA.@atomic dj[6, i] += d6
-                KA.@atomic dj[7, i] += d7
-                KA.@atomic dj[8, i] += d8
-                KA.@atomic dj[9, i] += d9
-            end
-            i += WG
-        end
-    end
-end
-
 @kernel function ka_sfs_dsigma_tg_kernel!(dt, dom, dq, @Const(dj), @Const(source_bodies),
         ::Type{T}, ::Val{TRANSPOSED}, n_bodies) where {T,TRANSPOSED}
     i = @index(Global)
@@ -1077,61 +967,6 @@ end
         dt[1, i] = t1; dt[2, i] = t2; dt[3, i] = t3
         dom[1, i] = zero(T); dom[2, i] = zero(T); dom[3, i] = zero(T)
         dq[1, i] = zero(T); dq[2, i] = zero(T); dq[3, i] = zero(T)
-    end
-end
-
-@kernel function ka_sfs_dzeta_pairs_kernel!(dom, dq, @Const(tg), @Const(dt),
-        @Const(source_bodies), @Const(cell_ranges), @Const(direct_targets),
-        @Const(direct_sources), npairs, rc2, K1, active_row, ::Type{T},
-        ::Val{WG}) where {T,WG}
-    pair_i = @index(Group)
-    tid = @index(Local)
-    half = T(0.5)
-    three = T(3)
-    @inbounds begin
-        target_cell = direct_targets[pair_i]
-        source_cell = direct_sources[pair_i]
-        tfirst = cell_ranges[1, target_cell]
-        tlast = tfirst + cell_ranges[2, target_cell] - 1
-        sfirst = cell_ranges[1, source_cell]
-        slast = sfirst + cell_ranges[2, source_cell] - 1
-        i = tfirst + tid - 1
-        while i <= tlast
-            if active_row == 0 || !iszero(source_bodies[active_row, i])
-                xi = source_bodies[1, i]
-                yi = source_bodies[2, i]
-                zi = source_bodies[3, i]
-                o1 = zero(T); o2 = zero(T); o3 = zero(T)
-                q1 = zero(T); q2 = zero(T); q3 = zero(T)
-                for j in sfirst:slast
-                    if i != j && (active_row == 0 || !iszero(source_bodies[active_row, j]))
-                        dx = xi - source_bodies[1, j]
-                        dy = yi - source_bodies[2, j]
-                        dz = zi - source_bodies[3, j]
-                        r2 = dx * dx + dy * dy + dz * dz
-                        sigma = source_bodies[8, j]
-                        rho2 = r2 / (sigma * sigma)
-                        if rho2 <= rc2
-                            z = K1 * exp(-half * rho2) / (sigma * sigma * sigma)
-                            dz_ = z * (rho2 - three)
-                            o1 += dz_ * source_bodies[5, j]
-                            o2 += dz_ * source_bodies[6, j]
-                            o3 += dz_ * source_bodies[7, j]
-                            q1 += dz_ * tg[1, j] + z * dt[1, j]
-                            q2 += dz_ * tg[2, j] + z * dt[2, j]
-                            q3 += dz_ * tg[3, j] + z * dt[3, j]
-                        end
-                    end
-                end
-                KA.@atomic dom[1, i] += o1
-                KA.@atomic dom[2, i] += o2
-                KA.@atomic dom[3, i] += o3
-                KA.@atomic dq[1, i] += q1
-                KA.@atomic dq[2, i] += q2
-                KA.@atomic dq[3, i] += q3
-            end
-            i += WG
-        end
     end
 end
 
@@ -1523,33 +1358,25 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
     ir = size(nf.source_bodies, 1)
     ir == fmm.data_per_body(pfield) + 1 ||
         throw(AssertionError("the SFS sweeps need the packed 1/sigma row (got $ir source rows)"))
-    target_major = nf.n_direct > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
+    target_major = nf.n_direct > 0
     ka_sfs_tg_kernel!(backend, wg)(ctx.tg, ctx.om, ctx.q, nf.output, nf.source_bodies, TF, tv, n; ndrange=n)
     md === nothing || ka_sfs_masked_t_kernel!(backend, wg)(ctx.tg, nf.output, 5, md.mg, md.mslot, tv, md.K;
         ndrange=cld(md.K, wg) * wg)
-    npairs = nf.n_direct
     fused = dsigma && target_major      # ζ waits for dt and shares the ∂ζ sweep (below)
-    if fused
-    elseif target_major
+    if target_major && !fused
         off = _sfs_pair_offsets!(nf, backend, wg)
         ka_sfs_zeta_tiled_kernel!(backend, _SFS_TILE)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
             nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend), nf.n_cells, rc2, K1, 9, ir, TF,
             Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf))
-    elseif npairs > 0
-        ka_sfs_zeta_pairs_kernel!(backend, wg)(ctx.om, ctx.q, ctx.tg, nf.source_bodies, nf.cell_ranges,
-            nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
     end
     fused || md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
     if dsigma
         fill!(view(ctx.dj, :, 1:n), zero(TF))
-        if npairs > 0 && FLOWVPM._SFS_TARGET_MAJOR[]
+        if target_major
             off = _sfs_pair_offsets!(nf, backend, wg)
             ka_sfs_dj_tiled_kernel!(backend, _SFS_TILE)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_sources,
                 off, _sfs_chunk_offsets!(nf, backend), nf.n_cells, rc2, A, 9, ir, TF, Val(_SFS_TILE);
                 ndrange=_sfs_tiled_ndrange(nf))
-        elseif npairs > 0
-            ka_sfs_dj_pairs_kernel!(backend, wg)(ctx.dj, nf.source_bodies, nf.cell_ranges, nf.direct_targets,
-                nf.direct_sources, npairs, rc2, A, 9, TF, Val(wg); ndrange=npairs * wg)
         end
         md === nothing || _sfs_masked_pairs!(ctx.dj, ctx.dj, ctx.tg, ctx.dt, nf, md, 2, A, TF, backend, wg)
         ka_sfs_dsigma_tg_kernel!(backend, wg)(ctx.dt, ctx.dom, ctx.dq, ctx.dj, nf.source_bodies, TF, tv, n; ndrange=n)
@@ -1561,9 +1388,6 @@ function FLOWVPM._radix_sfs_pass_device!(pfield::GPUField, ctx, nf; dsigma::Bool
                 nf.source_bodies, nf.cell_ranges, nf.direct_sources, off, _sfs_chunk_offsets!(nf, backend),
                 nf.n_cells, rc2, K1, 9, ir, TF, Val(_SFS_TILE); ndrange=_sfs_tiled_ndrange(nf))
             md === nothing || _sfs_masked_pairs!(ctx.om, ctx.q, ctx.tg, ctx.dt, nf, md, 1, K1, TF, backend, wg)
-        elseif npairs > 0
-            ka_sfs_dzeta_pairs_kernel!(backend, wg)(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf.source_bodies, nf.cell_ranges,
-                nf.direct_targets, nf.direct_sources, npairs, rc2, K1, 9, TF, Val(wg); ndrange=npairs * wg)
         end
         md === nothing || _sfs_masked_pairs!(ctx.dom, ctx.dq, ctx.tg, ctx.dt, nf, md, 3, K1, TF, backend, wg)
     end

@@ -29,10 +29,6 @@ const _SFS_ZETA_K1 = 0.06349363593424097  # (2π)^(-3/2)
 @inline _sfs_saturation_rc2(::Type{Float32}) = 42.25f0
 @inline _sfs_saturation_rc2(::Type{Float64}) = 81.0
 
-# Target-owned device sweeps (one thread per target body, walking its cell's
-# pairs) instead of one workgroup per direct pair: no atomics, so a run
-# reproduces bit for bit; the host loops are unaffected.
-const _SFS_TARGET_MAJOR = Ref{Bool}(true)
 
 """
     _radix_sfs_context(pfield, maxn) -> NamedTuple
