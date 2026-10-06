@@ -592,6 +592,9 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         # the leaf radius q is set by core reach; cell pairs between the accuracy
         # floor and q go to M2L whenever no core reaches them (FastMultipole leaf band)
         near_floor2=settings.near_radius2,
+        # the SFS pass sweeps the direct list out to its own cutoff (rho <= rc), wider
+        # than rho_t: the band must keep every pair inside it direct
+        near_band_reach=isSFSenabled(pfield.SFS) ? sqrt(Float64(_sfs_saturation_rc2(TF))) : nothing,
         device, options=opts)
 end
 
