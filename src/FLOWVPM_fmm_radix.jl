@@ -589,6 +589,9 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         hessian=true,
         near_radius2=q,
         level_radii2, window_classes=K,
+        # the leaf radius q is set by core reach; cell pairs between the accuracy
+        # floor and q go to M2L whenever no core reaches them (FastMultipole leaf band)
+        near_floor2=settings.near_radius2,
         device, options=opts)
 end
 
