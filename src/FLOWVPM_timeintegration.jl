@@ -79,7 +79,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     pfield.SFS(pfield, AfterUJ())
 
     # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
-    amb = add_ambient!(pfield, pfield.t)
+    add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -98,7 +98,12 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
-        remove_ambient_gradient!(pfield, amb)
+        # J at the updated positions, as rungekutta3 does: the step-start J (and
+        # its ambient part) belongs to the configuration before the update. The
+        # same evaluation as the step (a driver's pfield.UJ may add sources the
+        # particles do not carry, e.g. bound and trailing filaments).
+        _reset_particles(pfield)
+        pfield.UJ(pfield; reset_sfs=false, reset=true, sfs=false, relaxation=true)
         if pfield.particles isa Array
             for i in 1:pfield.np
                 pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
@@ -106,6 +111,8 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
         else
             relax_broadcast!(pfield.relaxation, pfield)
         end
+        # U with the ambient, as rungekutta3 leaves it for output
+        add_ambient!(pfield, pfield.t + dt; gradient = false)
     end
 
     # Update the particle field: viscous diffusion
@@ -205,7 +212,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     pfield.SFS(pfield, AfterUJ())
 
     # Ambient flow (if any) into U and J, after the evaluation and its SFS estimate
-    amb = add_ambient!(pfield, pfield.t)
+    add_ambient!(pfield, pfield.t)
 
     # Calculate freestream
     Uinf = pfield.Uinf(pfield.t)
@@ -225,7 +232,12 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
-        remove_ambient_gradient!(pfield, amb)
+        # J at the updated positions, as rungekutta3 does: the step-start J (and
+        # its ambient part) belongs to the configuration before the update. The
+        # same evaluation as the step (a driver's pfield.UJ may add sources the
+        # particles do not carry, e.g. bound and trailing filaments).
+        _reset_particles(pfield)
+        pfield.UJ(pfield; reset_sfs=false, reset=true, sfs=false, relaxation=true)
         if pfield.particles isa Array
             for i in 1:pfield.np
                 pfield.particles[STATIC_INDEX, i] == 0 && pfield.relaxation(get_particle(pfield, i))
@@ -233,6 +245,8 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
         else
             relax_broadcast!(pfield.relaxation, pfield)
         end
+        # U with the ambient, as rungekutta3 leaves it for output
+        add_ambient!(pfield, pfield.t + dt; gradient = false)
     end
 
     # Update the particle field: viscous diffusion

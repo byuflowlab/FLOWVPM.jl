@@ -147,15 +147,33 @@ end
     @test pf.particles[vpm.X_INDEX[1], 1] ≈ alpha * z0 * n * dt rtol = 1e-12
     @test pf.particles[vpm.GAMMA_INDEX[1], 1] == 0
     # the Euler relaxation aligns with the particles' own vorticity, not the ambient's:
-    # u = (alpha z, 0, 0) at z = 0 neither moves nor stretches Gamma along x
-    # (transposed = false), so only a leaked ambient vorticity (along y) would differ
+    # u = (alpha z, 0, 0) at z = 0 moves neither particle, and stretches neither (Gamma
+    # along x and y, transposed = false), so only a leaked ambient vorticity (along y)
+    # would differ. (A particle with Gamma along z would be stretched by the shear in the
+    # update, and the relaxation, which reads J at the updated positions, would rightly see it.)
     function relaxed(Uinf)
         pf = vpm.ParticleField(4; formulation = vpm.ClassicVPM{Float64}(), kernel = vpm.kernel_gaussianerf,
                                UJ = vpm.UJ_direct, Uinf, transposed = false)
         vpm.add_particle(pf, SVector(0.0, 0.0, 0.0), SVector(gamma, 0.0, 0.0), 0.2)
-        vpm.add_particle(pf, SVector(0.0, 0.1, 0.0), SVector(0.0, 0.0, gamma), 0.2)
+        vpm.add_particle(pf, SVector(0.0, 0.1, 0.0), SVector(0.0, gamma, 0.0), 0.2)
         vpm.euler(pf, dt; relax = true)
         return pf.particles[vpm.GAMMA_INDEX, 1]
     end
     @test relaxed(shear) ≈ relaxed(vpm.Uinf_default) rtol = 1e-10
+    # the Euler relaxation reads J at the updated positions, as rungekutta3 does: a
+    # relaxed step equals the plain step, a fresh evaluation and one relaxation
+    function two(relax)
+        pf = vpm.ParticleField(4; formulation = vpm.ClassicVPM{Float64}(), kernel = vpm.kernel_gaussianerf,
+                               UJ = vpm.UJ_direct, transposed = false)
+        vpm.add_particle(pf, SVector(0.0, 0.0, 0.0), SVector(gamma, 0.0, 0.0), 0.2)
+        vpm.add_particle(pf, SVector(0.0, 0.1, 0.05), SVector(0.0, 0.1, gamma), 0.2)
+        vpm.euler(pf, dt; relax)
+        return pf
+    end
+    pa = two(true); pb = two(false)
+    vpm._reset_particles(pb)
+    pb.UJ(pb; reset_sfs = false, reset = true, sfs = false, relaxation = true)
+    for i in 1:pb.np; pb.relaxation(vpm.get_particle(pb, i)); end
+    @test pa.particles[vpm.GAMMA_INDEX, 1:2] ≈ pb.particles[vpm.GAMMA_INDEX, 1:2] rtol = 1e-12
+    @test pa.particles[vpm.GAMMA_INDEX, 1:2] != two(false).particles[vpm.GAMMA_INDEX, 1:2]
 end
