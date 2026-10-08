@@ -131,9 +131,7 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                 r = sqrt(r2)
 
                 # Regularizing function and deriv
-                #g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-                g_sgm = 1
-                dg_sgmdr = 0
+                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
                 # K × Γp
                 r3inv = one(r) / (r2 * r)
                 crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )
