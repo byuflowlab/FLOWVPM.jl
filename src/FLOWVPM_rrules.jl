@@ -969,7 +969,7 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
         end
     end
 
-    pfield_deriv = ReverseDiff.deriv(pfield) # very inefficient
+    pfield_deriv = ReverseDiff.deriv(pfield) # allocates a copy of pfield
     # (source location, source strength, target location, ubar/jbar) -> (xbar_source, xbar_target, gammabar_source)                 
     # we need to make new containers that have different direct interactions
     # these containers are non-allocating, since they share memory with the original particle array.
@@ -980,13 +980,6 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                             view(pfield_deriv.particles, U_INDEX, :),
                             view(pfield_deriv.particles, J_INDEX, :)
                             )
-    #=xbar_target = Xbar_Target(
-                            pfield_deriv.particles[X_INDEX, :],
-                            pfield_val.particles[X_INDEX, :],
-                            pfield_val.particles[GAMMA_INDEX, :],
-                            pfield_deriv.particles[U_INDEX, :],
-                            pfield_deriv.particles[J_INDEX, :]
-                            )                   =#
     xbar_source = Xbar_Source(
                             view(pfield_deriv.particles, X_INDEX, :),
                             view(pfield_val.particles, X_INDEX, :),
@@ -1007,6 +1000,7 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
                         optargs...)
     args = fake_fmm!(gammabar_source; 
                         optargs...)
+    # Since we accumulated cotangents into a copy of pfield.particles, we need to propagate those changes back to the original array.
     for i=1:pfield.np
         for j=1:length(X_INDEX)
             pfield.particles[X_INDEX[j], i].deriv = xbar_target.xbar_target[j, i]
