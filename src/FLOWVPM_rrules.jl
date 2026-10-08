@@ -2,11 +2,12 @@
 # ϵ with two vectors -> vector, so need one scalar index
 # ϵ with one vector -> matrix, so need two scalar indices
 # ϵ with one matrix -> vector, so need one scalar index
-ϵ(a,x::Vector,y::Vector) = (a == 1) ? (x[2]*y[3] - x[3]*y[2]) : ((a == 2) ? (x[3]*y[1] - x[1]*y[3]) : ((a == 3) ? (x[1]*y[2] - x[2]*y[1]) : error("attempted to evaluate Levi-Civita symbol at out-of-bounds index $(a)!")))
-ϵ(a,b::Number,y::Vector) = (a == b) ? zero(eltype(y)) : ((mod(b-a,3) == 1) ? y[mod(b,3)+1] : ((mod(a-b,3) == 1) ? -y[mod(b-2,3)+1] : error("attempted to evaluate Levi-Civita symbol at out-of-bounds indices $(a) and $(b)!")))
-ϵ(a,x::Vector,c::Number) = -1 .*ϵ(a,c,x)
-ϵ(a,x::TM) where {TM <: AbstractArray} = (a == 1) ? (x[2,3] - x[3,2]) : (a == 2) ? (x[3,1]-x[1,3]) : (a == 3) ? (x[1,2]-x[2,1]) : error("attempted to evaluate Levi-Civita symbol at out-of-bounds index $(a)!")
-ϵ(a,b::Number, c::Number) = (a == b || b == c || c == a) ? 0 : (mod(b-a,3) == 1 ? 1 : -1) # no error checks in this implementation, since that would significantly increase the cost of it
+ϵ(a::Int,x::Vector,y::Vector) = (a == 1) ? (x[2]*y[3] - x[3]*y[2]) : ((a == 2) ? (x[3]*y[1] - x[1]*y[3]) : ((a == 3) ? (x[1]*y[2] - x[2]*y[1]) : error("attempted to evaluate Levi-Civita symbol at out-of-bounds index $(a)!")))
+ϵ(a::Int,b::Int,y::Vector) = (a == b) ? zero(eltype(y)) : ((mod(b-a,3) == 1) ? y[mod(b,3)+1] : ((mod(a-b,3) == 1) ? -y[mod(b-2,3)+1] : error("attempted to evaluate Levi-Civita symbol at out-of-bounds indices $(a) and $(b)!")))
+ϵ(a::Int,x::Vector,c::Int) = -1 .*ϵ(a,c,x)
+ϵ(a::Int,x::TM) where {TM <: AbstractArray} = (a == 1) ? (x[2,3] - x[3,2]) : (a == 2) ? (x[3,1]-x[1,3]) : (a == 3) ? (x[1,2]-x[2,1]) : error("attempted to evaluate Levi-Civita symbol at out-of-bounds index $(a)!")
+ϵ(a::Int,b::Int, c::Int) = (a == b || b == c || c == a) ? 0 : (mod(b-a,3) == 1 ? 1 : -1) # no error checks in this implementation, since that would significantly increase the cost of it
+δ(a, b) = a == b ? 1 : 0 # don't need an Int constraint here, since we're just checking equality.
 
 using ChainRulesCore
 
@@ -505,7 +506,7 @@ end
 end
 
 # buffer[1:3, i_body] .= get_position(system, i_sorted)
-function fmm.position_to_buffer__value!(buffer, i_body, system, i_sorted, buffer_star)
+function fmm.position_to_buffer__value!(buffer, i_body, system::ParticleField, i_sorted, buffer_star)
     for a=1:3
         buffer_star[a, i_body] = buffer[a, i_body].value
         buffer[a, i_body,].value = system.particles[X_INDEX[a], i_sorted].value
@@ -521,7 +522,7 @@ end
     buffer[fmm.metadata_index(switch, 1), i_buffer] = previous_potential
     buffer[fmm.metadata_index(switch, 2), i_buffer] = previous_gradient
 end=#
-function fmm.metadata_to_buffer__value!(buffer, switch, i_buffer, system, i_body, buffer_star)
+function fmm.metadata_to_buffer__value!(buffer, switch, i_buffer, system::ParticleField, i_body, buffer_star)
     previous_potential = zero(ReverseDiff.valtype(eltype(system)))#zero(eltype(system))
     U = get_U(system, i_body)
     G2 = U[1].value*U[1].value + U[2].value*U[2].value + U[3].value*U[3].value
@@ -534,7 +535,7 @@ function fmm.metadata_to_buffer__value!(buffer, switch, i_buffer, system, i_body
 end
 
 # buffer[1:3, i_body] .= get_position(system, i_sorted)
-function fmm.position_to_buffer__pullback!(buffer, i_body, system, i_sorted, buffer_star)
+function fmm.position_to_buffer__pullback!(buffer, i_body, system::ParticleField, i_sorted, buffer_star)
     for a=1:3
         buffer[a, i_body].value = buffer_star[a, i_body] # reset to original value, which is the buffer value at the end of the previous timestep.
         ReverseDiff._add_to_deriv!(system.particles[X_INDEX[a], i_sorted], buffer[a, i_body].deriv)
@@ -551,7 +552,7 @@ end
     buffer[fmm.metadata_index(switch, 1), i_buffer] = previous_potential
     buffer[fmm.metadata_index(switch, 2), i_buffer] = previous_gradient
 end=#
-function fmm.metadata_to_buffer__pullback!(buffer, switch, i_buffer, system, i_body, buffer_star)
+function fmm.metadata_to_buffer__pullback!(buffer, switch, i_buffer, system::ParticleField, i_body, buffer_star)
 
     # Ubar[a] = Gbar*dGdU[a] = Gbar * U[a]/sqrt(G) (if G > 0)
     #previous_potential = zero(eltype(system)) # the only thing needed to handle this is to unseed the relevant buffer entry
@@ -741,4 +742,458 @@ function fmm.get_previous_influence_pullback!(system::ParticleField, i, buffer)
     ReverseDiff._add_to_deriv!(system.particles[U_INDEX[3],i], buffer[2].deriv*gz.value/G)
     return nothing
 
+end
+
+# reverse pass - in the same format as a direct! call.
+#=function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.direct!)})
+    
+    target_buffer, target_index, derivatives_switch, source_system, source_buffer, source_index = instruction.input
+    target_buffer_val_star, PS,VS,GS = instruction.cache
+
+    ReverseDiff.value!.(target_buffer, target_buffer_val_star) # map original value back
+    
+    T = eltype(ReverseDiff.value(target_buffer[1]))
+    Γ = zeros(T,3)
+    Γbar = zeros(T,3) # Γbar_a^j
+    x_source = zeros(T,3)
+    x_target = zeros(T,3)
+    dx = zeros(T,3)
+    Ubar = zeros(T,3) # Ubar_a^i
+    Jbar = zeros(T,3,3) # Jbar_ab^i
+    dxbar = zeros(T, 3)
+
+    gradr_m1 = zeros(T, 3)
+    grad2r_m1 = zeros(T, 3, 3)
+    grad3r_m1 = zeros(T, 3, 3, 3)
+
+    for i in source_index
+
+        Γ_buffer = fmm.get_strength(source_buffer, source_system, i)
+        for a=1:3
+            Γ[a] = Γ_buffer[a].value
+        end
+        x_source_buffer = fmm.get_position(source_buffer, i)
+        for a=1:3
+            x_source[a] = x_source_buffer[a].value
+        end
+        σ = source_buffer[8, i].value
+        for j in target_index
+
+            # calculate r, dx, and check if particles actually interact
+            x_target_buffer = fmm.get_position(target_buffer, j)
+            for a=1:3
+                x_target[a] = x_target_buffer[a].value
+            end
+            for a=1:3
+                dx[a] = x_target[a] - x_source[a]
+                dxbar[a] = zero(T)
+                Γbar[a] = zero(T)
+            end
+            r2 = dx[1]*dx[1] + dx[2]*dx[2] + dx[3]*dx[3]
+            if r2 > 0
+
+                r = sqrt(r2)
+                # explicitly calculate gradients of r^-1 here; in the actual FMM implementation we have this available.
+                for a=1:3
+                    gradr_m1[a] = -dx[a]/r^3
+                    for b=1:3
+                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                        for c=1:3
+                            grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                        end
+                    end
+                end
+
+                if VS
+                    @views Ubar_target_buffer = fmm.get_gradient(target_buffer, derivatives_switch, j)
+                    for a=1:3
+                        Ubar[a] = Ubar_target_buffer[a].deriv
+                    end
+
+                    for a=1:3
+                        for b=1:3
+                            for c=1:3
+                                for d=1:3
+                                    dxbar[a] -= const4*Ubar[b]*ϵ(b, c, d)*grad2r_m1[a, c]*Γ[d]
+                                end
+                                Γbar[a] -= const4*ϵ(a, b, c)*gradr_m1[b]*Ubar[c]
+                            end
+                        end
+                    end
+                    
+                end
+                if GS
+                    @views Jbar_target_buffer = fmm.get_hessian(target_buffer, derivatives_switch, j)
+                    for a=1:3
+                        for b=1:3
+                            Jbar[a,b] = Jbar_target_buffer[a, b].deriv
+                        end
+                    end
+                    for a=1:3
+                        for b=1:3
+                            for c=1:3
+                                for e=1:3
+                                    for d=1:3
+                                        dxbar[a] -= const4*Jbar[e, b]*ϵ(c, d, e)*grad3r_m1[a, b, c]*Γ[d]
+                                    end
+                                    Γbar[a] += const4*Jbar[e, b]*ϵ(a, c, e)*grad2r_m1[b, c]
+                                end
+                            end
+                        end
+                    end
+                    
+                end
+
+            end
+            for a=1:3
+                ReverseDiff._add_to_deriv!(x_target_buffer[a], dxbar[a])
+                ReverseDiff._add_to_deriv!(Γ_buffer[a], Γbar[a])
+                ReverseDiff._add_to_deriv!(x_source_buffer[a], -dxbar[a])
+            end
+            
+        end
+    end
+
+
+    return nothing
+
+end=#
+
+struct Xbar_Target{T}
+
+    xbar_target::T
+    x::T
+    gamma::T
+    ubar::T
+    jbar::T
+
+end
+Base.eltype(x::Xbar_Target) = eltype(x.xbar_target)
+
+struct Xbar_Source{TA}
+
+    xbar_source::TA
+    x::TA
+    gamma::TA
+    ubar::TA
+    jbar::TA
+
+end
+Base.eltype(x::Xbar_Source) = eltype(x.xbar_source)
+
+struct Gammabar_Source{TA}
+
+    gammabar::TA
+    x::TA
+    gamma::TA
+    ubar::TA
+    jbar::TA
+
+end
+Base.eltype(x::Gammabar_Source) = eltype(x.gammabar)
+
+# fmm.fmm! call, specialized for ::ParticleField{<:ReverseDiff.TrackedReal}.
+# First, we extract the primal values from the particle field. This is actually pretty inefficient, since it involves allocating an entire new particle field.
+#    Ideally, we replace the particle array in the new particle field with a view into the original particle array (with an additional call to ReverseDiff.value for each entry).
+#    However, the particle array is an array of TrackedReals, so a simple call to view() does not work the way we want.
+#    We could change the access rules for ParticleField{<:ReverseDiff.TrackedReal} to access just the value part.
+#    We could also add a struct that contains an array and a toggle for accessing the value or derivative.
+#    For now, I just allocate a new particle field.
+# Second, we save the original values of U and J. We need to revert the value of the particle field in the reverse pass;
+#    we can either run the inverse of the primal function or save the state before the function call for further use.
+#    Here, we could do either. Saving and reloading the value is faster if we compile the function and is also much easier to implement,
+#    so I opted for saving the state of U and J.
+#    Saving the original value of arrays that are updated in-place is also the reason we have to write our our function for the forward pass.
+# Third, we grab the tape from the particle field. Later this is the tape we will record the fmm.fmm! call to.
+# Fourth, we run the primal function.
+# Fifth, we record the function call to the tape. We write a 'SpecialInstruction' to the tape 'tp'; a 'SpecialInstruction' is the kind of container used for any custom pullback.
+#    We record which function was called, and this is used to determine which reverse pass function to call later.
+#    We record all inputs to fmm.fmm! we care about: (pfield, optargs)
+#    We record all outputs from fmm.fmm! we care about: args
+#    We also record any other data we want later in a cache: (ustar, jstar)
+# Finally, we return the output of the primal function call. Because 'args' is not a differentiable object, we can return it with no further changes.
+function fmm.fmm!(pfield::ParticleField{<:ReverseDiff.TrackedReal}; optargs...)
+    
+    pfield_val = ReverseDiff.value(pfield) # allocates a copy of pfield
+    u_star = deepcopy(pfield_val.particles[U_INDEX, :]) # unavoidable allocations
+    j_star = deepcopy(pfield_val.particles[J_INDEX, :]) # unavoidable allocations
+    tp = ReverseDiff.tape(pfield)
+    args = fmm.fmm!(pfield_val; optargs...) # unpacking components of tracked reals seems to be best accomplished in the compatiblity overloads for FastMultipole.
+    
+    # For now, the extracted values do not share memory with the original particle array.
+    # We need to manually map the altered states to the original pfield.
+    for i=1:pfield.np
+        for j=1:length(U_INDEX)
+            pfield.particles[U_INDEX[j], i].value = pfield_val.particles[U_INDEX[j], i]
+        end
+        for j=1:length(J_INDEX)
+            pfield.particles[J_INDEX[j], i].value = pfield_val.particles[J_INDEX[j], i]
+        end
+    end
+
+    ReverseDiff.record!(tp,
+                        ReverseDiff.SpecialInstruction,
+                        fmm.fmm!,
+                        (pfield, optargs),
+                        args,
+                        (pfield_val, u_star, j_star))
+    return args
+
+end
+
+# The reverse pass for fmm.fmm!, specialized for ::ParticleField{<:ReverseDiff.TrackedReal}.
+# First, unpack the input, output, and cache from the tape instruction.
+# Second, revert any changes to the primal values. As we run from the end of the program to the beginning,
+#    we need primal values to always match their original states.
+# Third, we run the pullback for fmm.fmm!. We can accomplish this by running fmm.fmm! calls on three new objects.
+#    We build three wrapper structs that reference particle locations, particle strengths, cotangents of particle velocities,
+#    and cotangents of particle velocity gradients. Each container also sees the cotangents of the field that they are used
+#    to calculate pullbacks for.
+#    Each container contains purely real-valued arrays, since we unpack the particle field into real and cotangent components.
+#    As a result, all fmm calls on the containers are also purely real-valued; we never pass AD directly through the FMM.
+#    of the original pfield in this function call.
+# Finally, we return nothing - the reverse pass always updates the value and contangent in-place.
+function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.fmm!)})
+    
+    pfield, optargs = instruction.input
+    args = instruction.output # may be useful if we can re-use interaction lists
+    pfield_val, u_star, j_star = instruction.cache
+
+    # revert u and j values to original states
+    for i=1:pfield.np
+        for j=1:length(U_INDEX)
+            pfield.particles[U_INDEX[j], i].value = u_star[j, i]
+        end
+        for j=1:length(J_INDEX)
+            pfield.particles[J_INDEX[j], i].value = j_star[j, i]
+        end
+    end
+
+    pfield_deriv = ReverseDiff.deriv(pfield) # very inefficient
+    # (source location, source strength, target location, ubar/jbar) -> (xbar_source, xbar_target, gammabar_source)                 
+    # we need to make new containers that have different direct interactions
+    # these containers are non-allocating, since they share memory with the original particle array.
+    xbar_target = Xbar_Target(
+                            view(pfield_deriv.particles, X_INDEX, :),
+                            view(pfield_val.particles, X_INDEX, :),
+                            view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_deriv.particles, U_INDEX, :),
+                            view(pfield_deriv.particles, J_INDEX, :)
+                            )
+    #=xbar_target = Xbar_Target(
+                            pfield_deriv.particles[X_INDEX, :],
+                            pfield_val.particles[X_INDEX, :],
+                            pfield_val.particles[GAMMA_INDEX, :],
+                            pfield_deriv.particles[U_INDEX, :],
+                            pfield_deriv.particles[J_INDEX, :]
+                            )                   =#
+    xbar_source = Xbar_Source(
+                            view(pfield_deriv.particles, X_INDEX, :),
+                            view(pfield_val.particles, X_INDEX, :),
+                            view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_deriv.particles, U_INDEX, :),
+                            view(pfield_deriv.particles, J_INDEX, :)
+                            )                     
+    gammabar_source = Gammabar_Source(
+                            view(pfield_deriv.particles, GAMMA_INDEX, :),
+                            view(pfield_val.particles, X_INDEX, :),
+                            view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_deriv.particles, U_INDEX, :),
+                            view(pfield_deriv.particles, J_INDEX, :)
+                            )            
+    args = fake_fmm!(xbar_target; 
+                        optargs...)
+    args = fake_fmm!(xbar_source; 
+                        optargs...)
+    args = fake_fmm!(gammabar_source; 
+                        optargs...)
+    for i=1:pfield.np
+        for j=1:length(X_INDEX)
+            pfield.particles[X_INDEX[j], i].deriv = xbar_target.xbar_target[j, i]
+        end
+        for j=1:length(GAMMA_INDEX)
+            pfield.particles[GAMMA_INDEX[j], i].deriv = gammabar_source.gammabar[j, i]
+        end
+    end
+
+    return nothing
+
+end
+
+# The forward pass when tape is compiled. It runs the forward pass, but we already have inputs and caches pre-allocated.
+# We just update the cache (stored primal values for the reverse pass) and run the primal fmm call.
+# This call should be non-allocating (aside from any allocations in the fmm call itself).
+function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.fmm!)})
+    pfield, optargs = instruction.input
+    pfield_val, u_star, j_star = instruction.cache
+
+    for i=1:pfield.np
+        for j=1:length(U_INDEX)
+            u_star[U_UNDEX[j], i] = pfield.particles[U_INDEX[j], i].value
+        end
+        for j=1:length(J_INDEX)
+            j_star[U_UNDEX[j], j] = pfield.particles[U_INDEX[j], j].value
+        end
+    end
+    args = fmm.fmm!(pfield_val; optargs...)
+    instruction.output = args
+    for i=1:pfield.np
+        for j=1:length(U_INDEX)
+            pfield.particles[U_INDEX[j], i].value = pfield_val.particles[U_INDEX[j], i]
+        end
+        for j=1:length(J_INDEX)
+            pfield.particles[J_INDEX[j], i].value = pfield_val.particles[J_INDEX[j], i]
+        end
+    end
+
+    return nothing
+end
+
+# equations this implements:
+# for all a, b, c, d, i, j:
+# xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
+# for all a, b, c, d, e, i, j:
+# xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+function fake_fmm!(system::Xbar_Target; optargs...)
+    T = eltype(system)
+    dx = zeros(T, 3)
+    #gradr_m1 = zeros(T, 3)
+    grad2r_m1 = zeros(T, 3, 3)
+    grad3r_m1 = zeros(T, 3, 3, 3)
+    ntargets = size(system.x)[2]
+    nsources = size(system.x)[2]
+    for i=1:ntargets
+        for j=1:nsources
+            r2 = zero(T)
+            for a=1:3
+                dx[a] = system.x[a, i] - system.x[a, j]
+                r2 += dx[a]^2
+            end
+            if r2 > 0
+                r = sqrt(r2)
+                # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                for a=1:3
+                    #gradr_m1[a] = -dx[a]/r^3
+                    for b=1:3
+                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                        for c=1:3
+                            grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                        end
+                    end
+                end
+                # for all a, b, c, d, i, j:
+                # xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
+                # for all a, b, c, d, e, i, j:
+                # xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+                for a=1:3, b=1:3, c=1:3, d=1:3
+                    system.xbar_target[a, i] += -const4*system.ubar[b, i]*ϵ(b,c,d)*grad2r_m1[a,c]*system.gamma[d, j]
+                    for e=1:3
+                        #system.xbar_target[a, i] += -const4*system.jbar[e, b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                        system.xbar_target[a, i] += -const4*system.jbar[3*(e-1) + b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# equations this implements:
+# for all a, b, c, d, i, j:
+# xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d)*∇ⱼ∇ⱼr⁻¹[a,c]ⁱʲΓʲ[d]
+# for all a, b, c, d, e, i, j:
+# xbar_sourceʲ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ⱼ∇ⱼ∇ⱼr⁻¹[a,b,c]ⁱʲΓʲ[d]
+function fake_fmm!(system::Xbar_Source; optargs...)
+    T = eltype(system)
+    dx = zeros(T, 3)
+    #gradr_m1 = zeros(T, 3)
+    grad2r_m1 = zeros(T, 3, 3)
+    grad3r_m1 = zeros(T, 3, 3, 3)
+    ntargets = size(system.x)[2]
+    nsources = size(system.x)[2]    
+    for i=1:ntargets
+        for j=1:nsources
+            r2 = zero(T)
+            for a=1:3
+                dx[a] = system.x[a, i] - system.x[a, j]
+                r2 += dx[a]^2
+            end
+            
+            if r2 > 0
+                r = sqrt(r2)
+                # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                for a=1:3
+                    #gradr_m1[a] = -dx[a]/r^3
+                    for b=1:3
+                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                        for c=1:3
+                            grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                        end
+                    end
+                end
+                # for all a, b, c, d, i, j:
+                # xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d)*∇ⱼ∇ⱼr⁻¹[a,c]ⁱʲΓʲ[d]
+                # for all a, b, c, d, e, i, j:
+                # xbar_sourceʲ[a] += const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ⱼ∇ⱼ∇ⱼr⁻¹[a,b,c]ⁱʲΓʲ[d]
+                for a=1:3, b=1:3, c=1:3, d=1:3
+                    system.xbar_source[a, j] += const4*system.ubar[b, i]*ϵ(b,c,d)*grad2r_m1[a,c]*system.gamma[d, j]
+                    for e=1:3
+                        #system.xbar_source[a, j] += const4*system.jbar[e, b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                        system.xbar_source[a, j] += const4*system.jbar[3*(e-1) + b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# equations this implements:
+# for all a, b, c, i, j:
+# Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
+# for all a, b, c, e, i, j:
+# Γbarʲ[a] += const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
+# note that we do not loop over d in these equations.
+function fake_fmm!(system::Gammabar_Source; optargs...)
+    T = eltype(system)
+    dx = zeros(T, 3)
+    gradr_m1 = zeros(T, 3)
+    grad2r_m1 = zeros(T, 3, 3)
+    #grad3r_m1 = zeros(T, 3, 3, 3)
+    ntargets = size(system.x)[2]
+    nsources = size(system.x)[2] 
+    for i=1:ntargets
+        for j=1:nsources
+            r2 = zero(T)
+            for a=1:3
+                dx[a] = system.x[a, i] - system.x[a, j]
+                r2 += dx[a]^2
+            end
+            if r2 > 0
+                r = sqrt(r2)
+                # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                for a=1:3
+                    gradr_m1[a] = -dx[a]/r^3
+                    for b=1:3
+                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                        #for c=1:3
+                        #    grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                        #end
+                    end
+                end
+                # for all a, b, c, i, j:
+                # Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
+                # for all a, b, c, e, i, j:
+                # Γbarʲ[a] += -const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
+                for a=1:3, b=1:3, c=1:3
+                    system.gammabar[a, j] += -const4*ϵ(a,b,c)*gradr_m1[b]*system.ubar[c, i]
+                    for e=1:3
+                        #system.gammabar[a, j] += const4*system.jbar[e, b, i]*ϵ(a,c,e)*grad2r_m1[b,c]
+                        system.gammabar[a, j] += const4*system.jbar[3*(e-1) + b, i]*ϵ(a,c,e)*grad2r_m1[b,c]
+                    end
+                end
+            end
+        end
+    end
+    return nothing
 end

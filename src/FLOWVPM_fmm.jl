@@ -65,7 +65,7 @@ function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    # this solve is currently not numerically - changes at the scale of machine precision will result in changes to ρ_σ several orders of magnitude larger. this could trip up some unit tests/error checks.
+    # this solve is currently not numerically stable - changes at the scale of machine precision will result in changes to ρ_σ several orders of magnitude larger. this could trip up some unit tests/error checks.
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
@@ -131,8 +131,9 @@ function fmm.direct!(target_buffer, target_index, derivatives_switch::fmm.Deriva
                 r = sqrt(r2)
 
                 # Regularizing function and deriv
-                g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
-
+                #g_sgm, dg_sgmdr = source_system.kernel.g_dgdr(r/sigma)
+                g_sgm = 1
+                dg_sgmdr = 0
                 # K × Γp
                 r3inv = one(r) / (r2 * r)
                 crss1 = -const4 * r3inv * ( dy*gamma_z - dz*gamma_y )

@@ -131,7 +131,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         integration::Tintegration=rungekutta3,
         useGPU=useGPU_default
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
-
+    
     # create particle field
     particles = zeros(R, nfields, maxparticles)
     # Generate and return ParticleField

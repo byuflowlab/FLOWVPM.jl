@@ -7,12 +7,57 @@ ReverseDiff.istracked(pfield::ParticleField) = ReverseDiff.istracked(pfield.part
 ReverseDiff.tape(pfield::ParticleField) = ReverseDiff.tape(pfield.particles)
 ReverseDiff.hastape(pfield::ParticleField) = ReverseDiff.hastape(pfield.particles)
 
+struct array_of_tracked_reals_access_wrapper{T, R} <: AbstractMatrix{R}
+    primal::Bool
+    data::Matrix{<:T}
+
+    function array_of_tracked_reals_access_wrapper(primal, data::T) where T
+        out = new{eltype(data), ReverseDiff.valtype(eltype(data))}(primal, data)
+        return out
+    end
+    
+end
+
+function Base.copyto!(dest::AA, src::AB) where {AA <: AbstractArray, AB <: array_of_tracked_reals_access_wrapper}
+    dest = src
+    #error()
+end
+function Base.convert(::Type{AbstractArray{T}}, b::AB) where {T, AB <: array_of_tracked_reals_access_wrapper}
+    return b
+    #error()
+end
+
+Base.size(a::array_of_tracked_reals_access_wrapper; optargs...) = size(a.data; optargs...)
+
+function Base.getindex(a::array_of_tracked_reals_access_wrapper{T}, i::Int) where T
+    primal ? a.data[i].value : a.data[i].deriv
+end
+
+function Base.getindex(a::array_of_tracked_reals_access_wrapper{T}, I::Vararg{Int, N}) where {T, N}
+    a.primal ? ReverseDiff.value(a.data[I...]) : ReverseDiff.deriv(a.data[I...])
+end
+
+Base.IndexStyle(::array_of_tracked_reals_access_wrapper{T}) where T = IndexCartesian
+
+function Base.setindex!(a::array_of_tracked_reals_access_wrapper{T}, v, i) where T
+    println("setindex with 1 index runs")
+    primal ? a.data[i].value = v : a.data[i].deriv = v
+end
+function Base.setindex!(a::array_of_tracked_reals_access_wrapper{T}, v, I::Vararg{Int, N}) where {T, N}
+    println("setindex with vararg runs")
+    for (i, _v) in (I, v) # untested
+        primal ? a.data[i].value = _v : a.data[i].deriv = _v
+    end
+end
+
 # Catch-all implementions of methods for getting the value/derivative of a ParticleField. This supports most operations involving ParticleFields, but there are some special cases handled later.
 function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
-    return ParticleField{_V, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
+    out = ParticleField{_V, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}(
                         pfield.maxparticles,
-                        #view(ReverseDiff.value(pfield.particles)), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
+                        #view(ReverseDiff.value(pfield.particles)), # hopefully this view stops allocations. I might need to apply the view to pfield.particles directly, instead.
                         ReverseDiff.value.(pfield.particles),
+                        #ReverseDiff.value.(view(pfield.particles, :, :)),
+                        #array_of_tracked_reals_access_wrapper(true, pfield.particles),
                         pfield.formulation,
                         pfield.viscous,
                         pfield.np,
@@ -28,6 +73,7 @@ function ReverseDiff.value(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, 
                         pfield.fmm,
                         pfield.useGPU
                         )
+    return out
 end
 
 function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, O}, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}) where {_V, D, O, F, V, TUinf, S, Tkernel, TUJ, Tintegration, TRelaxation, TGPU}
@@ -35,6 +81,7 @@ function ReverseDiff.deriv(pfield::ParticleField{ReverseDiff.TrackedReal{_V, D, 
                         pfield.maxparticles,
                         #view(ReverseDiff.deriv.(pfield.particles), :), # hopefully this view stops allocations. I might nee to apply the view to pfield.particles directly, instead.
                         ReverseDiff.deriv.(pfield.particles),
+                        #array_of_tracked_reals_access_wrapper{eltype(pfield)}(false, pfield.particles),
                         pfield.formulation,
                         pfield.viscous,
                         pfield.np,
