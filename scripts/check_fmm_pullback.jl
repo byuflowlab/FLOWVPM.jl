@@ -26,7 +26,7 @@ function run_fmm_pullback_check(; np = 10, use_forwarddiff = true)
     input_vector = rand(Float64, np*vpm.nfields)
     function _f(_input_vector)
 
-        pfield = make_full_pfield(reshape(_input_vector, vpm.nfields, np); maxp = np, UJ=vpm.UJ_fmm, kernel = vpm.kernel_singular)
+        pfield = make_full_pfield(reshape(_input_vector, vpm.nfields, np); maxp = np, UJ=vpm.UJ_fmm)
         pfield.UJ(pfield; reset_sfs=vpm.isSFSenabled(pfield.SFS), reset=true, sfs=vpm.isSFSenabled(pfield.SFS))
 
         return sum(pfield.particles)/vpm.nfields/np
