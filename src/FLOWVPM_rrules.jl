@@ -744,7 +744,7 @@ function fmm.get_previous_influence_pullback!(system::ParticleField, i, buffer)
 
 end
 
-# reverse pass - in the same format as a direct! call.
+# reverse pass - farfield, but in the same format as a direct! call.
 #=function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.direct!)})
     
     target_buffer, target_index, derivatives_switch, source_system, source_buffer, source_index = instruction.input
@@ -859,38 +859,47 @@ end
 
 end=#
 
-struct Xbar_Target{T}
+struct Xbar_Target{TM<:AbstractMatrix, TV<:AbstractVector, Tkernel}
 
-    xbar_target::T
-    x::T
-    gamma::T
-    ubar::T
-    jbar::T
+    xbar_target::TM
+    x::TM
+    Gamma::TM
+    sigma::TV
+    Ubar::TM
+    Jbar::TM
+
+    kernel::Tkernel
 
 end
 Base.eltype(x::Xbar_Target) = eltype(x.xbar_target)
 
-struct Xbar_Source{TA}
+struct Xbar_Source{TM<:AbstractMatrix, TV<:AbstractVector, Tkernel}
 
-    xbar_source::TA
-    x::TA
-    gamma::TA
-    ubar::TA
-    jbar::TA
+    xbar_source::TM
+    x::TM
+    Gamma::TM
+    sigma::TV
+    Ubar::TM
+    Jbar::TM
+
+    kernel::Tkernel
 
 end
 Base.eltype(x::Xbar_Source) = eltype(x.xbar_source)
 
-struct Gammabar_Source{TA}
+struct Gammabar_Source{TM<:AbstractMatrix, TV<:AbstractVector, Tkernel}
 
-    gammabar::TA
-    x::TA
-    gamma::TA
-    ubar::TA
-    jbar::TA
+    Gammabar::TM
+    sigmabar::TV
+    x::TM
+    Gamma::TM
+    sigma::TV
+    Ubar::TM
+    Jbar::TM
+    kernel::Tkernel
 
 end
-Base.eltype(x::Gammabar_Source) = eltype(x.gammabar)
+Base.eltype(x::Gammabar_Source) = eltype(x.Gammabar)
 
 # fmm.fmm! call, specialized for ::ParticleField{<:ReverseDiff.TrackedReal}.
 # First, we extract the primal values from the particle field. This is actually pretty inefficient, since it involves allocating an entire new particle field.
@@ -952,6 +961,11 @@ end
 #    Each container contains purely real-valued arrays, since we unpack the particle field into real and cotangent components.
 #    As a result, all fmm calls on the containers are also purely real-valued; we never pass AD directly through the FMM.
 #    of the original pfield in this function call.
+#    I put the pullback for sigma (for near-field interactions only) in the gammebar container, but this is an arbitrary choice;
+#    it just needs to be evaluated somewhere. Since it is only evaluated in direct interactions, it doesn't affect the particle field at all.
+#    The details for each fmm.fmm! call are given later.
+# Fourth, we write the cotangent values we calculated back into the original particle field's derivatives.
+#    This step is necessary because ReverseDiff.deriv(::ParticleField) creates a copy of the particle field's derivatives.
 # Finally, we return nothing - the reverse pass always updates the value and contangent in-place.
 function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstruction{typeof(fmm.fmm!)})
     
@@ -969,30 +983,36 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
         end
     end
 
-    pfield_deriv = ReverseDiff.deriv(pfield) # allocates a copy of pfield
-    # (source location, source strength, target location, ubar/jbar) -> (xbar_source, xbar_target, gammabar_source)                 
+    pfield_deriv = ReverseDiff.deriv(pfield) # allocates a copy of pfield           
     # we need to make new containers that have different direct interactions
     # these containers are non-allocating, since they share memory with the original particle array.
     xbar_target = Xbar_Target(
                             view(pfield_deriv.particles, X_INDEX, :),
                             view(pfield_val.particles, X_INDEX, :),
                             view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_val.particles, SIGMA_INDEX, :),
                             view(pfield_deriv.particles, U_INDEX, :),
-                            view(pfield_deriv.particles, J_INDEX, :)
+                            view(pfield_deriv.particles, J_INDEX, :),
+                            pfield_val.kernel
                             )
     xbar_source = Xbar_Source(
                             view(pfield_deriv.particles, X_INDEX, :),
                             view(pfield_val.particles, X_INDEX, :),
                             view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_val.particles, SIGMA_INDEX, :),
                             view(pfield_deriv.particles, U_INDEX, :),
-                            view(pfield_deriv.particles, J_INDEX, :)
+                            view(pfield_deriv.particles, J_INDEX, :),
+                            pfield_val.kernel
                             )                     
     gammabar_source = Gammabar_Source(
                             view(pfield_deriv.particles, GAMMA_INDEX, :),
+                            view(pfield_deriv.particles, SIGMA_INDEX, :),
                             view(pfield_val.particles, X_INDEX, :),
                             view(pfield_val.particles, GAMMA_INDEX, :),
+                            view(pfield_val.particles, SIGMA_INDEX, :),
                             view(pfield_deriv.particles, U_INDEX, :),
-                            view(pfield_deriv.particles, J_INDEX, :)
+                            view(pfield_deriv.particles, J_INDEX, :),
+                            pfield_val.kernel
                             )            
     args = fake_fmm!(xbar_target; 
                         optargs...)
@@ -1006,8 +1026,9 @@ function ReverseDiff.special_reverse_exec!(instruction::ReverseDiff.SpecialInstr
             pfield.particles[X_INDEX[j], i].deriv = xbar_target.xbar_target[j, i]
         end
         for j=1:length(GAMMA_INDEX)
-            pfield.particles[GAMMA_INDEX[j], i].deriv = gammabar_source.gammabar[j, i]
+            pfield.particles[GAMMA_INDEX[j], i].deriv = gammabar_source.Gammabar[j, i]
         end
+        pfield.particles[SIGMA_INDEX, i].deriv = gammabar_source.sigmabar[i]
     end
 
     return nothing
@@ -1043,11 +1064,21 @@ function ReverseDiff.special_forward_exec!(instruction::ReverseDiff.SpecialInstr
     return nothing
 end
 
-# equations this implements:
-# for all a, b, c, d, i, j:
-# xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
-# for all a, b, c, d, e, i, j:
-# xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+# Pullback for target particle location.
+# Farfield equations:
+#    for all i ∈ targets, j ∈ sources, (a,b,c,d) .∈ (1:3, 1:3, 1:3, 1:3):
+#        xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
+#    for all i ∈ targets, j ∈ sources, (a,b,c,d,e) .∈ (1:3, 1:3, 1:3, 1:3, 1:3):
+#        xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+# The nearfield equations are not as easy to summarize, but the eventual fmm.direct! call can use these verbatim.
+# In essence, though, we have the following:
+#    for all i ∈ targets, j ∈ sources, (a,b) .∈ (1:3, 1:3):
+#        xbar_targetⁱ[a] += Ubarⁱ[b] * (∂Uⁱ/∂xⁱ)[b,a]
+#    for all i ∈ targets, j ∈ sources, (a,b,c) .∈ (1:3, 1:3, 1:3):
+#        xbar_targetⁱ[a] += Jbarⁱ[b,c] * (∂Jⁱ/∂xⁱ)[c,b,a]
+
+# For testing purposes (i.e., to make sure both the nearfield and farfield sections run sometimes), I hardcoded the nearfield/farfield cutoff at 5*σ.
+# The real FMM will obviously handle the nearfield/farfield categories itself.
 function fake_fmm!(system::Xbar_Target; optargs...)
     T = eltype(system)
     dx = zeros(T, 3)
@@ -1056,34 +1087,86 @@ function fake_fmm!(system::Xbar_Target; optargs...)
     grad3r_m1 = zeros(T, 3, 3, 3)
     ntargets = size(system.x)[2]
     nsources = size(system.x)[2]
+    γ = zeros(T, 3)
+    γbar = zeros(T, 3)
+    dxbar = zeros(T, 3)
     for i=1:ntargets
+        x_target = view(system.x, :, i)
         for j=1:nsources
+            x_source = view(system.x, :, j)
             r2 = zero(T)
             for a=1:3
-                dx[a] = system.x[a, i] - system.x[a, j]
+                dx[a] = x_target[a] - x_source[a]
                 r2 += dx[a]^2
             end
             if r2 > 0
                 r = sqrt(r2)
-                # without actually running the FMM, we have to manually calculate gradients of 1/r:
-                for a=1:3
-                    #gradr_m1[a] = -dx[a]/r^3
-                    for b=1:3
-                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
-                        for c=1:3
-                            grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                σ = system.sigma[j]
+                Γ = view(system.Gamma, :, j)
+                Ubar = view(system.Ubar, :, i)
+                Jbar = reshape(view(system.Jbar, :, i), 3, 3)
+
+                if r > 5*σ # if particle is in farfield, run fake fmm
+                    # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                    for a=1:3
+                        #gradr_m1[a] = -dx[a]/r^3
+                        for b=1:3
+                            grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                            for c=1:3
+                                grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                            end
                         end
                     end
-                end
-                # for all a, b, c, d, i, j:
-                # xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
-                # for all a, b, c, d, e, i, j:
-                # xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
-                for a=1:3, b=1:3, c=1:3, d=1:3
-                    system.xbar_target[a, i] += -const4*system.ubar[b, i]*ϵ(b,c,d)*grad2r_m1[a,c]*system.gamma[d, j]
-                    for e=1:3
-                        #system.xbar_target[a, i] += -const4*system.jbar[e, b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
-                        system.xbar_target[a, i] += -const4*system.jbar[3*(e-1) + b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                    # for all a, b, c, d, i, j:
+                    # xbar_targetⁱ[a] += -const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
+                    # for all a, b, c, d, e, i, j:
+                    # xbar_targetⁱ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+                    for a=1:3, b=1:3, c=1:3, d=1:3
+                        system.xbar_target[a, i] += -const4*Ubar[b]*ϵ(b,c,d)*grad2r_m1[a,c]*Γ[d]
+                        for e=1:3
+                            #system.xbar_target[a, i] += -const4*system.jbar[e, b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                            system.xbar_target[a, i] += -const4*Jbar[e, b]*ϵ(c,d,e)*grad3r_m1[a,b,c]*Γ[d]
+                        end
+                    end
+                else # if particle is in nearfield, run direct interaction
+
+                    g, dg = system.kernel.g_dgdr(r/σ)
+                    ddg = ForwardDiff.derivative(system.kernel.dgdr,r/σ) # derivative of g' at r/sigma    
+                    α = dg/(σ*r) - 3*g/r2
+                    #β = -const4*g/r^3
+                    for a=1:3
+                        γ[a] = zero(T)
+                        dxbar[a] = zero(T)
+                        for b=1:3, c=1:3
+                            γ[a] -= const4*r^-3*ϵ(a,b,c)*dx[b]*Γ[c]
+                        end
+                    end
+                    rbar = zero(T)
+                    for a=1:3
+                        rbar += Ubar[a]*dg/σ*γ[a]
+                        γbar[a] = Ubar[a]*g
+                    end
+                    αbar = zero(T)
+                    for a=1:3, b=1:3
+                        αbar += Jbar[a, b]*γ[a]*dx[b]
+                        γbar[a] += Jbar[a, b]*α*dx[b]
+                        dxbar[b] += Jbar[a, b]*α*γ[a]
+                    end
+                    βbar = zero(T)
+                    for a=1:3, b=1:3, c=1:3
+                        βbar += Jbar[a, b]*ϵ(a,b,c)*Γ[c]
+                    end
+                    rbar += αbar*(ddg/(σ^2*r) - 4*dg/(σ*r2) + 6*g/r^3)
+                    rbar += βbar*(-const4*dg/(σ*r^3) + 3*const4*g/r^4)
+                    for a=1:3, b=1:3, c=1:3
+                        rbar += 3*γbar[a]*const4*r^-4*ϵ(a,b,c)*dx[b]*Γ[c]
+                        dxbar[b] -= γbar[a]*const4*ϵ(a,b,c)*r^-3*Γ[c]
+                    end
+                    for a=1:3
+                        dxbar[a] += rbar*dx[a]/r
+                    end
+                    for a=1:3
+                        system.xbar_target[a, i] += dxbar[a]
                     end
                 end
             end
@@ -1092,11 +1175,21 @@ function fake_fmm!(system::Xbar_Target; optargs...)
     return nothing
 end
 
-# equations this implements:
-# for all a, b, c, d, i, j:
-# xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d)*∇ⱼ∇ⱼr⁻¹[a,c]ⁱʲΓʲ[d]
-# for all a, b, c, d, e, i, j:
-# xbar_sourceʲ[a] += -const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ⱼ∇ⱼ∇ⱼr⁻¹[a,b,c]ⁱʲΓʲ[d]
+# Pullback for source particle location.
+# Farfield equations:
+#    for all i ∈ targets, j ∈ sources, (a,b,c,d) .∈ (1:3, 1:3, 1:3, 1:3):
+#        xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d) *∇ᵢ∇ᵢr⁻¹[a,c]ⁱʲ*Γʲ[d]
+#    for all i ∈ targets, j ∈ sources, (a,b,c,d,e) .∈ (1:3, 1:3, 1:3, 1:3, 1:3):
+#        xbar_sourceʲ[a] += const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ᵢ∇ᵢ∇ᵢr⁻¹[a,b,c]ⁱʲ*Γʲ[d]
+# The nearfield equations are not as easy to summarize, but the eventual fmm.direct! call can use these verbatim.
+# In essence, though, we have the following:
+#    for all i ∈ targets, j ∈ sources, (a,b) .∈ (1:3, 1:3):
+#        xbar_sourceʲ[a] += Ubarⁱ[b] * (∂Uⁱ/∂xʲ)[b,a]
+#    for all i ∈ targets, j ∈ sources, (a,b,c) .∈ (1:3, 1:3, 1:3):
+#        xbar_sourceʲ[a] += Jbarⁱ[b,c] * (∂Jⁱ/∂xʲ)[c,b,a]
+
+# For testing purposes (i.e., to make sure both the nearfield and farfield sections run sometimes), I hardcoded the nearfield/farfield cutoff at 5*σ.
+# The real FMM will obviously handle the nearfield/farfield categories itself.
 function fake_fmm!(system::Xbar_Source; optargs...)
     T = eltype(system)
     dx = zeros(T, 3)
@@ -1104,36 +1197,85 @@ function fake_fmm!(system::Xbar_Source; optargs...)
     grad2r_m1 = zeros(T, 3, 3)
     grad3r_m1 = zeros(T, 3, 3, 3)
     ntargets = size(system.x)[2]
-    nsources = size(system.x)[2]    
+    nsources = size(system.x)[2]
+    γ = zeros(T, 3)
+    γbar = zeros(T, 3)
+    dxbar = zeros(T, 3)
     for i=1:ntargets
+        x_target = view(system.x, :, i)
         for j=1:nsources
+            x_source = view(system.x, :, j)
             r2 = zero(T)
             for a=1:3
-                dx[a] = system.x[a, i] - system.x[a, j]
+                dx[a] = x_target[a] - x_source[a]
                 r2 += dx[a]^2
             end
-            
             if r2 > 0
                 r = sqrt(r2)
-                # without actually running the FMM, we have to manually calculate gradients of 1/r:
-                for a=1:3
-                    #gradr_m1[a] = -dx[a]/r^3
-                    for b=1:3
-                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
-                        for c=1:3
-                            grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                σ = system.sigma[j]
+                Γ = view(system.Gamma, :, j)
+                Ubar = view(system.Ubar, :, i)
+                Jbar = reshape(view(system.Jbar, :, i), 3, 3)
+
+                if r > 5*σ # farfield
+                    # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                    for a=1:3
+                        #gradr_m1[a] = -dx[a]/r^3
+                        for b=1:3
+                            grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                            for c=1:3
+                                grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                            end
                         end
                     end
-                end
-                # for all a, b, c, d, i, j:
-                # xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d)*∇ⱼ∇ⱼr⁻¹[a,c]ⁱʲΓʲ[d]
-                # for all a, b, c, d, e, i, j:
-                # xbar_sourceʲ[a] += const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ⱼ∇ⱼ∇ⱼr⁻¹[a,b,c]ⁱʲΓʲ[d]
-                for a=1:3, b=1:3, c=1:3, d=1:3
-                    system.xbar_source[a, j] += const4*system.ubar[b, i]*ϵ(b,c,d)*grad2r_m1[a,c]*system.gamma[d, j]
-                    for e=1:3
-                        #system.xbar_source[a, j] += const4*system.jbar[e, b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
-                        system.xbar_source[a, j] += const4*system.jbar[3*(e-1) + b, i]*ϵ(c,d,e)*grad3r_m1[a,b,c]*system.gamma[d, j]
+                    # for all a, b, c, d, i, j:
+                    # xbar_sourceʲ[a] += const4*Ubarⁱ[b]*ϵ(b,c,d)*∇ⱼ∇ⱼr⁻¹[a,c]ⁱʲΓʲ[d]
+                    # for all a, b, c, d, e, i, j:
+                    # xbar_sourceʲ[a] += const4*Jbarⁱ[e,b]*ϵ(c,d,e)*∇ⱼ∇ⱼ∇ⱼr⁻¹[a,b,c]ⁱʲΓʲ[d]
+                    for a=1:3, b=1:3, c=1:3, d=1:3
+                        system.xbar_source[a, j] += const4*Ubar[b]*ϵ(b,c,d)*grad2r_m1[a,c]*Γ[d]
+                        for e=1:3
+                            system.xbar_source[a, j] += const4*Jbar[e, b]*ϵ(c,d,e)*grad3r_m1[a,b,c]*Γ[d]
+                        end
+                    end
+                else # nearfield
+                    g, dg = system.kernel.g_dgdr(r/σ)
+                    ddg = ForwardDiff.derivative(system.kernel.dgdr,r/σ) # derivative of g' at r/sigma    
+                    α = dg/(σ*r) - 3*g/r2
+                    #β = -const4*g/r^3
+                    for a=1:3
+                        γ[a] = zero(T)
+                        dxbar[a] = zero(T)
+                        for b=1:3, c=1:3
+                            γ[a] -= const4*r^-3*ϵ(a,b,c)*dx[b]*Γ[c]
+                        end
+                    end
+                    rbar = zero(T)
+                    for a=1:3
+                        rbar += Ubar[a]*dg/σ*γ[a]
+                        γbar[a] = Ubar[a]*g
+                    end
+                    αbar = zero(T)
+                    for a=1:3, b=1:3
+                        αbar += Jbar[a, b]*γ[a]*dx[b]
+                        γbar[a] += Jbar[a, b]*α*dx[b]
+                        dxbar[b] += Jbar[a, b]*α*γ[a]
+                    end
+                    βbar = zero(T)
+                    for a=1:3, b=1:3, c=1:3
+                        βbar += Jbar[a, b]*ϵ(a,b,c)*Γ[c]
+                    end
+                    rbar += αbar*(ddg/(σ^2*r) - 4*dg/(σ*r2) + 6*g/r^3)
+                    rbar += βbar*(-const4*dg/(σ*r^3) + 3*const4*g/r^4)
+                    for a=1:3, b=1:3, c=1:3
+                        rbar += 3*γbar[a]*const4*r^-4*ϵ(a,b,c)*dx[b]*Γ[c]
+                        dxbar[b] -= γbar[a]*const4*ϵ(a,b,c)*r^-3*Γ[c]
+                    end
+                    for a=1:3
+                        dxbar[a] += rbar*dx[a]/r
+                    end
+                    for a=1:3
+                        system.xbar_source[a, j] -= dxbar[a]
                     end
                 end
             end
@@ -1142,12 +1284,26 @@ function fake_fmm!(system::Xbar_Source; optargs...)
     return nothing
 end
 
-# equations this implements:
-# for all a, b, c, i, j:
-# Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
-# for all a, b, c, e, i, j:
-# Γbarʲ[a] += const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
-# note that we do not loop over d in these equations.
+# Pullback for source particle location. The nearfield section here also contains the pullback for source particle size σ.
+#    While the σ pullback doesn't have to be in this specific pullback, it does have to be in one of the direct interaction sections of the FMM calls.
+#    The σ pullback only runs in the nearfield interaction; it is ignored for the farfield. (The FMM already does this for the primal UJ interaction.)
+# Farfield equations (just for Γbar, not σbar):
+#    for all i ∈ targets, j ∈ sources, (a,b,c) .∈ (1:3, 1:3, 1:3):
+#        Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
+#    for all i ∈ targets, j ∈ sources, (a,b,c,e) .∈ (1:3, 1:3, 1:3, 1:3):
+#        Γbarʲ[a] += const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
+# The nearfield equations are not as easy to summarize, but the eventual fmm.direct! call can use these verbatim.
+# In essence, though, we have the following:
+#    for all i ∈ targets, j ∈ source, a ∈ 1:3:
+#        σbarʲ += Ubarⁱ[a] * (∂Uⁱ/∂σʲ)[a]
+#    for all i ∈ targets, j ∈ sources, (a,b) .∈ (1:3, 1:3):
+#        Γbarʲ[a] += Ubarⁱ[b] * (∂Uⁱ/∂Γʲ)[b,a]
+#        σbarʲ += Jbarⁱ[a,b]*(∂Jⁱ/∂σʲ)[b, a]
+#    for all i ∈ targets, j ∈ sources, (a,b,c) .∈ (1:3, 1:3, 1:3):
+#        Γbarʲ[a] += Jbarⁱ[b,c] * (∂Jⁱ/∂Γʲ)[c,b,a]
+
+# For testing purposes (i.e., to make sure both the nearfield and farfield sections run sometimes), I hardcoded the nearfield/farfield cutoff at 5*σ.
+# The real FMM will obviously handle the nearfield/farfield categories itself.
 function fake_fmm!(system::Gammabar_Source; optargs...)
     T = eltype(system)
     dx = zeros(T, 3)
@@ -1156,35 +1312,78 @@ function fake_fmm!(system::Gammabar_Source; optargs...)
     #grad3r_m1 = zeros(T, 3, 3, 3)
     ntargets = size(system.x)[2]
     nsources = size(system.x)[2] 
+    γ = zeros(T, 3)
+    γbar = zeros(T, 3)
     for i=1:ntargets
+        x_target = view(system.x, :, i)
         for j=1:nsources
             r2 = zero(T)
+            x_source = view(system.x, :, j)
             for a=1:3
-                dx[a] = system.x[a, i] - system.x[a, j]
+                dx[a] = x_target[a] - x_source[a]
                 r2 += dx[a]^2
             end
             if r2 > 0
                 r = sqrt(r2)
-                # without actually running the FMM, we have to manually calculate gradients of 1/r:
-                for a=1:3
-                    gradr_m1[a] = -dx[a]/r^3
-                    for b=1:3
-                        grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
-                        #for c=1:3
-                        #    grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
-                        #end
+                σ = system.sigma[j]
+                Γ = view(system.Gamma, :, j)
+                Ubar = view(system.Ubar, :, i)
+                Jbar = reshape(view(system.Jbar, :, i), 3, 3)
+
+                if r > 50*σ # farfield
+                    # without actually running the FMM, we have to manually calculate gradients of 1/r:
+                    for a=1:3
+                        gradr_m1[a] = -dx[a]/r^3
+                        for b=1:3
+                            grad2r_m1[a, b] = -3*dx[a]*dx[b]/r^5 + δ(a, b)/r^3
+                            #for c=1:3
+                            #    grad3r_m1[a, b, c] = 15*dx[a]*dx[b]*dx[c]/r^7 - 3/r^5*(δ(a, b)*dx[c] + δ(a, c)*dx[b] + δ(b, c)*dx[a])
+                            #end
+                        end
                     end
-                end
-                # for all a, b, c, i, j:
-                # Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
-                # for all a, b, c, e, i, j:
-                # Γbarʲ[a] += -const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
-                for a=1:3, b=1:3, c=1:3
-                    system.gammabar[a, j] += -const4*ϵ(a,b,c)*gradr_m1[b]*system.ubar[c, i]
-                    for e=1:3
-                        #system.gammabar[a, j] += const4*system.jbar[e, b, i]*ϵ(a,c,e)*grad2r_m1[b,c]
-                        system.gammabar[a, j] += const4*system.jbar[3*(e-1) + b, i]*ϵ(a,c,e)*grad2r_m1[b,c]
+                    # for all a, b, c, i, j:
+                    # Γbarʲ[a] += -const4*ϵ(a,b,c)*∇ⱼr⁻¹[b]ⁱʲUbarⁱ[c]
+                    # for all a, b, c, e, i, j:
+                    # Γbarʲ[a] += -const4*Jbarⁱ[e,b]*ϵ(a,c,e)*∇ⱼ∇ⱼr⁻¹[b,c]ⁱʲ
+                    for a=1:3, b=1:3, c=1:3
+                        system.Gammabar[a, j] += -const4*ϵ(a,b,c)*gradr_m1[b]*Ubar[c]
+                        for e=1:3
+                            system.Gammabar[a, j] += const4*Jbar[e, b]*ϵ(a,c,e)*grad2r_m1[b,c]
+                        end
                     end
+                else # nearfield (with σ pullback)
+                    
+                    g, dg = system.kernel.g_dgdr(r/σ)
+                    ddg = ForwardDiff.derivative(system.kernel.dgdr,r/σ) # derivative of g' at r/sigma    
+                    α = dg/(σ*r) - 3*g/r2
+                    β = -const4*g/r^3
+                    for a=1:3
+                        γ[a] = zero(T)
+                        for b=1:3, c=1:3
+                            γ[a] -= const4*r^-3*ϵ(a,b,c)*dx[b]*Γ[c]
+                        end
+                    end
+                    for a=1:3
+                        γbar[a] = Ubar[a]*g
+                    end
+                    αbar = zero(T)
+                    for a=1:3, b=1:3
+                        αbar += Jbar[a, b]*γ[a]*dx[b]
+                        γbar[a] += Jbar[a, b]*α*dx[b]
+                    end
+                    βbar = zero(T)
+                    for a=1:3, b=1:3, c=1:3
+                        βbar += Jbar[a, b]*ϵ(a,b,c)*Γ[c]
+                    end
+                    for a=1:3, b=1:3, c=1:3
+                        system.Gammabar[c, j] += Jbar[a, b]*β*ϵ(a,b,c)
+                        system.Gammabar[c, j] -= const4*γbar[a]*r^-3*ϵ(a,b,c)*dx[b]
+                    end
+                    for a=1:3
+                        system.sigmabar[j] -= Ubar[a]*dg*r/σ^2*γ[a]
+                    end
+                    system.sigmabar[j] += αbar*(-ddg/σ^3 + 2*dg/(σ^2*r))
+                    system.sigmabar[j] += βbar*const4*dg/(σ^2*r2)
                 end
             end
         end
