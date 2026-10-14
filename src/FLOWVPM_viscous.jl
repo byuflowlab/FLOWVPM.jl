@@ -90,8 +90,8 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
 
     CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta::Tzeta=zeta_fmm;
-                        beta=R(1.5),
-                        itmax=R(15), tol=R(1e-3),
+                        beta=R(1.25),
+                        itmax=R(15), tol=R(1e-4),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
@@ -120,9 +120,9 @@ Creates a core spreading viscous scheme with the given parameters.
 - `nu`::Real Kinematic viscosity.
 - `sgm0`::Real Core size after reset.
 - `zeta::Function = zeta_fmm` Basis function evaluation method.
-- `beta::Real = 1.5` Maximum core size growth σ/σ_0.
+- `beta::Real = 1.25` Maximum core size growth σ/σ_0.
 - `itmax::Int = 15` Maximum number of RBF iterations.
-- `tol::Real = 1e-3` RBF interpolation tolerance.
+- `tol::Real = 1e-4` RBF interpolation tolerance.
 - `iterror::Bool = true` Throw error if RBF didn't converge.
 - `verbose::Bool = false` Verbose on RBF interpolation.
 - `v_lvl::Int = 2` Verbose printing tab level.
@@ -321,6 +321,15 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     used to be p).
     * The solution is built under P.M[1:3] (it used to be x).
     * The current residual is stored under P.M[4:6] (it used to be r).
+    * System solved (each vector component separately): A*Gamma = b, with
+        b_k         = omega_targ(x_k), the vorticity of the field with the grown
+                      cores, evaluated at particle k before the reset;
+        (A*Gamma)_k = sum_j Gamma_j * zeta(|x_k - x_j|/sgm0) / sgm0^3, the
+                      vorticity the reset cores produce at x_k (`cs.zeta`).
+      The residual is r = b - A*Gamma: the vorticity mismatch at the particle
+      positions (units of vorticity, not of Gamma; it says nothing about the
+      field between particles). The solve stops when ||r||/||b|| <= tol for
+      every component, with cs.rrs = ||r||^2 and cs.rr0s = ||b||^2.
     =#
 
     if cs.debug
