@@ -200,11 +200,11 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # Reset core sizes if cores have overgrown
         if beta_cur >= scheme.beta
-            # Calculate approximated vorticity (stored under P.J[1:3])
+            # Calculate approximated vorticity (stored under get_J(P)[1:3])
             scheme.zeta(pfield)
 
             for p in iterator(pfield)
-                # Use approximated vorticity as target vorticity (stored under P.M[7:9])
+                # Use approximated vorticity as target vorticity (stored under get_M(P)[7:9])
                 for i in 1:3
                     get_M(p)[6+i] = get_J(p)[i]
                 end
@@ -314,13 +314,13 @@ See 20180818 notebook and https://en.wikipedia.org/wiki/Conjugate_gradient_metho
 function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     #= NOTES
-    * The target vorticity (`omega_targ`) is expected to be stored in P.M[7:9]
+    * The target vorticity (`omega_targ`) is expected to be stored in get_M(P)[7:9]
     (give it the basis-approximated vorticity instead of the UJ-calculated
     one or the method will diverge).
-    * The basis function evaluation (`omega_cur`) is stored in J[1:3] (it
+    * The basis function evaluation (`omega_cur`) is stored in get_J(P)[1:3] (it
     used to be p).
-    * The solution is built under P.M[1:3] (it used to be x).
-    * The current residual is stored under P.M[4:6] (it used to be r).
+    * The solution is built under get_M(P)[1:3] (it used to be x).
+    * The current residual is stored under get_M(P)[4:6] (it used to be r).
     * System solved (each vector component separately): A*Gamma = b, with
         b_k         = omega_targ(x_k), the vorticity of the field with the grown
                       cores, evaluated at particle k before the reset;
@@ -334,8 +334,8 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     if cs.debug
         println("\t"^(cs.v_lvl+1)*"***** Probe Particle 1 ******\n"*
-                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_particle(pfield, 1)[4:6], digits=8))\n"*
-                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_particle(pfield, 1)[34:36], digits=8))\n")
+                "\t"^(cs.v_lvl+2)*"Init Gamma:\t$(round.(get_Gamma(pfield, 1), digits=8))\n"*
+                "\t"^(cs.v_lvl+2)*"Target w:\t$(round.(get_M(pfield, 1)[7:9], digits=8))\n")
     end
 
     # Initialize memory
@@ -353,7 +353,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
     end
 
-    # Current vorticity: Evaluate basis function storing results under P.J[1:3]
+    # Current vorticity: Evaluate basis function storing results under get_J(P)[1:3]
     cs.zeta(pfield)
 
     for P in iterator(pfield)
@@ -448,7 +448,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
                     "\t"^(cs.v_lvl+1)*"Iteration $(it) / $(cs.itmax) max\n"*
                     "\t"^(cs.v_lvl+2)*"Error: $(sqrt.(cs.rrs ./ cs.rr0s))\n"*
                     "\t"^(cs.v_lvl+2)*"Flags: $(cs.flags)\n"*
-                    "\t"^(cs.v_lvl+2)*"Sol Particle 1: $(round.(get_particle(pfield, 1)[28:30], digits=8))"
+                    "\t"^(cs.v_lvl+2)*"Sol Particle 1: $(round.(get_M(pfield, 1)[1:3], digits=8))"
                    )
         end
 
@@ -494,7 +494,7 @@ end
   `zeta_direct(pfield)`
 
 Evaluates the basis function that the field exerts on itself through direct
-particle-to-particle interactions, saving the results under P.J[1:3].
+particle-to-particle interactions, saving the results under get_J(P)[1:3].
 """
 function zeta_direct(pfield)
     for P in iterator(pfield; include_static=true)
