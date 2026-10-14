@@ -672,15 +672,17 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
     # Initialize memory
     cs.rr0s .= 0
     cs.rrs .= 0
-    acc = zeros(Float64, 3)
+    acc = zeros(Float64, 3); bb = zeros(Float64, 3)
     cs.flags .= false
 
     for P in iterator(pfield)
         for i in 1:3
-            # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            get_M(P)[i] = get_M(P)[6+i]*get_vol(P)[]
-            # Sets initial guess as Gamma for vorticity evaluation
-            get_Gamma(P)[i] = get_M(P)[i]
+            # Initial guess: the strengths the particles carry on entry (the grown
+            # cores' in a full reset, the old ones scattered in by
+            # corespreading_reset_subset!), already in Gamma for the vorticity
+            # evaluation. It was omega_i*vol_i: x0 = 0 for every particle added
+            # without a volume (add_particle's default vol=0, all of Core's wake).
+            get_M(P)[i] = get_Gamma(P)[i]
         end
     end
 
@@ -698,20 +700,21 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             # Initial field residual (summed in Float64: the step lengths of a Float32
             # field otherwise lose the digits the preconditioned CG needs)
             acc[i] += Float64(get_M(P)[3+i])^2
+            bb[i] += Float64(get_M(P)[6+i])^2   # ||b||^2: tolerance reference, independent of x0
         end
     end
 
-    cs.rr0s .= acc; rr0 = copy(acc)
-    cs.rrs .= cs.rr0s                         # Current field residuals
+    cs.rr0s .= bb; rr0 = copy(bb)             # convergence is ||r||/||b|| <= tol
+    cs.rrs .= acc                             # Current field residuals
 
     # Block-Jacobi preconditioner (see `_cs_blocks`): z0 = M^-1 r0, p0 = z0, and the
     # step lengths use r.z; without it z = r and this is the plain CG unchanged
     blk = cs.precondition ? _cs_blocks(pfield, cs) : nothing
-    rrs = copy(rr0)
+    rrs = copy(acc)
     Pm = pfield.particles; npart = pfield.np
     Rv = view(Pm, M_INDEX[4]:M_INDEX[6], 1:npart)
     Z = blk === nothing ? nothing : zeros(eltype(Pm), 3, npart)
-    rzs = copy(rr0)
+    rzs = copy(acc)
     if blk !== nothing
         _cs_block_apply!(Z, Rv, blk)
         rzs .= 0
@@ -724,7 +727,7 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
         end
     end
     for i in 1:3                              # Iteration flag of each dimension
-        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+        cs.flags[i] = cs.rr0s[i] > 2*eps() && sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
 
     # Run Conjugate Gradient algorithm
