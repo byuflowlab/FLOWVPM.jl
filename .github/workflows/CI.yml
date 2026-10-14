@@ -23,7 +23,6 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.6'
           - '1.10'
         os:
           - ubuntu-latest
@@ -38,6 +37,13 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      # FastMultipole v2.3.0 (metadata API) is not in General yet: install it from
+      # GitHub. Once General has 2.3.0, set compat FastMultipole = "2.3" and drop this.
+      - name: Install FastMultipole v2.3.0 from GitHub
+        shell: julia --project=. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.add(PackageSpec(url="https://github.com/byuflowlab/FastMultipole.jl", rev="v2.3.0"))
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
   docs:
@@ -57,8 +63,15 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
+          # FastMultipole v2.3.0 from GitHub until General has it (see the test job)
+          Pkg.add(PackageSpec(url="https://github.com/byuflowlab/FastMultipole.jl", rev="v2.3.0"))
           Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
+      - name: Install FastMultipole v2.3.0 from GitHub
+        shell: julia --project=. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.add(PackageSpec(url="https://github.com/byuflowlab/FastMultipole.jl", rev="v2.3.0"))
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@v1
         env:
