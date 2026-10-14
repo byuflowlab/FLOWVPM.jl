@@ -69,3 +69,18 @@ relres(pfield, G, b) = [sqrt(sum(abs2, cs_apply(pfield, G)[i, :] .- b[i, :]) / s
     @test n2 < n0
     @test all(relres(pfield, get_Gammas(pfield), b) .<= tol)
 end
+
+# zeta_fmm (direct list of the FMM tree, far field neglected) matches zeta_direct
+# and overwrites, not accumulates, what J[1:3] held
+@testset "Core-spreading zeta_fmm vs zeta_direct" begin
+    pfield = cs_field(; n=8)
+    rng = Random.MersenneTwister(4)
+    G = randn(rng, 3, vpm.get_np(pfield))
+    Wd = cs_apply(pfield, G)
+    for j in 1:vpm.get_np(pfield)
+        vpm.get_J(pfield, j)[1:3] .= randn(rng, 3)
+    end
+    vpm.zeta_fmm(pfield)
+    Wf = [vpm.get_J(pfield, j)[i] for i in 1:3, j in 1:vpm.get_np(pfield)]
+    @test sqrt(sum(abs2, Wf .- Wd) / sum(abs2, Wd)) < 1e-3
+end

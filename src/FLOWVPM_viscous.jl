@@ -91,7 +91,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta::Tzeta=zeta_fmm;
                         beta=R(1.25),
-                        itmax=R(15), tol=R(1e-4),
+                        itmax=100, tol=R(1e-4),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
@@ -121,7 +121,7 @@ Creates a core spreading viscous scheme with the given parameters.
 - `sgm0`::Real Core size after reset.
 - `zeta::Function = zeta_fmm` Basis function evaluation method.
 - `beta::Real = 1.25` Maximum core size growth σ/σ_0.
-- `itmax::Int = 15` Maximum number of RBF iterations.
+- `itmax::Int = 100` Maximum number of RBF iterations.
 - `tol::Real = 1e-4` RBF interpolation tolerance.
 - `iterror::Bool = true` Throw error if RBF didn't converge.
 - `verbose::Bool = false` Verbose on RBF interpolation.
@@ -204,7 +204,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
             scheme.zeta(pfield)
 
             for p in iterator(pfield)
-                # Use approximated vorticity as target vorticity (stored under P.J[7:9])
+                # Use approximated vorticity as target vorticity (stored under P.M[7:9])
                 for i in 1:3
                     get_M(p)[6+i] = get_J(p)[i]
                 end
@@ -540,9 +540,19 @@ function zeta_fmm(pfield)
     zeta = pfield.kernel.zeta
 
     # create tree
-    tree = FastMultipole.Tree((pfield,); leaf_size, shrink, recenter)
-    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_size, multipole_acceptance, false, true, true)
+    switches = FastMultipole.DerivativesSwitch(false, true, false, (pfield,))
+    leaf_sizes = SVector(leaf_size)
+    tree = FastMultipole.Tree((pfield,), false, switches;
+                              leaf_size=leaf_sizes,
+                              shrink=shrink,
+                              recenter=recenter,
+                              interaction_list_method=FastMultipole.SelfTuningTargetStop())
+    _, direct_list = FastMultipole.build_interaction_lists(tree.branches, tree.branches, leaf_sizes, multipole_acceptance, false, true, true)
     sort_index = tree.sort_index_list[1]
+
+    for P in iterator(pfield; include_static=true)
+        get_J(P)[1:3] .= 0
+    end
 
     # loop over direct list
     for (i_target, i_source) in direct_list
