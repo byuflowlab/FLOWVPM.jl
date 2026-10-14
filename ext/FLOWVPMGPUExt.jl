@@ -412,20 +412,18 @@ function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpre
     B = view(P, FLOWVPM.M_INDEX[7:9], 1:np)      # target vorticity
     G = view(P, FLOWVPM.GAMMA_INDEX, 1:np)       # search direction p
     W = view(P, FLOWVPM.VORTICITY_INDEX, 1:np)   # A p
-    vol = view(P, FLOWVPM.VOL_INDEX:FLOWVPM.VOL_INDEX, 1:np)
     act = view(P, FLOWVPM.STATIC_INDEX:FLOWVPM.STATIC_INDEX, 1:np) .== 0   # 1 x np mask
     dots(A, Bm) = [sum(view(A, i:i, :) .* view(Bm, i:i, :) .* act) for i in 1:3]
 
     cs.rr0s .= 0; cs.rrs .= 0; cs.flags .= false
-    X .= ifelse.(act, B .* vol, X)
-    G .= ifelse.(act, X, G)
+    X .= ifelse.(act, G, X)                      # x0 = the strengths on entry (was B .* vol: 0 when vol = 0)
     cs.zeta(pfield)
     Rr .= ifelse.(act, B .- W, Rr)               # r0 = b - A x0
     G .= ifelse.(act, Rr, G)                     # p0 = r0
-    cs.rr0s .= dots(Rr, Rr)
-    cs.rrs .= cs.rr0s
+    cs.rr0s .= dots(B, B)                        # ||b||^2: convergence is ||r||/||b|| <= tol
+    cs.rrs .= dots(Rr, Rr)
     for i in 1:3
-        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+        cs.flags[i] = cs.rr0s[i] > 2 * eps() && sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
     for it in 1:cs.itmax
         true in cs.flags || break
