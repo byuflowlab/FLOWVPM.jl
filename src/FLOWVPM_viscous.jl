@@ -336,10 +336,11 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
 
     for P in iterator(pfield)
         for i in 1:3
-            # Initial guess: Γ_i ≈ ω_i⋅vol_i
-            get_M(P)[i] = get_M(P)[6+i]*get_vol(P)[]
-            # Sets initial guess as Gamma for vorticity evaluation
-            get_Gamma(P)[i] = get_M(P)[i]
+            # Initial guess: the strengths the particles carry on entry (those of the
+            # grown cores), already in Gamma for the vorticity evaluation. It was
+            # ω_i⋅vol_i, which is x0 = 0 for any particle added without a volume
+            # (add_particle's default vol=0).
+            get_M(P)[i] = get_Gamma(P)[i]
         end
     end
 
@@ -355,13 +356,14 @@ function rbf_conjugategradient(pfield, cs::CoreSpreading)
             get_Gamma(P)[i] = get_M(P)[3+i]             # p0 = r0
 
             # Initial field residual
-            cs.rr0s[i] += (get_M(P)[3+i])^2
+            cs.rrs[i] += (get_M(P)[3+i])^2
+            # Reference norm ||b||^2: convergence is ||r||/||b|| <= tol, independent of x0
+            cs.rr0s[i] += (get_M(P)[6+i])^2
         end
     end
 
-    cs.rrs .= cs.rr0s                         # Current field residuals
     for i in 1:3                              # Iteration flag of each dimension
-        cs.flags[i] = sqrt(cs.rr0s[i]) > cs.tol || sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
+        cs.flags[i] = cs.rr0s[i] > 2*eps() && sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
     end
 
     # Run Conjugate Gradient algorithm
