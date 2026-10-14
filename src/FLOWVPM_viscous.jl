@@ -645,6 +645,35 @@ function _cs_block_apply!(Z::AbstractMatrix, R::AbstractMatrix, blk)
 end
 
 """
+    rbf_implicitad(pfield, cs::CoreSpreading)
+
+Differentiable drop-in for `rbf_conjugategradient` (pass `rbf=rbf_implicitad`
+to `CoreSpreading`). The primal is `rbf_conjugategradient` itself, so results are
+bit-for-bit the same; under reverse-mode AD (Enzyme) the solve carries an
+implicit-function rule (ImplicitAD.jl) instead of being differentiated iteration
+by iteration. Gamma solves A(X, sgm0) Gamma = b with
+A_ij = zeta(|X_i - X_j|/sgm0)/sgm0^3 (symmetric) and b = M[7:9], the vorticity of
+the grown cores (so b carries the dependence on X, sigma and the old Gamma).
+The pullback solves the adjoint system A lambda = Gamma_bar with a matrix-free
+conjugate gradient on the same direct-sum A (never forming A), and returns
+X_bar = -d(lambda' A(X) Gamma)/dX, b_bar = lambda.
+
+Needs `using ImplicitAD, Enzyme` (package extension `FLOWVPMImplicitADExt`, triggered by ImplicitAD + EnzymeCore).
+Host fields, no static particles (full reset; not `corespreading_reset_subset!`).
+
+!!! warning "Converged solve required"
+    The implicit gradient is the derivative of the EXACT solution evaluated at
+    the returned Gamma. At the production tolerances (1e-3, 1e-4) Gamma is far
+    enough from converged that the gradient error reached 62 % (X direction) in
+    the 2026-10-14 study; at tol 1e-9 it was 2e-5. Tighten `tol` (and raise
+    `itmax`) for differentiable runs. The adjoint CG uses the same `tol`.
+
+In reverse, the rule zeros the adjoints of the slots the CG overwrote (M[1:6],
+vorticity, Gamma): their pre-solve values do not influence the result.
+"""
+function rbf_implicitad end
+
+"""
 Radial basis function interpolation of Gamma using the conjugate gradient
 method. This method only works on a particle field with uniform smoothing
 radius sigma.
@@ -908,13 +937,31 @@ function zeta_direct(pfield)
     end
 end
 
+# Integer loops with the (pfield, i) accessors, same order and arithmetic as
+# zeta_direct(sources, targets, zeta) (bit-identical): Enzyme cannot type the
+# filtered particle generator (EnzymeNoTypeError), and this is the b-path of the
+# differentiable CS-RBF reset (`rbf_implicitad`).
 function zeta_direct_singlethreaded(pfield)
-    for P in iterator(pfield; include_static=true)
-        get_vorticity(P) .= 0
+    np = pfield.np
+    for i in 1:np
+        get_vorticity(pfield, i) .= 0
     end
-    return zeta_direct( iterator(pfield; include_static=true),
-                        iterator(pfield; include_static=true),
-                        pfield.kernel.zeta)
+    zeta = pfield.kernel.zeta
+    for i in 1:np
+        for j in 1:np
+            dX1 = get_X(pfield, i)[1] - get_X(pfield, j)[1]
+            dX2 = get_X(pfield, i)[2] - get_X(pfield, j)[2]
+            dX3 = get_X(pfield, i)[3] - get_X(pfield, j)[3]
+            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
+
+            zeta_sgm = 1/get_sigma(pfield, j)[]^3*zeta(r/get_sigma(pfield, j)[])
+
+            get_vorticity(pfield, i)[1] += get_Gamma(pfield, j)[1]*zeta_sgm
+            get_vorticity(pfield, i)[2] += get_Gamma(pfield, j)[2]*zeta_sgm
+            get_vorticity(pfield, i)[3] += get_Gamma(pfield, j)[3]*zeta_sgm
+        end
+    end
+    return nothing
 end
 
 """

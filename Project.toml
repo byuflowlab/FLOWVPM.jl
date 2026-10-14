@@ -21,21 +21,26 @@ TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [weakdeps]
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+ImplicitAD = "e7cbb90b-9b31-4eb2-a8c8-45099c074ee1"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 
 [extensions]
 FLOWVPMGPUExt = ["GPUArraysCore", "KernelAbstractions"]
+FLOWVPMImplicitADExt = ["EnzymeCore", "ImplicitAD"]
 
 [compat]
 BSON = "0.3"
 GPUArraysCore = "0.1, 0.2"
 KernelAbstractions = "0.9"
 DataStructures = "0.18"
+EnzymeCore = "0.8"
 EllipticFunctions = "2"
 FastMultipole = "3"
 HCubature = "1"
 HDF5 = "0.17"
+ImplicitAD = "1.1"
 Primes = "0.5"
 Roots = "2"
 SpecialFunctions = "2"
