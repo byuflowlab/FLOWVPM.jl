@@ -92,7 +92,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     CoreSpreading{R,Tzeta,Trbf}(
                         nu, sgm0, zeta::Tzeta=zeta_fmm;
                         beta=R(1.25), growth_beta=R(0),
-                        itmax=R(15), tol=R(1e-4),
+                        itmax=100, tol=R(1e-4),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
@@ -122,7 +122,7 @@ Creates a core spreading viscous scheme with the given parameters.
 - `sgm0`::Real Core size after reset.
 - `zeta::Function = zeta_fmm` Basis function evaluation method.
 - `beta::Real = 1.25` Maximum core size growth σ/σ_0.
-- `itmax::Int = 15` Maximum number of RBF iterations.
+- `itmax::Int = 100` Maximum number of RBF iterations.
 - `tol::Real = 1e-4` RBF interpolation tolerance.
 - `iterror::Bool = true` Throw error if RBF didn't converge.
 - `verbose::Bool = false` Verbose on RBF interpolation.
