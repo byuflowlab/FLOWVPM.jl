@@ -379,6 +379,8 @@ end
 # per-particle loops as whole-field broadcasts and the dot products as
 # device reductions. Static particles are excluded from the solve exactly as
 # `iterator(pfield)` excludes them on the host.
+# Residual: r = b - A*Gamma, the vorticity mismatch at the particles (see the
+# NOTES in the host version); stop on ||r||/||b|| <= tol per component.
 function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpreading) where R
     P = pfield.particles; np = pfield.np
     X = view(P, FLOWVPM.M_INDEX[1:3], 1:np)      # solution
