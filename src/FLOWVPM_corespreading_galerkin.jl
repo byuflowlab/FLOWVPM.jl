@@ -325,6 +325,8 @@ GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, edge_offsets=[1.0, 2.0], edge_sp
     GalerkinReset{R}(halo_tail, halo_min, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
                      thin, damping, gram_cut, itmax, field_tol, gram_mem)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
+Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
+    GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
 
 """
     _galerkin_reset!(pfield, cs, idx) -> NamedTuple
