@@ -481,8 +481,7 @@ end
 function _rows_update!(P, out, o0, rows::UnitRange, n, accumulate::Bool)
     backend = KA.get_backend(P)
     ka_rows_update_kernel!(backend, 256)(P, out, o0, first(rows), length(rows), n, accumulate;
-        ndrange = cld(n, 256) * 256)
-    KA.synchronize(backend)
+        ndrange = cld(n, 256) * 256)   # same queue as the readers: no sync needed
     return nothing
 end
 
