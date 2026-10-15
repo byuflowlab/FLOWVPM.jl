@@ -67,6 +67,16 @@ const GAL_CASES = [("A centred", (0.0, 0.0), GAL_UNI, (x, y, s) -> x^2 + y^2 < 4
                    ("D variable, beta 1.25", (2.5, 1.0), GAL_VAR, (x, y, s) -> s > 1.25),
                    ("E variable, beta 1.5", (2.5, 1.0), GAL_VAR, (x, y, s) -> s > 1.5)]
 
+@testset "Galerkin reset, selector and precision conversion" begin
+    cs = FLOWVPM.CoreSpreading(0.0, 1.0; reset=:galerkin, galerkin=FLOWVPM.GalerkinReset(; thin=0.7))
+    pf = FLOWVPM.ParticleField(10, Float32; viscous=cs)        # the field converts its scheme
+    @test pf.viscous.galerkin isa FLOWVPM.GalerkinReset{Float32}
+    @test pf.viscous.galerkin.thin == 0.7f0
+    @test FLOWVPM.CoreSpreading(0.0, 1.0; galerkin=FLOWVPM.GalerkinReset()).galerkin === nothing
+    @test FLOWVPM.CoreSpreading(0.0, 1.0).galerkin === nothing
+    @test_throws ErrorException FLOWVPM.CoreSpreading(0.0, 1.0; reset=:other)
+end
+
 @testset "Galerkin reset, Lamb-Oseen single subset reset: $name" for (name, c, sigf, insub) in GAL_CASES
     X0, G0, S0 = gal_tube(c, sigf)
     sub = [j for j in axes(X0, 2) if insub(X0[1, j] - c[1], X0[2, j] - c[2], S0[j])]

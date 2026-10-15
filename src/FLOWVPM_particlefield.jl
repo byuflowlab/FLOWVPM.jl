@@ -295,6 +295,7 @@ _with_precision(x::CoreSpreading{R0,Tz,Tr}, ::Type{R}) where {R0,Tz,Tr,R} =
         itmax=x.itmax, tol=R(x.tol),
         iterror=x.iterror, verbose=x.verbose, v_lvl=x.v_lvl, debug=x.debug,
         precondition=x.precondition, block_cell=R(x.block_cell), block_cap=x.block_cap,
+        reset=(x.galerkin === nothing ? :collocation : :galerkin), galerkin=x.galerkin,
         t_sgm=R(x.t_sgm), rbf=x.rbf)
 _with_precision(x::ParticleStrengthExchange, ::Type{R}) where R =
     ParticleStrengthExchange{R}(R(x.nu); recalculate_vols=x.recalculate_vols)

@@ -100,7 +100,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         precondition=true, block_cell=R(8), block_cap=64,
                         reset::Symbol=:collocation,
-                        galerkin=(reset === :galerkin ? GalerkinReset{R}() : nothing),
+                        galerkin=nothing,
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
@@ -112,7 +112,8 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         itmax, tol,
                         iterror, verbose, v_lvl, debug,
                         precondition, block_cell, block_cap,
-                        reset in (:collocation, :galerkin) ? galerkin :
+                        reset === :galerkin ? something(galerkin, GalerkinReset{R}()) :
+                        reset === :collocation ? nothing :
                             error("CoreSpreading: reset must be :collocation or :galerkin, got :$reset"),
                         t_sgm,
                         rbf,
@@ -159,12 +160,13 @@ residual).
 - `reset::Symbol = :collocation` The reset method. `:collocation` is the RBF solve
   above (`rbf`, `itmax`, `tol`, `precondition`). `:galerkin` is the L2 projection of
   the old Gaussian field onto the reset cores, their neighbours' increments and new
-  edge points (`GalerkinReset`; gaussianerf kernel). It holds the old tails (2-20x
-  lower error than the collocation on the 5MW and Lamb-Oseen studies, circulation
-  kept to ~1 %) and costs a pair sum over the reset region only, not the whole field;
-  it adds and removes particles, so the field needs `maxparticles` headroom.
-- `galerkin::GalerkinReset` Parameters of the `:galerkin` reset (defaults with
-  `reset = :galerkin`).
+  edge points (`GalerkinReset`; gaussianerf kernel). It holds the old tails (5MW
+  wake, beta 1.5: 0.3 % near-field error and < 1 % circulation change, against 2.8 %
+  and 20 % for the collocation) and costs pair sums over the reset region only, not
+  the whole field; it adds and removes particles, so the field needs `maxparticles`
+  headroom.
+- `galerkin::GalerkinReset = nothing` Parameters of the `:galerkin` reset (used
+  with `reset = :galerkin`; defaults when not given).
 - `rbf::Function = rbf_conjugategradient` RBF function.
 - `rr0s::Array{R, 1} = zeros(R, 3)` Initial field residuals.
 - `rrs::Array{R, 1} = zeros(R, 3)` Current field residuals.

@@ -213,19 +213,27 @@ _gal_ferr(x, r, f, d, oo) =
 # (S's cell must be at least the largest radius). Sets jmark[j] (j covered by
 # anything) and pmark[p] (p covers some field point).
 function _gal_cover!(jmark, pmark, S::_GalSet, X::Matrix{Float64})
-    Threads.@threads for j in 1:size(X, 2)
-        x1 = X[1, j]; x2 = X[2, j]; x3 = X[3, j]
-        a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
-        a0 = max(a - 1, 0); a1 = min(a + 1, S.n[1] - 1)
-        a0 > a1 && continue
-        @inbounds for kc in max(c - 1, 0):min(c + 1, S.n[3] - 1), kb in max(b - 1, 0):min(b + 1, S.n[2] - 1)
-            k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
-            for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
-                if (S.x[1, q] - x1)^2 + (S.x[2, q] - x2)^2 + (S.x[3, q] - x3)^2 <= S.v[q]
-                    jmark[j] = true; pmark[q] = true
+    nt = Threads.nthreads(); N = size(X, 2)
+    pm = [zeros(Bool, length(pmark)) for _ in 1:nt]      # per-chunk marks: no shared writes
+    Threads.@threads for t in 1:nt
+        pt = pm[t]
+        for j in (t - 1) * cld(N, nt) + 1:min(t * cld(N, nt), N)
+            x1 = X[1, j]; x2 = X[2, j]; x3 = X[3, j]
+            a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
+            a0 = max(a - 1, 0); a1 = min(a + 1, S.n[1] - 1)
+            a0 > a1 && continue
+            @inbounds for kc in max(c - 1, 0):min(c + 1, S.n[3] - 1), kb in max(b - 1, 0):min(b + 1, S.n[2] - 1)
+                k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
+                for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
+                    if (S.x[1, q] - x1)^2 + (S.x[2, q] - x2)^2 + (S.x[3, q] - x3)^2 <= S.v[q]
+                        jmark[j] = true; pt[q] = true
+                    end
                 end
             end
         end
+    end
+    for t in 1:nt
+        pmark .|= pm[t]
     end
     return nothing
 end
@@ -270,7 +278,7 @@ function _gal_edges(X::Matrix{Float64}, sub::Vector{Int}, sgm0, offsets, spacing
         end
     end
     S, perm = _gal_set(C, fill(q^2, size(C, 2)), q)
-    hit = zeros(Bool, size(C, 2))           # written from threads: not a BitVector
+    hit = zeros(Bool, size(C, 2))
     _gal_cover!(zeros(Bool, size(X, 2)), hit, S, X)
     C = C[:, sort(perm[.!hit])]            # acceptance below in stencil order
     isempty(C) && return C
