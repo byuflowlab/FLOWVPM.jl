@@ -128,10 +128,9 @@ end
     @test m.gratio <= 2.5
 end
 
-@testset "Galerkin reset, stored and on-the-fly Gram agree" begin
-    c = (2.5, 1.0)
-    X0, G0, S0 = gal_tube(c, GAL_UNI)
-    sub = [j for j in axes(X0, 2) if (X0[1, j] - c[1])^2 + (X0[2, j] - c[2])^2 < 4]
+@testset "Galerkin reset, stored and on-the-fly Gram agree: $name" for (name, c, sigf, insub) in GAL_CASES[[2, 5]]
+    X0, G0, S0 = gal_tube(c, sigf)
+    sub = [j for j in axes(X0, 2) if insub(X0[1, j] - c[1], X0[2, j] - c[2], S0[j])]
     out = map((typemax(Int), 0)) do mem
         pf, cs = gal_field(X0, G0, S0; maxparticles=2size(X0, 2), gram_mem=mem)
         FLOWVPM._galerkin_reset!(pf, cs, sub)

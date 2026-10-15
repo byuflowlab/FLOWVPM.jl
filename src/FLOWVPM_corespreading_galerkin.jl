@@ -18,9 +18,9 @@
     "Overnight: recommended reset method".
 
     Host fields store M in CSR (Float32 values, Int32 columns) below
-    `gram_mem` bytes and evaluate it on the fly above; device fields evaluate it
-    on the fly with the same pair kernel (`_gal_row`, KA kernel in the GPU
-    extension). The selection (thinning, halo, edge points) runs on the host
+    `gram_mem` bytes and evaluate it on the fly above (`_GalFly`, each pair
+    once); device fields evaluate it on the fly with the pair kernel (`_gal_row`,
+    KA kernel in the GPU extension). The selection (thinning, halo, edge points) runs on the host
     over a copy of positions, strengths and cores.
 =###############################################################################
 
@@ -178,7 +178,66 @@ function _gal_gram!(y, A::_GalCSR, S, x, cut2)
     end
     return y
 end
-_gal_gram!(y, ::Nothing, S, x, cut2) = _gal_pairsum!(y, S.x, S.v, S, x, cut2)
+_gal_gram!(y, ::Nothing, S, x, cut2) = _gal_pairsum!(y, S.x, S.v, S, x, cut2)   # device
+
+# On-the-fly Gram operator (host): each pair once, from the row of the wider core
+# (ties: the larger index), so row i searches r <= gram_cut sqrt(2 v_i) only; the
+# transposed half goes to per-thread buffers. Per cell run, the candidates are
+# compacted branch-free before the weights. Buffers: 40 N bytes per thread.
+struct _GalFly
+    y::Vector{Matrix{Float64}}; ib::Vector{Vector{Int32}}; rb::Vector{Vector{Float64}}
+end
+_GalFly(N) = (nt = Threads.nthreads();
+              _GalFly([zeros(3, N) for _ in 1:nt], [zeros(Int32, N) for _ in 1:nt], [zeros(N) for _ in 1:nt]))
+
+function _gal_flyrow!(y, x, S::_GalSet, i, cut2, ib, rb)
+    @inbounds begin
+        x1 = S.x[1, i]; x2 = S.x[2, i]; x3 = S.x[3, i]; vi = S.v[i]
+        c1 = x[1, i]; c2 = x[2, i]; c3 = x[3, i]
+        w = _GAL_C3 / (2vi * sqrt(2vi))
+        o1 = w * c1; o2 = w * c2; o3 = w * c3
+        m = ceil(Int, sqrt(2cut2 * vi) / S.h)
+        a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
+        a0 = max(a - m, 0); a1 = min(a + m, S.n[1] - 1)
+        for kc in max(c - m, 0):min(c + m, S.n[3] - 1), kb in max(b - m, 0):min(b + m, S.n[2] - 1)
+            k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
+            n = 0
+            for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
+                vq = S.v[q]
+                d1 = S.x[1, q] - x1; d2 = S.x[2, q] - x2; d3 = S.x[3, q] - x3
+                r2 = d1 * d1 + d2 * d2 + d3 * d3
+                ib[n + 1] = q; rb[n + 1] = r2
+                n += (r2 <= cut2 * (vi + vq)) & ((vq < vi) | ((vq == vi) & (q < i)))
+            end
+            for k in 1:n
+                q = ib[k]; vv = vi + S.v[q]
+                w = _GAL_C3 * exp(-0.5 * rb[k] / vv) / (vv * sqrt(vv))
+                o1 += w * x[1, q]; o2 += w * x[2, q]; o3 += w * x[3, q]
+                y[1, q] += w * c1; y[2, q] += w * c2; y[3, q] += w * c3
+            end
+        end
+        y[1, i] += o1; y[2, i] += o2; y[3, i] += o3
+    end
+    return nothing
+end
+
+function _gal_gram!(y, A::_GalFly, S, x, cut2)
+    N = size(x, 2); nt = length(A.y); nb = cld(N, 256)
+    Threads.@threads :static for t in 1:nt          # blocks of 256 rows, round robin
+        yt = A.y[t]; fill!(yt, 0)
+        for k in t:nt:nb, i in 256(k - 1) + 1:min(256k, N)
+            _gal_flyrow!(yt, x, S, i, cut2, A.ib[t], A.rb[t])
+        end
+    end
+    Threads.@threads for j in 1:N
+        o1 = 0.0; o2 = 0.0; o3 = 0.0
+        for t in 1:nt
+            o1 += A.y[t][1, j]; o2 += A.y[t][2, j]; o3 += A.y[t][3, j]
+        end
+        y[1, j] = o1; y[2, j] = o2; y[3, j] = o3
+    end
+    return y
+end
 
 # Conjugate gradient on (M + D) x = f, the three components stacked (one step
 # length), from the x on entry. Stops at itmax or, with field_tol > 0, when the
@@ -305,9 +364,10 @@ Lengths are in units of the scheme's `sgm0`.
 - `gram_cut = 4.0`: overlaps cut at r <= gram_cut sqrt(s_i^2 + s_j^2).
 - `itmax = 300`, `field_tol = 0`: CG iterations; with `field_tol > 0` the solve stops
   once the relative L2 field error reaches it.
-- `gram_mem = Sys.total_memory() ÷ 4`: host fields store the Gram matrix (8 bytes per
-  pair) up to this many bytes and evaluate it on the fly above; device fields always
-  evaluate it on the fly.
+- `gram_mem = 2^30`: host fields store the Gram matrix (8 bytes per pair, so up to
+  1.3e8 pairs at the default 1 GiB) and evaluate it on the fly (threaded, 40 bytes per
+  unknown and thread, about 5x the stored matrix-vector time) above; device fields
+  always evaluate it on the fly.
 
 The particle count changes (edge points in, thinned particles out): the field needs
 `maxparticles` headroom (about +1 % per reset on the 5MW wake; edge points that do
@@ -329,7 +389,7 @@ struct GalerkinReset{R}
 end
 GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
                    edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=4.0,
-                   itmax=300, field_tol=0.0, gram_mem=Int(Sys.total_memory() ÷ 4)) where R =
+                   itmax=300, field_tol=0.0, gram_mem=2^30) where R =
     GalerkinReset{R}(halo_tail, halo_min, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
                      thin, damping, gram_cut, itmax, field_tol, gram_mem)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
@@ -385,7 +445,9 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     # unknowns [kept subset at sgm0; halo on own cores; edge points at sgm0], cell-sorted
     Y = hcat(X[:, subk], X[:, hal], Ec)
     v = vcat(fill(s02, Kk), S[hal] .^ 2, fill(s02, E))
-    U, uperm = _gal_set(Y, v, sqrt(cut2 * 2 * maximum(v)) / 2)
+    # cells: half the widest pair cut on a device (its rows search vi + vmax), half
+    # the median one on the host (its rows search 2 vi)
+    U, uperm = _gal_set(Y, v, sqrt(cut2 * 2 * (P isa Matrix ? sort(v)[cld(N, 2)] : maximum(v))) / 2)
     Ud = _gal_to(P, U)
     f = _gal_to(P, zeros(3, N))
     _gal_pairsum!(f, Ud.x, Ud.v, Od, God, cut2)
@@ -398,6 +460,8 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     t2 = time()
 
     A, nnz = P isa Matrix ? _gal_csr(U, cut2, gr.gram_mem) : (nothing, -1)
+    P isa Matrix && A === nothing && (A = _GalFly(N))
+    mem = A isa _GalCSR ? 8nnz + 8(N + 1) : A isa _GalFly ? 40N * length(A.y) : 0
     t3 = time()
 
     r = similar(x); p = similar(x); Ap = similar(x)
@@ -435,6 +499,6 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     println("  core reset (Galerkin, $K of $np): field error ", Printf.@sprintf("%.2e", err),
             " after $its its, halo $H, +$(length(ekeep)) edge -$(length(subd)) thinned, ",
             Printf.@sprintf("%.2f s", t5 - t0))
-    return (; K, Kk, H, E=length(ekeep), D=length(subd), its, err, nnz,
+    return (; K, Kk, H, E=length(ekeep), D=length(subd), its, err, nnz, mem,
             t_select=t1 - t0, t_rhs=t2 - t1, t_gram=t3 - t2, t_cg=t4 - t3, t_write=t5 - t4)
 end
