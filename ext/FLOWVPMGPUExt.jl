@@ -382,8 +382,8 @@ end # FLOWVPM._FMM_HAS_RADIX
 
 # Galerkin core-spreading reset (src/FLOWVPM_corespreading_galerkin.jl): the
 # Gaussian pair sum with per-pair variance, one lane per target, over a
-# cell-sorted source set. Serves the Gram matvec, the right-hand side and the
-# edge filter; the row body is the host loop's `_gal_row`.
+# cell-sorted source set. Serves the right-hand side and the edge filter (the
+# Gram matvec uses the tiled kernel below); the row body is the host loop's `_gal_row`.
 @kernel function ka_gal_pair_kernel!(out, @Const(tx), @Const(tv), @Const(sx), @Const(sv), @Const(c),
         @Const(cstart), n, lo, h, cut2, vmax, nt)
     i = @index(Global)
@@ -534,6 +534,100 @@ function FLOWVPM._gal_pairsum!(out::AnyGPUMatrix, tx, tv, S::FLOWVPM._GalSet, c,
     ka_gal_pair_kernel!(backend, 256)(out, tx, tv, S.x, S.v, c, S.cstart, S.n, S.lo, S.h,
         eltype(out)(cut2), S.vmax, Int32(nt); ndrange=nt)
     return out
+end
+
+# The Gram product of the CG (targets = the set's own points): source-tiled. A
+# workgroup owns a chunk of _GAL_TILE targets of one cell and stages the sources of
+# the cells within +-m (m the chunk's largest search radius in cells) _GAL_TILE at
+# a time in workgroup memory. A lane's box is inside the chunk's and every pair
+# beyond it fails the cut, so each target accepts the same pairs in the same order
+# as `_gal_row` (`ka_gal_pair_kernel!`): the same sums (bitwise on Metal). 5MW
+# step 2880, Metal F32, per product: K 25 0.37 -> 0.24 ms, K 1800 37 -> 30 ms, full
+# reset 20.5 -> 17.5 ms; 32 beat 16/64/128 lanes, two targets per lane and chunks
+# spanning a row of cells.
+const _GAL_TILE = 32
+
+@kernel function ka_gal_gram_tiled_kernel!(out, @Const(sx), @Const(sv), @Const(c), @Const(cstart),
+        @Const(chunks), n, lo, h, cut2, vmax, ::Type{T}, ::Val{WG}) where {T,WG}
+    k = @index(Group, Linear); l = @index(Local, Linear)
+    tile = @localmem T (WG, 7)
+    bx = @localmem Int32 (WG, 6)
+    @inbounds begin
+        i = chunks[2, k] + (l % Int32) - Int32(1)
+        inb = i < chunks[1, k]
+        ii = inb ? i : chunks[2, k]
+        x1 = sx[1, ii]; x2 = sx[2, ii]; x3 = sx[3, ii]; vi = sv[ii]
+        o1 = zero(T); o2 = zero(T); o3 = zero(T)
+        C3 = T(FLOWVPM._GAL_C3); half = T(0.5)
+        # this lane's search box as in `_gal_row`; the chunk sweeps their union
+        m = unsafe_trunc(Int32, ceil(sqrt(cut2 * (vi + vmax)) / h))
+        a = unsafe_trunc(Int32, floor((x1 - lo[1]) / h))
+        b = unsafe_trunc(Int32, floor((x2 - lo[2]) / h))
+        cc = unsafe_trunc(Int32, floor((x3 - lo[3]) / h))
+        bx[l, 1] = a - m; bx[l, 2] = a + m; bx[l, 3] = b - m; bx[l, 4] = b + m; bx[l, 5] = cc - m; bx[l, 6] = cc + m
+        @synchronize
+        a0 = bx[1, 1]; a1 = bx[1, 2]; b0 = bx[1, 3]; b1 = bx[1, 4]; c0 = bx[1, 5]; c1 = bx[1, 6]
+        for q in 2:WG
+            a0 = min(a0, bx[q, 1]); a1 = max(a1, bx[q, 2]); b0 = min(b0, bx[q, 3])
+            b1 = max(b1, bx[q, 4]); c0 = min(c0, bx[q, 5]); c1 = max(c1, bx[q, 6])
+        end
+        a0 = max(a0, Int32(0)); a1 = min(a1, n[1] - Int32(1))
+        for kc in max(c0, Int32(0)):min(c1, n[3] - Int32(1))
+            for kb in max(b0, Int32(0)):min(b1, n[2] - Int32(1))
+                k0 = Int32(1) + a0 + n[1] * (kb + n[2] * kc)
+                p0 = cstart[k0]; p1 = cstart[k0 + a1 - a0 + Int32(1)] - Int32(1)
+                for t0 in p0:Int32(WG):p1
+                    j = t0 + (l % Int32) - Int32(1)
+                    if j <= p1
+                        tile[l, 1] = sx[1, j]; tile[l, 2] = sx[2, j]; tile[l, 3] = sx[3, j]
+                        tile[l, 4] = sv[j]
+                        tile[l, 5] = c[1, j]; tile[l, 6] = c[2, j]; tile[l, 7] = c[3, j]
+                    end
+                    @synchronize
+                    if inb
+                        for s in Int32(1):min(Int32(WG), p1 - t0 + Int32(1))
+                            d1 = tile[s, 1] - x1; d2 = tile[s, 2] - x2; d3 = tile[s, 3] - x3
+                            r2 = d1 * d1 + d2 * d2 + d3 * d3
+                            vv = vi + tile[s, 4]
+                            if r2 <= cut2 * vv
+                                w = C3 * exp(-half * r2 / vv) / (vv * sqrt(vv))
+                                o1 += w * tile[s, 5]; o2 += w * tile[s, 6]; o3 += w * tile[s, 7]
+                            end
+                        end
+                    end
+                    @synchronize
+                end
+            end
+        end
+        if inb
+            out[1, i] = o1; out[2, i] = o2; out[3, i] = o3
+        end
+    end
+end
+
+# (end, first point) of every chunk of the set's non-empty cells, built once per
+# set (the CG's Gram set is fixed over a reset) and kept for the last set seen
+const _GAL_CHUNKS = Ref{Any}((WeakRef(nothing), nothing))
+function _gal_chunks(S::FLOWVPM._GalSet)
+    key, ch = _GAL_CHUNKS[]
+    key.value === S.cstart && return ch
+    cs = Array(S.cstart); h = Int32[]
+    for k in 1:length(cs) - 1, i0 in cs[k]:Int32(_GAL_TILE):cs[k + 1] - Int32(1)
+        push!(h, cs[k + 1], i0)
+    end
+    ch = copyto!(similar(S.cstart, Int32, 2, length(h) ÷ 2), reshape(h, 2, :))
+    _GAL_CHUNKS[] = (WeakRef(S.cstart), ch)
+    return ch
+end
+
+function FLOWVPM._gal_gram!(y::AnyGPUMatrix, ::Nothing, S, x, cut2)
+    nt = size(S.x, 2)
+    nt == 0 && return y
+    T = eltype(y)
+    ch = _gal_chunks(S)
+    ka_gal_gram_tiled_kernel!(KA.get_backend(y), _GAL_TILE)(y, S.x, S.v, x, S.cstart, ch, S.n, S.lo, S.h,
+        T(cut2), S.vmax, T, Val(_GAL_TILE); ndrange = _GAL_TILE * size(ch, 2))
+    return y
 end
 
 
