@@ -34,14 +34,20 @@ struct _GalSet{TX,TV,TI,R}
     n::NTuple{3,Int32}; lo::NTuple{3,R}; h::R; vmax::R
 end
 
-# Sort (X, v) into cells of size h; returns the set and the sort permutation.
-function _gal_set(X::Matrix{Float64}, v::Vector{Float64}, h::Float64)
-    N = size(X, 2)
-    lo = ntuple(d -> minimum(view(X, d, :)) - 1e-6 * h, 3)
-    ext = ntuple(d -> maximum(view(X, d, :)) - lo[d], 3)
-    while prod(floor(Int, ext[d] / h) + 1 for d in 1:3) > 2^26    # cap the dense cell table
+# Cell size h, enlarged until the dense cell table has at most 2^26 cells
+function _gal_cellsize(ext, h)
+    while prod(floor(Int, ext[d] / h) + 1 for d in 1:3) > 2^26
         h *= 1.25
     end
+    return h
+end
+
+# Sort (X, v) into cells of size h; returns the set and the sort permutation.
+function _gal_set(X::Matrix{Float64}, v::Vector{Float64}, h0::Float64)
+    N = size(X, 2)
+    lo = ntuple(d -> minimum(view(X, d, :)) - 1e-6 * h0, 3)
+    ext = ntuple(d -> maximum(view(X, d, :)) - lo[d], 3)
+    h = _gal_cellsize(ext, h0)
     n = ntuple(d -> Int32(floor(Int, ext[d] / h) + 1), 3)
     cell = Vector{Int}(undef, N)
     for i in 1:N
@@ -51,7 +57,7 @@ function _gal_set(X::Matrix{Float64}, v::Vector{Float64}, h::Float64)
     nc = Int(n[1]) * n[2] * n[3]
     cstart = zeros(Int32, nc + 1); cstart[1] = 1
     for i in 1:N; cstart[cell[i] + 1] += 1; end
-    for k in 1:nc; cstart[k + 1] += cstart[k]; end
+    cumsum!(cstart, cstart)
     perm = sortperm(cell)
     return _GalSet(X[:, perm], v[perm], cstart, n, lo, h, maximum(v)), perm
 end
@@ -202,24 +208,26 @@ end
 _gal_ferr(x, r, f, d, oo) =
     sqrt(max(oo - Float64(dot(x, f)) - Float64(dot(x, r)) - Float64(dot(x, d .* x)), 0.0) / oo)
 
-# Field particles within r of (x1, x2, x3) on the host set S: marks them
-# (`mark[perm[q]]`) unless `mark` is empty; with `first`, returns at the first hit
-function _gal_near!(mark, S::_GalSet, perm, x1, x2, x3, r, first::Bool)
-    m = ceil(Int, r / S.h)
-    a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
-    a0 = max(a - m, 0); a1 = min(a + m, S.n[1] - 1)
-    hits = 0
-    @inbounds for kc in max(c - m, 0):min(c + m, S.n[3] - 1), kb in max(b - m, 0):min(b + m, S.n[2] - 1)
-        k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
-        for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
-            if (S.x[1, q] - x1)^2 + (S.x[2, q] - x2)^2 + (S.x[3, q] - x3)^2 <= r * r
-                hits += 1
-                first && return hits
-                isempty(mark) || (mark[perm[q]] = true)
+# One streaming pass over the field points X (threaded, no sort of the field):
+# point p of the host set S covers field point j when |x_j - x_p|^2 <= S.v[p]
+# (S's cell must be at least the largest radius). Sets jmark[j] (j covered by
+# anything) and pmark[p] (p covers some field point).
+function _gal_cover!(jmark, pmark, S::_GalSet, X::Matrix{Float64})
+    Threads.@threads for j in 1:size(X, 2)
+        x1 = X[1, j]; x2 = X[2, j]; x3 = X[3, j]
+        a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
+        a0 = max(a - 1, 0); a1 = min(a + 1, S.n[1] - 1)
+        a0 > a1 && continue
+        @inbounds for kc in max(c - 1, 0):min(c + 1, S.n[3] - 1), kb in max(b - 1, 0):min(b + 1, S.n[2] - 1)
+            k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
+            for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
+                if (S.x[1, q] - x1)^2 + (S.x[2, q] - x2)^2 + (S.x[3, q] - x3)^2 <= S.v[q]
+                    jmark[j] = true; pmark[q] = true
+                end
             end
         end
     end
-    return hits
+    return nothing
 end
 
 # Greedy thinning: by decreasing |Gamma|, a point closer than q to an already
@@ -251,26 +259,22 @@ end
 # Edge-point candidates: the axial stencil x_k +- a sgm0 e_j of every reset
 # particle, kept where no field particle and no accepted point lies within
 # `spacing` sgm0
-function _gal_edges(F::_GalSet, X::Matrix{Float64}, sub::Vector{Int}, sgm0, offsets, spacing)
+function _gal_edges(X::Matrix{Float64}, sub::Vector{Int}, sgm0, offsets, spacing)
     q = spacing * sgm0
-    nst = 6 * length(offsets)
-    C = zeros(3, nst * length(sub))
-    free = zeros(Bool, size(C, 2))       # written from threads: not a BitVector
-    empt = falses(0)
-    Threads.@threads for ik in 1:length(sub)
-        k = sub[ik]
-        for (ia, a) in enumerate(offsets), dir in 1:3, sgn in (-1, 1)
-            col = (ik - 1) * nst + (ia - 1) * 6 + (dir - 1) * 2 + (sgn + 3) ÷ 2
-            for j in 1:3
-                C[j, col] = X[j, k] + (j == dir ? sgn * a * sgm0 : 0.0)
-            end
-            free[col] = _gal_near!(empt, F, nothing, C[1, col], C[2, col], C[3, col], q, true) == 0
+    C = zeros(3, 6 * length(offsets) * length(sub))
+    col = 0
+    for k in sub, a in offsets, dir in 1:3, sgn in (-1, 1)
+        col += 1
+        for j in 1:3
+            C[j, col] = X[j, k] + (j == dir ? sgn * a * sgm0 : 0.0)
         end
     end
-    C = C[:, free]
+    S, perm = _gal_set(C, fill(q^2, size(C, 2)), q)
+    hit = zeros(Bool, size(C, 2))           # written from threads: not a BitVector
+    _gal_cover!(zeros(Bool, size(X, 2)), hit, S, X)
+    C = C[:, sort(perm[.!hit])]            # acceptance below in stencil order
     isempty(C) && return C
-    keep = _gal_thin(C, zeros(size(C, 2)), q)     # sequential acceptance, in stencil order
-    return C[:, keep]
+    return C[:, _gal_thin(C, zeros(size(C, 2)), q)]
 end
 
 """
@@ -346,15 +350,13 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     # thinning, halo (per-particle radius from the tail width), edge candidates
     keep = _gal_thin(Xo, [sqrt(Go[1, k]^2 + Go[2, k]^2 + Go[3, k]^2) for k in 1:K], gr.thin * sgm0)
     subk = sub[keep]; subd = sub[.!keep]; Kk = length(subk)
-    F, fperm = _gal_set(X, S, sgm0)
-    mark = falses(np)
-    for k in sub
-        rk = max(gr.halo_min, gr.halo_tail * sqrt(max(S[k]^2 - s02, 0.0)) / sgm0) * sgm0
-        _gal_near!(mark, F, fperm, X[1, k], X[2, k], X[3, k], rk, false)
-    end
+    rk2 = [(max(gr.halo_min, gr.halo_tail * sqrt(max(S[k]^2 - s02, 0.0)) / sgm0) * sgm0)^2 for k in sub]
+    Hs, _ = _gal_set(Xo, rk2, sqrt(maximum(rk2)))
+    mark = zeros(Bool, np)
+    _gal_cover!(mark, zeros(Bool, K), Hs, X)
     mark[sub] .= false
     hal = findall(mark); H = length(hal)
-    Ec = isempty(gr.edge_offsets) ? zeros(3, 0) : _gal_edges(F, X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
+    Ec = isempty(gr.edge_offsets) ? zeros(3, 0) : _gal_edges(X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
     t1 = time()
 
     # old subset as the source set; edge filter (old tail >= edge_tol of its peak)
