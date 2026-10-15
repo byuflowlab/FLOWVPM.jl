@@ -466,7 +466,8 @@ end
 # `rbf_conjugategradient`, `zeta_fmm` methods), growth timer restarted.
 function _corespreading_reset!(pfield, scheme::CoreSpreading)
     if scheme.galerkin !== nothing
-        _galerkin_reset!(pfield, scheme, collect(1:get_np(pfield)))
+        P = pfield.particles     # every active (non-static) particle
+        _galerkin_reset!(pfield, scheme, findall(iszero, Array(view(P, STATIC_INDEX, 1:get_np(pfield)))))
         scheme.t_sgm = 0
         return nothing
     end

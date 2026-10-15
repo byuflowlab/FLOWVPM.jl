@@ -449,17 +449,33 @@ Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
     GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
 
 """
-    _galerkin_reset!(pfield, cs, idx) -> NamedTuple
+    galerkin_shrink!(pfield, idx, sgm0; galerkin = GalerkinReset(), verbose = false, v_lvl = 0) -> NamedTuple
 
-The Galerkin reset of the particles `idx` (global indices; every particle in a full
-reset). Returns counts (K reset, Kk kept, H halo, E edge points added, D thinned),
-iterations, the relative L2 field error, Gram pairs, and the time of each phase
-(select, rhs, gram, cg, write).
+Shrink the cores of the particles `idx` (global indices) to `sgm0` by the Galerkin
+L2 projection (see `GalerkinReset`), keeping the vorticity field: their non-reset
+neighbours take strength increments, edge points may be added and close reset
+particles thinned, so the particle count and order change. Works on any field (no
+viscous scheme needed, e.g. `Inviscid`), host or device. It is also the reset of
+`CoreSpreading(...; reset=:galerkin)`. Keep one `GalerkinReset` across calls: its
+workspace (stored Gram pairs) is reused.
+
+Example, cores above 1.5 sgm0: `idx = findall(>(1.5sgm0), Array(view(pfield.particles, FLOWVPM.SIGMA_INDEX, 1:get_np(pfield))))`.
+
+Returns counts (K reset, Kk kept, H halo, E edge points added, D thinned),
+iterations, the relative L2 field error, Gram pairs, the solve's memory (bytes:
+stored Gram pairs, buffers and block inverses), and the time of each phase.
 """
-function _galerkin_reset!(pfield, cs, idx::Vector{Int})
-    gr = cs.galerkin::GalerkinReset
+galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Real; galerkin::GalerkinReset = GalerkinReset(),
+                 verbose::Bool = false, v_lvl::Int = 0) =
+    _galerkin_shrink!(pfield, idx, Float64(sgm0), galerkin, verbose, v_lvl)
+
+# the CoreSpreading reset
+_galerkin_reset!(pfield, cs, idx::Vector{Int}) =
+    _galerkin_shrink!(pfield, idx, Float64(cs.sgm0), cs.galerkin::GalerkinReset, cs.verbose, cs.v_lvl)
+
+function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::GalerkinReset, verbose::Bool, v_lvl::Int)
     P = pfield.particles; np = get_np(pfield); R = eltype(P)
-    sgm0 = Float64(cs.sgm0); s02 = sgm0^2
+    s02 = sgm0^2
     cut2 = Float64(gr.gram_cut)^2
     t0 = time()
 
@@ -477,6 +493,7 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     mark = zeros(Bool, np)
     _gal_cover!(mark, zeros(Bool, K), Hs, X)
     mark[sub] .= false
+    mark .&= iszero.(P isa Matrix ? view(P, STATIC_INDEX, 1:np) : Array(view(P, STATIC_INDEX, 1:np)))   # static: no increments
     hal = findall(mark); H = length(hal)
     Ec = isempty(gr.edge_offsets) ? zeros(3, 0) : _gal_edges(X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
     t1 = time()
@@ -559,7 +576,7 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     clear_radix_fmm_cache!(pfield)
     t5 = time()
 
-    println("  core reset (Galerkin, $K of $np): field error ", Printf.@sprintf("%.2e", err),
+    verbose && println("\t"^v_lvl, "core reset (Galerkin, $K of $np): field error ", Printf.@sprintf("%.2e", err),
             " after $its its, halo $H, +$(length(ekeep)) edge -$(length(subd)) thinned, ",
             Printf.@sprintf("%.2f s", t5 - t0))
     return (; K, Kk, H, E=length(ekeep), D=length(subd), its, err, nnz, mem,

@@ -103,6 +103,35 @@ end
     @test cs.t_sgm == 0
 end
 
+@testset "Galerkin reset, full reset leaves static particles alone" begin
+    c = (2.5, 1.0)
+    X0, G0, S0 = gal_tube(c, GAL_UNI)
+    pf, cs = gal_field(X0, G0, S0; maxparticles=2size(X0, 2))
+    st = 1:7:size(X0, 2)
+    pf.particles[FLOWVPM.STATIC_INDEX, st] .= 1
+    FLOWVPM._corespreading_reset!(pf, cs)
+    X, G, S = gal_state(pf)
+    new = Set(eachcol(vcat(X, G, S')))
+    @test all(j -> vcat(X0[:, j], G0[:, j], S0[j]) in new, st)     # untouched (cores still 1.4)
+    @test count(S .> GAL_SGM0 * (1 + 1e-6)) == length(st)
+end
+
+@testset "Galerkin shrink on an Inviscid field (no viscous scheme)" begin
+    c = (2.5, 1.0)
+    X0, G0, S0 = gal_tube(c, GAL_VAR)
+    pf = FLOWVPM.ParticleField(2size(X0, 2), Float64; viscous=FLOWVPM.Inviscid())
+    for j in axes(X0, 2); FLOWVPM.add_particle(pf, X0[:, j], G0[:, j], S0[j]); end
+    sub = findall(>(1.5), S0)
+    gr = FLOWVPM.GalerkinReset()
+    st = FLOWVPM.galerkin_shrink!(pf, sub, GAL_SGM0; galerkin=gr)
+    @test st.K == length(sub) && st.its > 0
+    X, G, S = gal_state(pf)
+    m = gal_metrics(X0, G0, S0, S0, X, G, S, gal_probes(c), sub)
+    @test m.probe <= 0.15
+    @test all(S .<= 1.5)
+    @test (@inferred FLOWVPM._galerkin_shrink!(pf, Int[1], GAL_SGM0, gr, false, 0)) isa NamedTuple
+end
+
 # Repeated resets against exact diffusion (sigma^2 + t on the initial particles):
 # uniform init, every reset a full one; variable init, partial resets of the cores
 # above beta sgm0 as they cross
