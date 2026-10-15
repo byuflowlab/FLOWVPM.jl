@@ -392,6 +392,41 @@ end # FLOWVPM._FMM_HAS_RADIX
         out[1, i] = o1; out[2, i] = o2; out[3, i] = o3
     end
 end
+# Cover pass of the Galerkin selection (FLOWVPM._gal_cover!) on the device field:
+# one lane per field point j, against the cell-sorted set S (cell >= its largest
+# radius, so the 27 neighbouring cells); marks j and the covering set points
+# (concurrent writes of `true` only). The marks are copied to the host vectors.
+@kernel function ka_gal_cover_kernel!(jmark, pmark, @Const(X), @Const(sx), @Const(sv), @Const(cstart), n, lo, h, np)
+    j = @index(Global)
+    @inbounds if j <= np
+        x1 = X[1, j]; x2 = X[2, j]; x3 = X[3, j]
+        a = unsafe_trunc(Int32, floor((x1 - lo[1]) / h))
+        b = unsafe_trunc(Int32, floor((x2 - lo[2]) / h))
+        c = unsafe_trunc(Int32, floor((x3 - lo[3]) / h))
+        a0 = max(a - Int32(1), Int32(0)); a1 = min(a + Int32(1), n[1] - Int32(1))
+        if a0 <= a1
+            for kc in max(c - Int32(1), Int32(0)):min(c + Int32(1), n[3] - Int32(1))
+                for kb in max(b - Int32(1), Int32(0)):min(b + Int32(1), n[2] - Int32(1))
+                    k0 = Int32(1) + a0 + n[1] * (kb + n[2] * kc)
+                    for q in cstart[k0]:cstart[k0 + a1 - a0 + Int32(1)] - Int32(1)
+                        d1 = sx[1, q] - x1; d2 = sx[2, q] - x2; d3 = sx[3, q] - x3
+                        if d1 * d1 + d2 * d2 + d3 * d3 <= sv[q]
+                            jmark[j] = true; pmark[q] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+function FLOWVPM._gal_cover!(jmark, pmark, S::FLOWVPM._GalSet, X::AnyGPUMatrix)
+    np = size(X, 2); backend = KA.get_backend(X)
+    dj = KA.zeros(backend, Bool, np); dp = KA.zeros(backend, Bool, length(pmark))
+    np > 0 && ka_gal_cover_kernel!(backend, 256)(dj, dp, X, S.x, S.v, S.cstart, S.n, S.lo, S.h, Int32(np); ndrange = np)
+    jmark .|= Array(dj); pmark .|= Array(dp)
+    return nothing
+end
+
 # Device conjugate gradient of the Galerkin reset (the host loop, FLOWVPM._gal_cg!,
 # in Chronopoulos-Gear form: z'Az from the product of z, A p by recurrence) with
 # its scalars on the device, so an iteration is five queued kernels and no sync;

@@ -409,22 +409,23 @@ function _gal_thin(X::Matrix{Float64}, gnorm::Vector{Float64}, q::Float64)
 end
 
 # Edge-point candidates: the axial stencil x_k +- a sgm0 e_j of every reset
-# particle, kept where no field particle and no accepted point lies within
-# `spacing` sgm0; returns the points and their parents (global indices)
-function _gal_edges(X::AbstractMatrix, sub::Vector{Int}, sgm0, offsets, spacing)
+# particle (positions Xo), kept where no field particle (X, host or device) and no
+# accepted point lies within `spacing` sgm0; returns the points and their parents
+# (columns of Xo)
+function _gal_edges(Xo::Matrix{Float64}, X::AbstractMatrix, sgm0, offsets, spacing)
     q = spacing * sgm0
-    n = 6 * length(offsets) * length(sub)
+    n = 6 * length(offsets) * size(Xo, 2)
     C = zeros(3, n); par = zeros(Int, n)
     col = 0
-    for k in sub, a in offsets, dir in 1:3, sgn in (-1, 1)
+    for k in axes(Xo, 2), a in offsets, dir in 1:3, sgn in (-1, 1)
         col += 1; par[col] = k
         for j in 1:3
-            C[j, col] = X[j, k] + (j == dir ? sgn * a * sgm0 : 0.0)
+            C[j, col] = Xo[j, k] + (j == dir ? sgn * a * sgm0 : 0.0)
         end
     end
     S, perm = _gal_set(C, fill(q^2, n), q)
     hit = zeros(Bool, n)
-    _gal_cover!(zeros(Bool, size(X, 2)), hit, S, X)
+    _gal_cover!(zeros(Bool, size(X, 2)), hit, _gal_to(parent(X), S), X)
     e = sort(perm[.!hit])                  # acceptance below in stencil order
     isempty(e) || (e = e[_gal_thin(C[:, e], zeros(length(e)), q)])
     return C[:, e], par[e]
@@ -532,24 +533,33 @@ _galerkin_reset!(pfield, cs, idx::Vector{Int}) =
     _galerkin_shrink!(pfield, idx, Float64(cs.sgm0), cs.galerkin, cs.verbose, cs.v_lvl, cs.iterror)
 
 _gal_cols(Q, rows, js) = Float64[Q[r, j] for r in rows, j in js]
+# rows of the field's columns js (Float64, host)
+_gal_gather(P::Matrix, js, rows = first(X_INDEX):SIGMA_INDEX) = _gal_cols(P, rows, js)
+_gal_gather(P, js, rows = first(X_INDEX):SIGMA_INDEX) =
+    isempty(js) ? zeros(length(rows), 0) : Float64.(_radix_oversize_gather(P, js, rows))
 
 # Selection (no derivative): thinning of the subset, the halo (non-static particles
 # within the tail width, pruned to where the old subset field is at least halo_tol
 # of its peak) and the edge points (stencil points away from every particle where
 # the old field is at least edge_tol of its peak) as their parent and offset.
-function _gal_plan(Q, P, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset)
-    np = size(Q, 2); K = length(sub); s02 = sgm0^2; cut2 = Float64(gr.gram_cut)^2
-    X = view(Q, X_INDEX, :); S = view(Q, SIGMA_INDEX, :)
-    Xo = _gal_cols(Q, X_INDEX, sub); Go = _gal_cols(Q, GAMMA_INDEX, sub); vo = Float64.(S[sub]) .^ 2
+# Qs: positions, strengths and cores of the subset (columns of `sub`); the rest of
+# the field is read in place (cover passes, on the device for a device field) and
+# by one gather of the halo candidates. Returns the kept / thinned subset (`ks`
+# columns of Qs, `subd` global), the halo (global), and the edge points as parent
+# (column of Qs) and offset.
+function _gal_plan(Qs, P, np, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset)
+    K = length(sub); s02 = sgm0^2; cut2 = Float64(gr.gram_cut)^2
+    X = view(P, X_INDEX, 1:np)
+    Xo = Qs[X_INDEX, :]; Go = Qs[GAMMA_INDEX, :]; so = Qs[SIGMA_INDEX, :]; vo = so .^ 2
     keep = _gal_thin(Xo, [sqrt(Go[1, k]^2 + Go[2, k]^2 + Go[3, k]^2) for k in 1:K], gr.thin * sgm0)
-    rk2 = [(max(gr.halo_min, gr.halo_tail * sqrt(max(S[k]^2 - s02, 0.0)) / sgm0) * sgm0)^2 for k in sub]
+    rk2 = [(max(gr.halo_min, gr.halo_tail * sqrt(max(s^2 - s02, 0.0)) / sgm0) * sgm0)^2 for s in so]
     Hs, _ = _gal_set(Xo, rk2, sqrt(maximum(rk2)))
     mark = zeros(Bool, np)
-    _gal_cover!(mark, zeros(Bool, K), Hs, X)
+    _gal_cover!(mark, zeros(Bool, K), _gal_to(P, Hs), X)
     mark[sub] .= false
-    mark .&= iszero.(P isa Matrix ? view(P, STATIC_INDEX, 1:np) : Array(view(P, STATIC_INDEX, 1:np)))   # static: no increments
     hal = findall(mark)
-    Ec, epar = isempty(gr.edge_offsets) ? (zeros(3, 0), Int[]) : _gal_edges(X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
+    hal = hal[iszero.(vec(_gal_gather(P, hal, STATIC_INDEX:STATIC_INDEX)))]   # static: no increments
+    Ec, epar = isempty(gr.edge_offsets) ? (zeros(3, 0), Int[]) : _gal_edges(Xo, X, sgm0, gr.edge_offsets, gr.edge_spacing)
     # edge points and (halo_tol > 0) halo particles where the old tail is at least
     # edge_tol / halo_tol of its peak (the old subset field at the subset points)
     if !isempty(epar) || (gr.halo_tol > 0 && !isempty(hal))
@@ -564,11 +574,12 @@ function _gal_plan(Q, P, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset)
             Ec = Ec[:, e]; epar = epar[e]
         end
         if gr.halo_tol > 0 && !isempty(hal)
-            fh = tail(_gal_cols(Q, X_INDEX, hal), Float64.(S[hal]) .^ 2)
+            Qh = _gal_gather(P, hal, first(X_INDEX):SIGMA_INDEX)
+            fh = tail(Qh[X_INDEX, :], Qh[SIGMA_INDEX, :] .^ 2)
             hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:length(hal)]]
         end
     end
-    return (; subk = sub[keep], subd = sub[.!keep], hal, epar, eoff = Ec .- _gal_cols(Q, X_INDEX, epar))
+    return (; ks = findall(keep), subd = sub[.!keep], hal, epar, eoff = Ec .- Xo[:, epar])
 end
 
 # The solve's settings, a template of the field's array type, and what it reports
@@ -701,19 +712,18 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
     P = pfield.particles; np = get_np(pfield); R = eltype(P)
     t0 = time()
 
-    # positions, strengths and cores: a view of a host field, one gather of a device one
-    Q = P isa Matrix ? view(P, first(X_INDEX):SIGMA_INDEX, 1:np) : _radix_oversize_gather(P, collect(1:np), first(X_INDEX):SIGMA_INDEX)
-    pl = _gal_plan(Q, P, idx, sgm0, gr)
-    subk = pl.subk; hal = pl.hal; Kk = length(subk); H = length(hal); N = Kk + H + length(pl.epar)
+    # positions, strengths and cores of the subset (the halo's come with the plan)
+    Qs = _gal_gather(P, idx)
+    pl = _gal_plan(Qs, P, np, idx, sgm0, gr)
+    ks = pl.ks; subk = idx[ks]; hal = pl.hal; Qh = _gal_gather(P, hal); Kk = length(ks); H = length(hal); N = Kk + H + length(pl.epar)
     t1 = time()
 
     # unknowns [kept subset at sgm0; halo on own cores; edge points at parent + offset]
-    Y = _gal_cols(Q, X_INDEX, vcat(subk, hal, pl.epar)); Y[:, Kk+H+1:N] .+= pl.eoff
-    v = vcat(fill(sgm0^2, Kk), [Float64(Q[SIGMA_INDEX, j])^2 for j in hal], fill(sgm0^2, N - Kk - H))
-    x0 = zeros(3, N); x0[:, 1:Kk] .= _gal_cols(Q, GAMMA_INDEX, subk)
+    Y = hcat(Qs[X_INDEX, ks], Qh[X_INDEX, :], Qs[X_INDEX, pl.epar] .+ pl.eoff)
+    v = vcat(fill(sgm0^2, Kk), Qh[SIGMA_INDEX, :] .^ 2, fill(sgm0^2, N - Kk - H))
+    x0 = zeros(3, N); x0[:, 1:Kk] .= Qs[GAMMA_INDEX, ks]
     sol = _GalSolve(gr, sgm0, similar(P, 0, 0))
-    c = _gal_solve(Y, v, _gal_cols(Q, X_INDEX, idx), [Float64(Q[SIGMA_INDEX, j])^2 for j in idx],
-                   _gal_cols(Q, GAMMA_INDEX, idx), x0, sol)
+    c = _gal_solve(Y, v, Qs[X_INDEX, :], Qs[SIGMA_INDEX, :] .^ 2, Qs[GAMMA_INDEX, :], x0, sol)
     t4 = time()
 
     # prune weak edge points; keep within maxparticles (weakest dropped first)
@@ -726,7 +736,7 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
     end
 
     # write back: subset strengths and cores, halo increments, thinned out, edge points in
-    Gh = Matrix{R}(_gal_cols(Q, GAMMA_INDEX, hal) .+ c[:, Kk+1:Kk+H])
+    Gh = Matrix{R}(Qh[GAMMA_INDEX, :] .+ c[:, Kk+1:Kk+H])
     _radix_oversize_scatter!(P, subk, first(GAMMA_INDEX):SIGMA_INDEX, Matrix{R}(vcat(c[:, 1:Kk], fill(sgm0, 1, Kk))))
     H > 0 && _radix_oversize_scatter!(P, hal, GAMMA_INDEX, Gh)
     _remove_particles!(pfield, pl.subd)
