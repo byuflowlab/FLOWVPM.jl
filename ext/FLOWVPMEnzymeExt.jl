@@ -6,6 +6,7 @@
 module FLOWVPMEnzymeExt
 
 import FLOWVPM
+import EnzymeCore
 import EnzymeCore: EnzymeRules
 
 const vpm = FLOWVPM
@@ -23,6 +24,24 @@ EnzymeRules.inactive(::typeof(vpm._sfs_dsigma_request!), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._sfs_dsigma_delivered!), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._sfs_dsigma_requested), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._sfs_dsigma_delivered), args...) = nothing
+
+# Enzyme forward mode leaves the shadow of an array that a non-inlined callee
+# fills with a constant (`zeros`, `fill!`) and returns uninitialized: the
+# tangent then reads heap garbage (NaN, 1e300, wrong values, varying per call;
+# Enzyme 0.13.216). UJ_direct's FastMultipole buffers are allocated that way, so
+# return explicitly zeroed shadows.
+for f in (vpm.fmm.allocate_target_buffer, vpm.fmm.allocate_source_buffer)
+    @eval function EnzymeRules.forward(config::EnzymeRules.FwdConfig, func::EnzymeCore.Const{typeof($f)},
+                                       ::Type{RT}, args::EnzymeCore.Annotation...) where RT
+        b = func.val(map(a -> a.val, args)...)
+        N = EnzymeRules.width(config)
+        db = N == 1 ? zero(b) : ntuple(_ -> zero(b), Val(N))
+        if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+            return N == 1 ? EnzymeCore.Duplicated(b, db) : EnzymeCore.BatchDuplicated(b, db)
+        end
+        return EnzymeRules.needs_shadow(config) ? db : EnzymeRules.needs_primal(config) ? b : nothing
+    end
+end
 
 # Cache plumbing: drops the radix coupling after a reset (delete! on a global
 # IdDict, a runtime-activity error under Enzyme); carries no derivative.
