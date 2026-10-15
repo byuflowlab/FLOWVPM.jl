@@ -387,6 +387,8 @@ Lengths are in units of the scheme's `sgm0`.
 - `halo_tail = 2.0`, `halo_min = 1.0`: a non-reset particle within
   `max(halo_min, halo_tail * s_k)` of reset particle k (s_k^2 = sigma_k^2 - sgm0^2,
   the width of the tail the reset removes) keeps its core and takes a strength increment.
+- `halo_tol = 3e-3`: of those, only the ones where the old reset particles' field is at
+  least this fraction of its peak are kept (0: all).
 - `edge_offsets = [1.0, 2.0]`, `edge_spacing = 0.7`, `edge_tol = 1e-2`: new `sgm0`
   points on the stencil x_k +- a e_j where no particle lies within `edge_spacing` and
   the old field there is at least `edge_tol` of its peak. Empty offsets: none.
@@ -415,6 +417,7 @@ not fit are dropped weakest first, with a warning).
 struct GalerkinReset{R}
     halo_tail::R
     halo_min::R
+    halo_tol::R
     edge_offsets::Vector{R}
     edge_spacing::R
     edge_tol::R
@@ -428,10 +431,10 @@ struct GalerkinReset{R}
     tol::R
     gram_mem::Int
 end
-GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
+GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, halo_tol=3e-3, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
                    edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=5.0,
                    block_cell=3.0, block_cap=512, itmax=300, tol=5e-3, gram_mem=2^30) where R =
-    GalerkinReset{R}(halo_tail, halo_min, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
+    GalerkinReset{R}(halo_tail, halo_min, halo_tol, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
                      thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
 Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
@@ -473,13 +476,20 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     # old subset as the source set; edge filter (old tail >= edge_tol of its peak)
     O, operm = _gal_set(Xo, vo, sqrt(cut2 * 2 * maximum(vo)) / 2)
     Od = _gal_to(P, O); God = _gal_to(P, Go[:, operm])
-    if size(Ec, 2) > 0
-        fs = _gal_to(P, zeros(3, K)); fx = _gal_to(P, zeros(3, size(Ec, 2)))
-        _gal_pairsum!(fs, Od.x, _gal_to(P, fill(s02, K)), Od, God, cut2)
-        _gal_pairsum!(fx, _gal_to(P, Ec), _gal_to(P, fill(s02, size(Ec, 2))), Od, God, cut2)
-        fs = Float64.(Array(fs)); fx = Float64.(Array(fx))
-        thr = gr.edge_tol * maximum(sqrt(fs[1, k]^2 + fs[2, k]^2 + fs[3, k]^2) for k in 1:K)
-        Ec = Ec[:, [sqrt(fx[1, e]^2 + fx[2, e]^2 + fx[3, e]^2) >= thr for e in 1:size(Ec, 2)]]
+    # edge points and (halo_tol > 0) halo particles where the old tail is at least
+    # edge_tol / halo_tol of its peak (the old subset field at the subset points)
+    nrm3(A, j) = sqrt(A[1, j]^2 + A[2, j]^2 + A[3, j]^2)
+    tail(Y, v) = (o = _gal_to(P, zeros(3, size(Y, 2))); _gal_pairsum!(o, _gal_to(P, Y), _gal_to(P, v), Od, God, cut2); Float64.(Array(o)))
+    if size(Ec, 2) > 0 || (gr.halo_tol > 0 && H > 0)
+        fs = tail(Xo[:, operm], fill(s02, K)); peak = maximum(nrm3(fs, k) for k in 1:K)
+        if size(Ec, 2) > 0
+            fx = tail(Ec, fill(s02, size(Ec, 2)))
+            Ec = Ec[:, [nrm3(fx, e) >= gr.edge_tol * peak for e in 1:size(Ec, 2)]]
+        end
+        if gr.halo_tol > 0 && H > 0
+            fh = tail(X[:, hal], S[hal] .^ 2)
+            hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:H]]; H = length(hal)
+        end
     end
     E = size(Ec, 2); N = Kk + H + E
 
