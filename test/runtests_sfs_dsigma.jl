@@ -139,3 +139,18 @@ if haskey(ENV, "AL_DSIGMA_DEVICE")
         @test eE < tol
     end
 end
+
+# a field built (and dropped) inside a function, so nothing but the flags can hold it
+@noinline function dsigma_flagged_field_ref()
+    pf = vpm.ParticleField(10, Float64)
+    vpm._sfs_dsigma_request!(pf, true)
+    vpm._sfs_dsigma_delivered!(pf, true)
+    return WeakRef(pf), vpm._sfs_dsigma_requested(pf) && vpm._sfs_dsigma_delivered(pf)
+end
+
+@testset "two-level SFS flags hold the field weakly" begin
+    ref, flagged = dsigma_flagged_field_ref()
+    @test flagged
+    GC.gc(true); GC.gc(true)
+    @test ref.value === nothing
+end

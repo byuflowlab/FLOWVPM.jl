@@ -1077,12 +1077,12 @@ function dynamicprocedure_twolevel_afterUJ(pfield, SFS::SubFilterScale{R},
         force_positive, twolevel=true)
 end
 
-# Per-field request/delivery flags of the derivative channel (keyed by identity,
-# like the radix couplings): set by the two-level beforeUJ, read by the radix
-# evaluation (`_radix_fmm_evaluate!`, `sfs_repass!`) to ask FastMultipole for
-# the channel, cleared by the afterUJ.
-const _SFS_DSIGMA_REQUEST = IdDict{Any,Bool}()
-const _SFS_DSIGMA_DELIVERED = IdDict{Any,Bool}()
+# Per-field request/delivery flags of the derivative channel (keyed by identity:
+# ParticleField has no custom hash): set by the two-level beforeUJ, read by the
+# radix evaluation (`_radix_fmm_evaluate!`, `sfs_repass!`) to ask FastMultipole
+# for the channel, cleared by the afterUJ. Weak keys, so a dropped field is freed.
+const _SFS_DSIGMA_REQUEST = WeakKeyDict{Any,Bool}()
+const _SFS_DSIGMA_DELIVERED = WeakKeyDict{Any,Bool}()
 _sfs_dsigma_request!(pfield, on::Bool) = (_SFS_DSIGMA_REQUEST[pfield] = on; nothing)
 _sfs_dsigma_requested(pfield) = get(_SFS_DSIGMA_REQUEST, pfield, false)
 _sfs_dsigma_delivered!(pfield, on::Bool) = (_SFS_DSIGMA_DELIVERED[pfield] = on; nothing)
