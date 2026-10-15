@@ -729,9 +729,7 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
     Gh = Matrix{R}(_gal_cols(Q, GAMMA_INDEX, hal) .+ c[:, Kk+1:Kk+H])
     _radix_oversize_scatter!(P, subk, first(GAMMA_INDEX):SIGMA_INDEX, Matrix{R}(vcat(c[:, 1:Kk], fill(sgm0, 1, Kk))))
     H > 0 && _radix_oversize_scatter!(P, hal, GAMMA_INDEX, Gh)
-    for i in sort(pl.subd; rev=true)
-        remove_particle(pfield, i)
-    end
+    _remove_particles!(pfield, pl.subd)
     if !isempty(ekeep)
         blk = zeros(R, nfields, length(ekeep))
         blk[X_INDEX, :] .= Y[:, Kk+H.+ekeep]

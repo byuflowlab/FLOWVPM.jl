@@ -731,8 +731,10 @@ Remove the i-th particle in the field. This is done by moving the last particle
 that entered the field into the memory slot of the target particle. To remove
 particles sequentally, you will need to go from the last particle back to the
 first one (see documentation of `get_particleiterator` for an example).
+`move = false` leaves the particle columns alone (bookkeeping only; see
+`_remove_particles!`).
 """
-function remove_particle(pfield::ParticleField, i::Int)
+function remove_particle(pfield::ParticleField, i::Int; move::Bool=true)
     if i<=0
         error("Requested removal of invalid particle index $i")
     elseif i>get_np(pfield)
@@ -759,7 +761,7 @@ function remove_particle(pfield::ParticleField, i::Int)
 
     if i != np
         # Overwrite target particle with last particle in the field
-        get_particle(pfield, i) .= get_particle(pfield, np)
+        move && (get_particle(pfield, i) .= get_particle(pfield, np))
         # Mirror swap-with-last in the splitting side-buffers
         st.sigma_0[i] = st.sigma_0[np]
         st.H_chi[i] = st.H_chi[np]
@@ -797,7 +799,7 @@ function remove_particle(pfield::ParticleField, i::Int)
     end
 
     # Remove last particle in the field
-    _reset_particle(pfield, np)
+    move && _reset_particle(pfield, np)
     st.sigma_0[np] = zero(R)
     st.H_chi[np] = zero(R)
     st.hold_counter[np] = 0
@@ -812,6 +814,25 @@ function remove_particle(pfield::ParticleField, i::Int)
     g.filament_id[np] = 0
     pfield.np -= 1
 
+    return nothing
+end
+
+# Remove the particles `idx` (distinct): `remove_particle`'s swap-with-last in
+# descending order, with the particle columns moved by one gather and one scatter
+# at the end (two transfers on a device field instead of two kernels per removal)
+function _remove_particles!(pfield::ParticleField, idx::Vector{Int})
+    isempty(idx) && return nothing
+    np = get_np(pfield); src = Dict{Int,Int}()        # slot => column whose particle goes there
+    for i in sort(idx; rev=true)
+        n = get_np(pfield)
+        i != n && (src[i] = get(src, n, n))
+        delete!(src, n)
+        remove_particle(pfield, i; move=false)
+    end
+    n = get_np(pfield); P = pfield.particles
+    dst = collect(keys(src))
+    isempty(dst) || _radix_oversize_scatter!(P, dst, 1:nfields, _radix_oversize_gather(P, [src[j] for j in dst], 1:nfields))
+    _radix_oversize_mask_rows!(P, collect(n+1:np), first(U_INDEX):last(PSE_INDEX))   # as _reset_particle
     return nothing
 end
 
