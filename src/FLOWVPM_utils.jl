@@ -676,3 +676,15 @@ function finalize_verbose(time_beg, line1, vprintln, run_id, v_lvl)
     vprintln(line1, v_lvl)
     vprintln("ELAPSED TIME: $hrs hours $mins minutes $secs seconds", v_lvl)
 end
+
+"""
+    KConst(v)
+
+Scheme and time-step constants handed to a device kernel (`v` a scalar or a
+tuple of scalars). Enzyme annotates a bare floating-point kernel argument
+Active, which KernelAbstractions' GPU reverse rule rejects; FLOWVPMEnzymeExt
+marks this wrapper inactive, so no derivative flows to these constants.
+"""
+struct KConst{T}
+    v::T
+end

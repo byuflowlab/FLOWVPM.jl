@@ -184,10 +184,10 @@ end
 # falls back to the broadcast chain (the reference these are gated against).
 const RK3_FUSED = Ref(true)          # FLOWVPM_RK3_FUSED=0 in the environment turns it off
 
-@kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, a, b, dt,
-        uinf1, uinf2, uinf3, cfg, cf, inv_zeta0,
+@kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, sc,
         ix, ig, isig, iu, ij, im, ic, isfs, istat)
     i = @index(Global)
+    a, b, dt, uinf1, uinf2, uinf3, cfg, cf, inv_zeta0 = sc.v
     @inbounds if i <= np && P[istat, i] == zero(eltype(P))
         T = eltype(P)
         g1 = P[ig, i]; g2 = P[ig+1, i]; g3 = P[ig+2, i]
@@ -233,8 +233,8 @@ function FLOWVPM.update_particle_states_broadcast_reformulated!(
     wg = _sfs_wg(backend)
     fR = R(f); gR = R(g)
     ka_rk3_update_reformulated_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
-        R(a), R(b), R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]),
-        (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0),
+        FLOWVPM.KConst((R(a), R(b), R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]),
+        (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0))),
         first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
         first(FLOWVPM.U_INDEX), first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX),
         first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX), FLOWVPM.STATIC_INDEX;
@@ -279,8 +279,9 @@ end
 
 # core spreading's RK3 register update (two strided broadcasts, 41 ms on a
 # 400k Metal field) as one kernel
-@kernel function ka_corespreading_rk3_kernel!(P, np, nu2dt, aux1, aux2, im7, isig, istat)
+@kernel function ka_corespreading_rk3_kernel!(P, np, sc, im7, isig, istat)
     i = @index(Global)
+    nu2dt, aux1, aux2 = sc.v
     @inbounds if i <= np && P[istat, i] == zero(eltype(P))
         m7 = aux1 * P[im7, i] + nu2dt
         P[im7, i] = m7
@@ -294,7 +295,7 @@ function FLOWVPM._corespreading_rk3_broadcast!(pfield::GPUField{R}, nu, dt, aux1
     np == 0 && return nothing
     backend = KA.get_backend(pfield.particles)
     wg = _sfs_wg(backend)
-    ka_corespreading_rk3_kernel!(backend, wg)(pfield.particles, np, R(dt) * 2 * R(nu), R(aux1), R(aux2),
+    ka_corespreading_rk3_kernel!(backend, wg)(pfield.particles, np, FLOWVPM.KConst((R(dt) * 2 * R(nu), R(aux1), R(aux2))),
         FLOWVPM.M_INDEX[7], FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
     return nothing
 end
@@ -304,8 +305,9 @@ end
 # the 13-row-view broadcast chain it replaces (that chain cost 153 ms at 400k on
 # Metal; strided row views, one launch each). `RK3_FUSED[]` gates it like the
 # other fused kernels. CORRECTED selects the corrected-Pedrizzetti form.
-@kernel function ka_relax_kernel!(P, np, rlxf, ig, ij, ::Val{CORRECTED}) where {CORRECTED}
+@kernel function ka_relax_kernel!(P, np, sc, ig, ij, ::Val{CORRECTED}) where {CORRECTED}
     i = @index(Global)
+    rlxf = sc.v
     @inbounds if i <= np
         T = eltype(P)
         J2 = P[ij + 1, i]; J3 = P[ij + 2, i]; J4 = P[ij + 3, i]
@@ -337,7 +339,7 @@ for (fn, corrected) in ((FLOWVPM.relax_pedrizzetti, false), (FLOWVPM.relax_corre
         np == 0 && return nothing
         backend = KA.get_backend(pfield.particles)
         wg = _sfs_wg(backend)
-        ka_relax_kernel!(backend, wg)(pfield.particles, np, R(rlxf), first(FLOWVPM.GAMMA_INDEX),
+        ka_relax_kernel!(backend, wg)(pfield.particles, np, FLOWVPM.KConst(R(rlxf)), first(FLOWVPM.GAMMA_INDEX),
             first(FLOWVPM.J_INDEX), Val($corrected); ndrange = cld(np, wg) * wg)
         return nothing
     end
@@ -464,6 +466,26 @@ end # FLOWVPM._FMM_HAS_RADIX
 
 #------- direct-sum kernels (KernelAbstractions, any GPU backend) -------#
 
+# P[r0+k, j] = (accumulate ? P[r0+k, j] : 0) + out[o0+k, j], k in 0:nr-1, j in 1:n: a
+# direct sum's write-back as a kernel. Enzyme differentiates KA kernels on the GPU but
+# fails type analysis on a broadcast over row views of the device matrix.
+@kernel function ka_rows_update_kernel!(P, @Const(out), o0, r0, nr, n, accumulate::Bool)
+    j = @index(Global)
+    @inbounds if j <= n
+        for k in 0:(nr - 1)
+            v = out[o0 + k, j]
+            P[r0 + k, j] = accumulate ? P[r0 + k, j] + v : v
+        end
+    end
+end
+function _rows_update!(P, out, o0, rows::UnitRange, n, accumulate::Bool)
+    backend = KA.get_backend(P)
+    ka_rows_update_kernel!(backend, 256)(P, out, o0, first(rows), length(rows), n, accumulate;
+        ndrange = cld(n, 256) * 256)
+    KA.synchronize(backend)
+    return nothing
+end
+
 # Each thread handles one target and loops directly over all sources in
 # global (device) memory.
 @kernel function ka_direct_kernel!(out, @Const(s), n::Int32, kernel)
@@ -560,8 +582,8 @@ function FLOWVPM.gpu_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel
     ka_direct_kernel!(KA.get_backend(pfield.particles), 256)(out, s, Int32(n), pfield.kernel.g_dgdr; ndrange=n)
     KA.synchronize(KA.get_backend(pfield.particles))
 
-    view(P, FLOWVPM.U_INDEX, 1:n) .+= view(out, 1:3, :)
-    view(P, FLOWVPM.J_INDEX, 1:n) .+= view(out, 4:12, :)
+    _rows_update!(P, out, 1, FLOWVPM.U_INDEX, n, true)
+    _rows_update!(P, out, 4, FLOWVPM.J_INDEX, n, true)
 
     return nothing
 end
@@ -628,7 +650,7 @@ function FLOWVPM.gpu_zeta_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
     # CPU `zeta_direct` zeroes VORTICITY_INDEX before accumulating (over ALL
     # particles, per the include_static=true above), so this is an
     # assignment, not an accumulation, to match.
-    view(P, FLOWVPM.VORTICITY_INDEX, 1:n) .= view(out, 1:3, :)
+    _rows_update!(P, out, 1, FLOWVPM.VORTICITY_INDEX, n, false)
 
     return nothing
 end
@@ -727,7 +749,7 @@ function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
         ndrange=n)
     KA.synchronize(KA.get_backend(pfield.particles))
 
-    view(P, FLOWVPM.SFS_INDEX, 1:n) .+= view(out, 1:3, :)
+    _rows_update!(P, out, 1, FLOWVPM.SFS_INDEX, n, true)
 
     return nothing
 end
@@ -790,9 +812,10 @@ end
 
 # Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
 @kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
-        fac, rlxf, minC, maxC, zeta0, epsv, ::Val{FP}, subtract::Bool,
+        sc, ::Val{FP}, subtract::Bool,
         ig, isig, ij, im, ic, isfs, istat) where {FP}
     i = @index(Global)
+    fac, rlxf, minC, maxC, zeta0, epsv = sc.v
     @inbounds if i <= np
         T = eltype(P)
         act = P[istat, i] == zero(T)
@@ -845,9 +868,10 @@ end
 
 # Port of the post-UJ half of `_pseudo3level_beforeUJ_broadcast!`: zero M for
 # active particles, store the test-filter stretching and E_str, restore sigma.
-@kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, alpha,
+@kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, sc,
         ig, isig, ij, im, isfs, istat)
     i = @index(Global)
+    alpha = sc.v
     @inbounds if i <= np
         T = eltype(P)
         if P[istat, i] == zero(T)
@@ -867,8 +891,9 @@ end
 end
 
 # sigma *= alpha on active particles (the test-filter width), before the UJ call
-@kernel function ka_sfs_scale_sigma_kernel!(P, np, alpha, isig, istat)
+@kernel function ka_sfs_scale_sigma_kernel!(P, np, sc, isig, istat)
     i = @index(Global)
+    alpha = sc.v
     @inbounds if i <= np
         T = eltype(P)
         P[istat, i] == zero(T) && (P[isig, i] = P[isig, i] * alpha)
@@ -888,8 +913,8 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
     wg = _sfs_wg(backend)
     kern = ka_sfs_afterUJ_kernel!(backend, wg)
     kern(pfield.particles, flag, np, pfield.transposed,
-         twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
-         R(pfield.kernel.zeta(zero(R))), R(eps()), Val(force_positive), !twolevel,
+         FLOWVPM.KConst((twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
+         R(pfield.kernel.zeta(zero(R))), R(eps()))), Val(force_positive), !twolevel,
          first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX, first(FLOWVPM.J_INDEX),
          first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX),
          FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
@@ -906,13 +931,13 @@ function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha:
     backend = KA.get_backend(pfield.particles)
     wg = _sfs_wg(backend)
     ndr = cld(np, wg) * wg
-    ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, R(alpha),
+    ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, FLOWVPM.KConst(R(alpha)),
         FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = ndr)
     KA.synchronize(backend)
     # UJ at the test filter width (device radix path; resets U/J and the SFS rows)
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
     ka_sfs_beforeUJ_store_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
-        R(alpha), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
+        FLOWVPM.KConst(R(alpha)), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
         first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX), first(FLOWVPM.SFS_INDEX),
         FLOWVPM.STATIC_INDEX; ndrange = ndr)
     KA.synchronize(backend)

@@ -43,6 +43,10 @@ for f in (vpm.fmm.allocate_target_buffer, vpm.fmm.allocate_source_buffer)
     end
 end
 
+# Device-kernel scheme/time-step constants (dt, RK3 coefficients, rlxf, SFS
+# bounds): no derivative, and KernelAbstractions rejects Active GPU arguments.
+EnzymeRules.inactive_type(::Type{<:vpm.KConst}) = true
+
 # Cache plumbing: drops the radix coupling after a reset (delete! on a global
 # IdDict, a runtime-activity error under Enzyme); carries no derivative.
 EnzymeRules.inactive(::typeof(vpm.clear_radix_fmm_cache!), args...) = nothing
