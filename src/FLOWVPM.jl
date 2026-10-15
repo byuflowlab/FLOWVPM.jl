@@ -27,7 +27,7 @@ import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
 # using ReverseDiff
 using StaticArrays
-using LinearAlgebra: eigen, Symmetric, cholesky, issuccess
+using LinearAlgebra: eigen, Symmetric, cholesky, issuccess, dot
 # using CUDA
 # using CUDA: i32
 using Primes
@@ -81,7 +81,7 @@ const const4 = 1/(4*pi)
 const sqr2 = sqrt(2)
 
 # ------------ HEADERS ---------------------------------------------------------
-for header_name in ["kernel", "viscous", "formulation",
+for header_name in ["kernel", "corespreading_galerkin", "viscous", "formulation",
                     "relaxation", "subfilterscale",
                     "particlefield", "ambient", "fmm",
                     "fmm_radix",

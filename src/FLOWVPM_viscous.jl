@@ -80,6 +80,7 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
     precondition::Bool                    # Block-Jacobi preconditioned CG (false: plain CG)
     block_cell::R                         # Preconditioner block cell, in units of sgm0
     block_cap::Int                        # Most particles in one preconditioner block
+    galerkin::Union{Nothing,GalerkinReset{R}} # Galerkin reset parameters (nothing: RBF collocation reset)
 
     # Internal properties
     t_sgm::R                              # Time since last core size reset
@@ -98,6 +99,8 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         itmax=100, tol=R(1e-3),
                         iterror=true, verbose=false, v_lvl=2, debug=false,
                         precondition=true, block_cell=R(8), block_cap=64,
+                        reset::Symbol=:collocation,
+                        galerkin=(reset === :galerkin ? GalerkinReset{R}() : nothing),
                         t_sgm=R(0.0),
                         rbf::Trbf=rbf_conjugategradient,
                         rr0s=zeros(R, 3), rrs=zeros(R, 3), prev_rrs=zeros(R, 3),
@@ -109,6 +112,8 @@ mutable struct CoreSpreading{R,Tzeta,Trbf} <: ViscousScheme{R}
                         itmax, tol,
                         iterror, verbose, v_lvl, debug,
                         precondition, block_cell, block_cap,
+                        reset in (:collocation, :galerkin) ? galerkin :
+                            error("CoreSpreading: reset must be :collocation or :galerkin, got :$reset"),
                         t_sgm,
                         rbf,
                         rr0s, rrs, prev_rrs,
@@ -151,6 +156,15 @@ residual).
   `false` runs the plain CG.
 - `block_cell::Real = 8` Preconditioner block cell, in units of `sgm0`.
 - `block_cap::Int = 64` Most particles in one preconditioner block.
+- `reset::Symbol = :collocation` The reset method. `:collocation` is the RBF solve
+  above (`rbf`, `itmax`, `tol`, `precondition`). `:galerkin` is the L2 projection of
+  the old Gaussian field onto the reset cores, their neighbours' increments and new
+  edge points (`GalerkinReset`; gaussianerf kernel). It holds the old tails (2-20x
+  lower error than the collocation on the 5MW and Lamb-Oseen studies, circulation
+  kept to ~1 %) and costs a pair sum over the reset region only, not the whole field;
+  it adds and removes particles, so the field needs `maxparticles` headroom.
+- `galerkin::GalerkinReset` Parameters of the `:galerkin` reset (defaults with
+  `reset = :galerkin`).
 - `rbf::Function = rbf_conjugategradient` RBF function.
 - `rr0s::Array{R, 1} = zeros(R, 3)` Initial field residuals.
 - `rrs::Array{R, 1} = zeros(R, 3)` Current field residuals.
@@ -449,6 +463,11 @@ end
 # to `sgm0`, strengths re-solved by conjugate gradient (host and device
 # `rbf_conjugategradient`, `zeta_fmm` methods), growth timer restarted.
 function _corespreading_reset!(pfield, scheme::CoreSpreading)
+    if scheme.galerkin !== nothing
+        _galerkin_reset!(pfield, scheme, collect(1:get_np(pfield)))
+        scheme.t_sgm = 0
+        return nothing
+    end
     # Calculate approximated vorticity into the dedicated vorticity field.
     scheme.zeta(pfield)
 
@@ -494,9 +513,15 @@ zero strength during the solve, so A·p is linear in p), then the rest is
 restored. Meant for the OVERGROWN tail: a reset of contracted cores cannot be
 represented at sgm0 (2026-09-22, see notes) and this never touches them.
 Host and device fields (the gather/scatter helpers of the oversize mask).
+
+With `reset = :galerkin` the subset takes the Galerkin reset instead (see
+`GalerkinReset`): the particle count changes (edge points appended at the end,
+thinned subset particles removed by swap-with-last), so indices other than the
+untouched leading ones are not stable across the call.
 """
 function corespreading_reset_subset!(pfield, scheme::CoreSpreading, idx::Vector{Int})
     isempty(idx) && return nothing
+    scheme.galerkin === nothing || (_galerkin_reset!(pfield, scheme, idx); return nothing)
     P = pfield.particles; np = pfield.np
     R = eltype(P)
     grows = first(GAMMA_INDEX):last(GAMMA_INDEX)

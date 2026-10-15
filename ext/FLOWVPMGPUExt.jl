@@ -463,6 +463,28 @@ _rowvec(P, v) = (c = similar(P, eltype(P), 3, 1); copyto!(c, reshape(eltype(P).(
 
 end # FLOWVPM._FMM_HAS_RADIX
 
+# Galerkin core-spreading reset (src/FLOWVPM_corespreading_galerkin.jl): the
+# Gaussian pair sum with per-pair variance, one lane per target, over a
+# cell-sorted source set. Serves the Gram matvec, the right-hand side and the
+# edge filter; the row body is the host loop's `_gal_row`.
+@kernel function ka_gal_pair_kernel!(out, @Const(tx), @Const(tv), @Const(sx), @Const(sv), @Const(c),
+        @Const(cstart), n, lo, h, cut2, vmax, nt)
+    i = @index(Global)
+    @inbounds if i <= nt
+        o1, o2, o3 = FLOWVPM._gal_row(tx, tv, i, sx, sv, c, cstart, n, lo, h, cut2, vmax)
+        out[1, i] = o1; out[2, i] = o2; out[3, i] = o3
+    end
+end
+function FLOWVPM._gal_pairsum!(out::AnyGPUMatrix, tx, tv, S::FLOWVPM._GalSet, c, cut2)
+    nt = size(tx, 2)
+    nt == 0 && return out
+    backend = KA.get_backend(out)
+    ka_gal_pair_kernel!(backend, 256)(out, tx, tv, S.x, S.v, c, S.cstart, S.n, S.lo, S.h,
+        eltype(out)(cut2), S.vmax, Int32(nt); ndrange=nt)
+    return out
+end
+
+
 
 #------- direct-sum kernels (KernelAbstractions, any GPU backend) -------#
 
