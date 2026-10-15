@@ -85,6 +85,8 @@ function Estr_direct_multithreaded(pfield::ParticleField)
             tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
             for i_source in 1:pfield.np
+                # the self pair adds exactly zero; skipped so sqrt(0) never meets a dual number
+                i_source == i_target && continue
                 source_particle = get_particle(pfield, i_source)
                 is_static(source_particle) && continue
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
@@ -106,6 +108,8 @@ function Estr_direct_singlethreaded(pfield::ParticleField)
         tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
         for i_source in 1:pfield.np
+            # the self pair adds exactly zero; skipped so sqrt(0) never meets a dual number
+            i_source == i_target && continue
             source_particle = get_particle(pfield, i_source)
             is_static(source_particle) && continue
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
