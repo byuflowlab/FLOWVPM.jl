@@ -122,6 +122,12 @@ end
 # half goes to per-thread buffers. Rows 1:R keep their pairs (Int32 column +
 # Float32 value, 8 bytes a pair; R as many rows as fit in `gram_mem`), the other
 # rows are evaluated on the fly. Buffers: 40 bytes per unknown and thread.
+# Storage reused across resets (grown on demand): the stored Gram pairs
+struct _GalWork
+    col::Vector{Int32}; val::Vector{Float32}
+end
+_GalWork() = _GalWork(Int32[], Float32[])
+
 struct _GalOp
     R::Int; rp::Vector{Int}; col::Vector{Int32}; val::Vector{Float32}
     y::Vector{Matrix{Float64}}; ib::Vector{Vector{Int32}}; rb::Vector{Vector{Float64}}
@@ -176,13 +182,14 @@ function _gal_halfrow!(y, x, S::_GalSet, i, cut2, ib, rb, col, val, p)
     end
 end
 
-function _GalOp(S::_GalSet, cut2, maxbytes)
+function _GalOp(S::_GalSet, cut2, maxbytes, ws::_GalWork)
     N = size(S.x, 2); nt = Threads.nthreads()
     ib = [zeros(Int32, N) for _ in 1:nt]; rb = [zeros(N) for _ in 1:nt]
-    cnt = zeros(Int, N); col = Int32[]; val = Float32[]
+    cnt = zeros(Int, N); col = ws.col; val = ws.val
+    empt = Int32[]; emptv = Float32[]
     Threads.@threads :static for t in 1:nt
         for i in t:nt:N
-            cnt[i] = _gal_halfrow!(nothing, nothing, S, i, cut2, ib[t], rb[t], col, val, 0)
+            cnt[i] = _gal_halfrow!(nothing, nothing, S, i, cut2, ib[t], rb[t], empt, emptv, 0)
         end
     end
     rp = cumsum(vcat(1, cnt))
@@ -305,7 +312,7 @@ _gal_ferr(x, r, f, d, oo) =
 # point p of the host set S covers field point j when |x_j - x_p|^2 <= S.v[p]
 # (S's cell must be at least the largest radius). Sets jmark[j] (j covered by
 # anything) and pmark[p] (p covers some field point).
-function _gal_cover!(jmark, pmark, S::_GalSet, X::Matrix{Float64})
+function _gal_cover!(jmark, pmark, S::_GalSet, X::AbstractMatrix)
     nt = Threads.nthreads(); N = size(X, 2)
     pm = [zeros(Bool, length(pmark)) for _ in 1:nt]      # per-chunk marks: no shared writes
     Threads.@threads for t in 1:nt
@@ -360,7 +367,7 @@ end
 # Edge-point candidates: the axial stencil x_k +- a sgm0 e_j of every reset
 # particle, kept where no field particle and no accepted point lies within
 # `spacing` sgm0
-function _gal_edges(X::Matrix{Float64}, sub::Vector{Int}, sgm0, offsets, spacing)
+function _gal_edges(X::AbstractMatrix, sub::Vector{Int}, sgm0, offsets, spacing)
     q = spacing * sgm0
     C = zeros(3, 6 * length(offsets) * length(sub))
     col = 0
@@ -430,12 +437,13 @@ struct GalerkinReset{R}
     itmax::Int
     tol::R
     gram_mem::Int
+    ws::_GalWork
 end
 GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, halo_tol=3e-3, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
                    edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=5.0,
-                   block_cell=3.0, block_cap=512, itmax=300, tol=5e-3, gram_mem=2^30) where R =
+                   block_cell=3.0, block_cap=512, itmax=300, tol=5e-3, gram_mem=2^30, ws=_GalWork()) where R =
     GalerkinReset{R}(halo_tail, halo_min, halo_tol, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
-                     thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem)
+                     thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem, ws)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
 Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
     GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
@@ -455,11 +463,11 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     cut2 = Float64(gr.gram_cut)^2
     t0 = time()
 
-    # host copy of positions, strengths and cores (one gather on a device field)
-    Q = Float64.(_radix_oversize_gather(P, collect(1:np), first(X_INDEX):SIGMA_INDEX))
-    X = Q[X_INDEX, :]; S = Q[SIGMA_INDEX, :]
+    # positions, strengths and cores: a view of a host field, one gather of a device one
+    Q = P isa Matrix ? view(P, first(X_INDEX):SIGMA_INDEX, 1:np) : _radix_oversize_gather(P, collect(1:np), first(X_INDEX):SIGMA_INDEX)
+    X = view(Q, X_INDEX, :); S = view(Q, SIGMA_INDEX, :)
     sub = idx; K = length(sub)
-    Xo = X[:, sub]; Go = Q[GAMMA_INDEX, sub]; vo = S[sub] .^ 2
+    Xo = Float64.(X[:, sub]); Go = Float64.(Q[GAMMA_INDEX, sub]); vo = Float64.(S[sub]) .^ 2
 
     # thinning, halo (per-particle radius from the tail width), edge candidates
     keep = _gal_thin(Xo, [sqrt(Go[1, k]^2 + Go[2, k]^2 + Go[3, k]^2) for k in 1:K], gr.thin * sgm0)
@@ -487,7 +495,7 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
             Ec = Ec[:, [nrm3(fx, e) >= gr.edge_tol * peak for e in 1:size(Ec, 2)]]
         end
         if gr.halo_tol > 0 && H > 0
-            fh = tail(X[:, hal], S[hal] .^ 2)
+            fh = tail(Float64.(X[:, hal]), Float64.(S[hal]) .^ 2)
             hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:H]]; H = length(hal)
         end
     end
@@ -510,7 +518,7 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     x = _gal_to(P, x0[:, uperm])
     t2 = time()
 
-    A, nnz = P isa Matrix ? _GalOp(U, cut2, gr.gram_mem) : (nothing, -1)
+    A, nnz = P isa Matrix ? _GalOp(U, cut2, gr.gram_mem, gr.ws) : (nothing, -1)
     mem = A === nothing ? 0 : 8 * (A.rp[A.R + 1] - 1) + 8 * (N + 1) + 40N * length(A.y)
     t3 = time()
 
