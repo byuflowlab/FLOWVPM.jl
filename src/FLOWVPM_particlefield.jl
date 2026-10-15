@@ -226,7 +226,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     # Internal properties
     np::Int                                     # Number of particles in the field
     nt::Int                                     # Current time step number
-    t::Real                                     # Current time
+    t::Float64                                  # Current time (concrete: `t + dt` stays static; Float64 for any field eltype)
 
     # Solver setting
     kernel::Tkernel                             # Vortex particle kernel
@@ -265,7 +265,7 @@ is created with the default values for the other parameters.
 - `viscous::ViscousScheme=Inviscid()`: Viscous scheme. Note that with `rVPM` formulation, artificial viscosity is not needed for numerical stability, as is common in VPM.
 - `np::Int=0`: Number of particles currently in the field.
 - `nt::Int=0`: Current time step number.
-- `t::Real=0`: Current simulation time.
+- `t::Real=0`: Current simulation time (stored as Float64).
 - `transposed::Bool=true`: If true, the transposed scheme of the stretching term is used (recommended for stability).
 - `fmm::FMM`: Fast multipole method tuning and auto-tuning settings.
 - `M::Array{R, 1}=zeros(R, 4)`: Auxilliary memory for computations. Should not be modified for most purposes.
@@ -309,7 +309,7 @@ _with_precision(x::DynamicSFS{R0,Tm,Tpb,Tpa,Tc,Tcl}, ::Type{R}) where {R0,Tm,Tpb
 function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         formulation::F=formulation_default,
         viscous::V=Inviscid(),
-        np=0, nt=0, t=zero(R),
+        np=0, nt=0, t=0.0,
         transposed=true,
         fmm::FMM=FMM(),
         SFS::S=SFS_default, kernel::Tkernel=kernel_default,
