@@ -17,10 +17,10 @@
     research-notes flowunsteady-update/details/2026-10-14_rbf-reset-fix_1.md,
     "Overnight: recommended reset method".
 
-    Host fields store M in CSR (Float32 values, Int32 columns) below
-    `gram_mem` bytes and evaluate it on the fly above (`_GalFly`, each pair
-    once); device fields evaluate it on the fly with the pair kernel (`_gal_row`,
-    KA kernel in the GPU extension). The selection (thinning, halo, edge points) runs on the host
+    Host fields evaluate M with each pair once (`_GalOp`), storing the pairs of
+    as many rows as fit in `gram_mem` and the rest on the fly; device fields
+    evaluate it on the fly with the pair kernel (`_gal_row`, KA kernel in the GPU
+    extension). The CG is block-Jacobi preconditioned (`_gal_blocks`). The selection (thinning, halo, edge points) runs on the host
     over a copy of positions, strengths and cores.
 =###############################################################################
 
@@ -117,88 +117,31 @@ function _gal_to(P, S::_GalSet)
     return _GalSet(_gal_to(P, S.x), _gal_to(P, S.v), _gal_to(P, S.cstart), S.n, T.(S.lo), T(S.h), T(S.vmax))
 end
 
-# Gram matrix of a host set in CSR (rows sorted like the set), or `nothing`
-# when it would take more than `maxbytes` (the operator is then on the fly)
-struct _GalCSR
-    rp::Vector{Int}; col::Vector{Int32}; val::Vector{Float32}
-end
-
-# Row i of the Gram matrix of S: counts the entries when `col` is empty, else
-# writes them from position p
-function _gal_csr_row!(col, val, p, S::_GalSet, i, cut2)
-    x1 = S.x[1, i]; x2 = S.x[2, i]; x3 = S.x[3, i]; vi = S.v[i]
-    m = ceil(Int, sqrt(cut2 * (vi + S.vmax)) / S.h)
-    a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
-    a0 = max(a - m, 0); a1 = min(a + m, S.n[1] - 1)
-    cnt = 0
-    @inbounds for kc in max(c - m, 0):min(c + m, S.n[3] - 1), kb in max(b - m, 0):min(b + m, S.n[2] - 1)
-        k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
-        for q in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
-            d1 = S.x[1, q] - x1; d2 = S.x[2, q] - x2; d3 = S.x[3, q] - x3
-            r2 = d1 * d1 + d2 * d2 + d3 * d3
-            vv = vi + S.v[q]
-            if r2 <= cut2 * vv
-                if !isempty(col)
-                    col[p + cnt] = q
-                    val[p + cnt] = _GAL_C3 * exp(-0.5 * r2 / vv) / (vv * sqrt(vv))
-                end
-                cnt += 1
-            end
-        end
-    end
-    return cnt
-end
-
-function _gal_csr(S::_GalSet, cut2, maxbytes)
-    N = size(S.x, 2); cnt = zeros(Int, N)
-    empt = Int32[]; emptv = Float32[]
-    Threads.@threads for i in 1:N
-        cnt[i] = _gal_csr_row!(empt, emptv, 0, S, i, cut2)
-    end
-    nnz = sum(cnt)
-    8 * nnz > maxbytes && return nothing, nnz
-    rp = Vector{Int}(undef, N + 1); rp[1] = 1
-    for i in 1:N; rp[i + 1] = rp[i] + cnt[i]; end
-    col = Vector{Int32}(undef, nnz); val = Vector{Float32}(undef, nnz)
-    Threads.@threads for i in 1:N
-        _gal_csr_row!(col, val, rp[i], S, i, cut2)
-    end
-    return _GalCSR(rp, col, val), nnz
-end
-
-# y = M x: stored CSR, or on the fly over the set
-function _gal_gram!(y, A::_GalCSR, S, x, cut2)
-    Threads.@threads for i in 1:length(A.rp) - 1
-        o1 = 0.0; o2 = 0.0; o3 = 0.0
-        @inbounds for p in A.rp[i]:A.rp[i + 1] - 1
-            j = A.col[p]; w = Float64(A.val[p])
-            o1 += w * x[1, j]; o2 += w * x[2, j]; o3 += w * x[3, j]
-        end
-        y[1, i] = o1; y[2, i] = o2; y[3, i] = o3
-    end
-    return y
-end
-_gal_gram!(y, ::Nothing, S, x, cut2) = _gal_pairsum!(y, S.x, S.v, S, x, cut2)   # device
-
-# On-the-fly Gram operator (host): each pair once, from the row of the wider core
-# (ties: the larger index), so row i searches r <= gram_cut sqrt(2 v_i) only; the
-# transposed half goes to per-thread buffers. Per cell run, the candidates are
-# compacted branch-free before the weights. Buffers: 40 N bytes per thread.
-struct _GalFly
+# Host Gram operator. Each pair once, from the row of the wider core (ties: the
+# larger index), so row i searches r <= gram_cut sqrt(2 v_i) only; the transposed
+# half goes to per-thread buffers. Rows 1:R keep their pairs (Int32 column +
+# Float32 value, 8 bytes a pair; R as many rows as fit in `gram_mem`), the other
+# rows are evaluated on the fly. Buffers: 40 bytes per unknown and thread.
+struct _GalOp
+    R::Int; rp::Vector{Int}; col::Vector{Int32}; val::Vector{Float32}
     y::Vector{Matrix{Float64}}; ib::Vector{Vector{Int32}}; rb::Vector{Vector{Float64}}
 end
-_GalFly(N) = (nt = Threads.nthreads();
-              _GalFly([zeros(3, N) for _ in 1:nt], [zeros(Int32, N) for _ in 1:nt], [zeros(N) for _ in 1:nt]))
 
-function _gal_flyrow!(y, x, S::_GalSet, i, cut2, ib, rb)
+# Row i's own pairs (candidates of each cell run compacted branch-free, then
+# weighted): y === nothing counts them, or stores them from col[p] when col is
+# not empty; else adds the row's products to y (diagonal included).
+function _gal_halfrow!(y, x, S::_GalSet, i, cut2, ib, rb, col, val, p)
     @inbounds begin
         x1 = S.x[1, i]; x2 = S.x[2, i]; x3 = S.x[3, i]; vi = S.v[i]
-        c1 = x[1, i]; c2 = x[2, i]; c3 = x[3, i]
-        w = _GAL_C3 / (2vi * sqrt(2vi))
-        o1 = w * c1; o2 = w * c2; o3 = w * c3
+        c1 = 0.0; c2 = 0.0; c3 = 0.0; o1 = 0.0; o2 = 0.0; o3 = 0.0
+        if y !== nothing
+            c1 = x[1, i]; c2 = x[2, i]; c3 = x[3, i]
+            w = _GAL_C3 / (2vi * sqrt(2vi)); o1 = w * c1; o2 = w * c2; o3 = w * c3
+        end
         m = ceil(Int, sqrt(2cut2 * vi) / S.h)
         a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
         a0 = max(a - m, 0); a1 = min(a + m, S.n[1] - 1)
+        cnt = 0
         for kc in max(c - m, 0):min(c + m, S.n[3] - 1), kb in max(b - m, 0):min(b + m, S.n[2] - 1)
             k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
             n = 0
@@ -209,24 +152,67 @@ function _gal_flyrow!(y, x, S::_GalSet, i, cut2, ib, rb)
                 ib[n + 1] = q; rb[n + 1] = r2
                 n += (r2 <= cut2 * (vi + vq)) & ((vq < vi) | ((vq == vi) & (q < i)))
             end
-            for k in 1:n
-                q = ib[k]; vv = vi + S.v[q]
-                w = _GAL_C3 * exp(-0.5 * rb[k] / vv) / (vv * sqrt(vv))
-                o1 += w * x[1, q]; o2 += w * x[2, q]; o3 += w * x[3, q]
-                y[1, q] += w * c1; y[2, q] += w * c2; y[3, q] += w * c3
+            if y === nothing
+                if !isempty(col)
+                    for k in 1:n
+                        vv = vi + S.v[ib[k]]
+                        col[p + cnt + k - 1] = ib[k]; val[p + cnt + k - 1] = _GAL_C3 * exp(-0.5 * rb[k] / vv) / (vv * sqrt(vv))
+                    end
+                end
+            else
+                for k in 1:n
+                    q = ib[k]; vv = vi + S.v[q]
+                    w = _GAL_C3 * exp(-0.5 * rb[k] / vv) / (vv * sqrt(vv))
+                    o1 += w * x[1, q]; o2 += w * x[2, q]; o3 += w * x[3, q]
+                    y[1, q] += w * c1; y[2, q] += w * c2; y[3, q] += w * c3
+                end
             end
+            cnt += n
         end
-        y[1, i] += o1; y[2, i] += o2; y[3, i] += o3
+        if y !== nothing
+            y[1, i] += o1; y[2, i] += o2; y[3, i] += o3
+        end
+        return cnt
     end
-    return nothing
 end
 
-function _gal_gram!(y, A::_GalFly, S, x, cut2)
+function _GalOp(S::_GalSet, cut2, maxbytes)
+    N = size(S.x, 2); nt = Threads.nthreads()
+    ib = [zeros(Int32, N) for _ in 1:nt]; rb = [zeros(N) for _ in 1:nt]
+    cnt = zeros(Int, N); col = Int32[]; val = Float32[]
+    Threads.@threads :static for t in 1:nt
+        for i in t:nt:N
+            cnt[i] = _gal_halfrow!(nothing, nothing, S, i, cut2, ib[t], rb[t], col, val, 0)
+        end
+    end
+    rp = cumsum(vcat(1, cnt))
+    R = searchsortedlast(rp, maxbytes ÷ 8 + 1) - 1
+    resize!(col, rp[R + 1] - 1); resize!(val, rp[R + 1] - 1)
+    Threads.@threads :static for t in 1:nt
+        for i in t:nt:R
+            _gal_halfrow!(nothing, nothing, S, i, cut2, ib[t], rb[t], col, val, rp[i])
+        end
+    end
+    return _GalOp(R, rp, col, val, [zeros(3, N) for _ in 1:nt], ib, rb), rp[end] - 1
+end
+
+function _gal_gram!(y, A::_GalOp, S, x, cut2)
     N = size(x, 2); nt = length(A.y); nb = cld(N, 256)
     Threads.@threads :static for t in 1:nt          # blocks of 256 rows, round robin
         yt = A.y[t]; fill!(yt, 0)
-        for k in t:nt:nb, i in 256(k - 1) + 1:min(256k, N)
-            _gal_flyrow!(yt, x, S, i, cut2, A.ib[t], A.rb[t])
+        @inbounds for k in t:nt:nb, i in 256(k - 1) + 1:min(256k, N)
+            if i <= A.R
+                c1 = x[1, i]; c2 = x[2, i]; c3 = x[3, i]
+                w = _GAL_C3 / (2S.v[i] * sqrt(2S.v[i])); o1 = w * c1; o2 = w * c2; o3 = w * c3
+                for p in A.rp[i]:A.rp[i + 1] - 1
+                    q = A.col[p]; w = Float64(A.val[p])
+                    o1 += w * x[1, q]; o2 += w * x[2, q]; o3 += w * x[3, q]
+                    yt[1, q] += w * c1; yt[2, q] += w * c2; yt[3, q] += w * c3
+                end
+                yt[1, i] += o1; yt[2, i] += o2; yt[3, i] += o3
+            else
+                _gal_halfrow!(yt, x, S, i, cut2, A.ib[t], A.rb[t], A.col, A.val, 0)
+            end
         end
     end
     Threads.@threads for j in 1:N
@@ -238,26 +224,74 @@ function _gal_gram!(y, A::_GalFly, S, x, cut2)
     end
     return y
 end
+_gal_gram!(y, ::Nothing, S, x, cut2) = _gal_pairsum!(y, S.x, S.v, S, x, cut2)   # device
 
-# Conjugate gradient on (M + D) x = f, the three components stacked (one step
-# length), from the x on entry. Stops at itmax or, with field_tol > 0, when the
-# relative L2 field error (`_gal_ferr`) reaches it. Returns the iterations.
-function _gal_cg!(x, r, p, Ap, f, d, A, S, cut2, itmax, field_tol, oo)
+# Block-Jacobi preconditioner of M + D: the unknowns grouped on a grid of cell h,
+# crowded cells split into octants down to `cap` (`_cs_split!`), each block's
+# dense matrix inverted once per reset. Same storage as `_cs_blocks` (perm =
+# positions in the set), applied by `_cs_block_apply!` (device: GPU extension).
+function _gal_blocks(S::_GalSet, d::Vector{Float64}, cut2, h, cap, ::Type{TF}) where TF
+    N = size(S.x, 2)
+    keys = [(floor(Int, S.x[1, k] / h), floor(Int, S.x[2, k] / h), floor(Int, S.x[3, k] / h)) for k in 1:N]
+    order = sortperm(keys)
+    blocks = Vector{Vector{Int}}()
+    i = 1
+    while i <= N
+        j = i
+        while j < N && keys[order[j + 1]] == keys[order[i]]; j += 1; end
+        _cs_split!(blocks, S.x, order[i:j], Float64.(keys[order[i]]) .* h, h, cap)
+        i = j + 1
+    end
+    nb = length(blocks)
+    start = Vector{Int32}(undef, nb + 1); moff = Vector{Int}(undef, nb + 1)
+    perm = reduce(vcat, blocks); block_of = Vector{Int32}(undef, N)
+    start[1] = 1; moff[1] = 1
+    for (b, blk) in enumerate(blocks)
+        n = length(blk)
+        start[b + 1] = start[b] + n; moff[b + 1] = moff[b] + n * n
+        block_of[start[b]:start[b + 1] - 1] .= b
+    end
+    minv = Vector{TF}(undef, moff[end] - 1)
+    Threads.@threads for b in 1:nb
+        blk = blocks[b]
+        A = [(vv = S.v[a] + S.v[c]; r2 = (S.x[1, a] - S.x[1, c])^2 + (S.x[2, a] - S.x[2, c])^2 + (S.x[3, a] - S.x[3, c])^2;
+              (r2 <= cut2 * vv) * _GAL_C3 * exp(-0.5 * r2 / vv) / (vv * sqrt(vv)) + (a == c) * d[a]) for a in blk, c in blk]
+        F = cholesky(Symmetric(A); check = false)
+        Ai = issuccess(F) ? inv(F) : [a == c ? 1 / A[a, a] : 0.0 for a in axes(A, 1), c in axes(A, 2)]
+        copyto!(view(minv, moff[b]:(moff[b + 1] - 1)), vec(Ai))
+    end
+    return (; perm = Int32.(perm), start, block_of, moff, minv)
+end
+_gal_precond!(z, r, blk::NamedTuple) = _gal_block_apply!(z, r, blk)
+_gal_precond!(z, r, ::Nothing) = (z .= r)
+_gal_block_apply!(z, r, blk) = _cs_block_apply!(z, r, (; blk..., nblocks = length(blk.start) - 1))
+
+# Preconditioned conjugate gradient on (M + D) x = f, the three components stacked
+# (one step length), from the x on entry. Each iteration lowers the damped squared
+# field error, oo + 2 (x'(M + D)x/2 - x'f), by alpha r'z (no extra product); the
+# solve stops when the last 10 iterations lowered it by less than tol^2 oo, at
+# itmax, or where the cut Gram matrix stops being positive (p'Ap <= 0).
+function _gal_cg!(x, r, p, Ap, z, f, d, A, S, cut2, blk, itmax, tol, oo)
     T = eltype(x)
     _gal_gram!(Ap, A, S, x, cut2); Ap .+= d .* x
-    r .= f .- Ap; p .= r
-    rr = Float64(dot(r, r))
+    r .= f .- Ap
+    _gal_precond!(z, r, blk); p .= z
+    rz = Float64(dot(r, z))
+    dec = zeros(itmax)
     its = 0
     for it in 1:itmax
-        rr > 0 || break
+        rz > 0 || break
         _gal_gram!(Ap, A, S, p, cut2); Ap .+= d .* p
-        alpha = rr / Float64(dot(p, Ap))
+        pAp = Float64(dot(p, Ap))
+        pAp > 0 || break
+        alpha = rz / pAp
         x .+= T(alpha) .* p; r .-= T(alpha) .* Ap
-        rrn = Float64(dot(r, r))
-        its = it
-        field_tol > 0 && _gal_ferr(x, r, f, d, oo) <= field_tol && break
-        p .= r .+ T(rrn / rr) .* p
-        rr = rrn
+        _gal_precond!(z, r, blk)
+        rzn = Float64(dot(r, z))
+        its = it; dec[it] = alpha * rz
+        it >= 10 && sum(view(dec, it-9:it)) <= tol^2 * oo && break
+        p .= z .+ T(rzn / rz) .* p
+        rz = rzn
     end
     return its
 end
@@ -361,13 +395,18 @@ Lengths are in units of the scheme's `sgm0`.
 - `thin = 0.5`: reset particles closer than this to a stronger kept reset particle are
   removed before the solve (their field stays in the target). 0: off.
 - `damping = 1e-2`: mu in (M + mu diag M) c = f.
-- `gram_cut = 4.0`: overlaps cut at r <= gram_cut sqrt(s_i^2 + s_j^2).
-- `itmax = 300`, `field_tol = 0`: CG iterations; with `field_tol > 0` the solve stops
-  once the relative L2 field error reaches it.
-- `gram_mem = 2^30`: host fields store the Gram matrix (8 bytes per pair, so up to
-  1.3e8 pairs at the default 1 GiB) and evaluate it on the fly (threaded, 40 bytes per
-  unknown and thread, about 5x the stored matrix-vector time) above; device fields
-  always evaluate it on the fly.
+- `gram_cut = 5.0`: overlaps cut at r <= gram_cut sqrt(s_i^2 + s_j^2). At 4 the cut
+  Gram matrix is not positive definite on the 5MW wake (the preconditioned CG finds
+  its negative directions); 4.5-5 is.
+- `block_cell = 3.0`, `block_cap = 512`: block-Jacobi preconditioner, blocks of the
+  unknowns on a grid of this cell, split to at most `block_cap` (0: plain CG). Stores
+  the block inverses, at most `block_cap` values per unknown.
+- `tol = 5e-3`, `itmax = 300`: the CG stops once 10 iterations lower the squared
+  relative L2 field error (damped) by less than `tol^2`, or at `itmax`.
+- `gram_mem = 2^30`: host fields keep the Gram pairs (8 bytes each, each pair once) of
+  as many rows as fit in this many bytes (1 GiB: 1.3e8 pairs) and evaluate the rest on
+  the fly (plus 40 bytes per unknown and thread); device fields evaluate them all on
+  the fly.
 
 The particle count changes (edge points in, thinned particles out): the field needs
 `maxparticles` headroom (about +1 % per reset on the 5MW wake; edge points that do
@@ -383,15 +422,17 @@ struct GalerkinReset{R}
     thin::R
     damping::R
     gram_cut::R
+    block_cell::R
+    block_cap::Int
     itmax::Int
-    field_tol::R
+    tol::R
     gram_mem::Int
 end
 GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
-                   edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=4.0,
-                   itmax=300, field_tol=0.0, gram_mem=2^30) where R =
+                   edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=5.0,
+                   block_cell=3.0, block_cap=512, itmax=300, tol=5e-3, gram_mem=2^30) where R =
     GalerkinReset{R}(halo_tail, halo_min, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
-                     thin, damping, gram_cut, itmax, field_tol, gram_mem)
+                     thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
 Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
     GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
@@ -459,13 +500,17 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
     x = _gal_to(P, x0[:, uperm])
     t2 = time()
 
-    A, nnz = P isa Matrix ? _gal_csr(U, cut2, gr.gram_mem) : (nothing, -1)
-    P isa Matrix && A === nothing && (A = _GalFly(N))
-    mem = A isa _GalCSR ? 8nnz + 8(N + 1) : A isa _GalFly ? 40N * length(A.y) : 0
+    A, nnz = P isa Matrix ? _GalOp(U, cut2, gr.gram_mem) : (nothing, -1)
+    mem = A === nothing ? 0 : 8 * (A.rp[A.R + 1] - 1) + 8 * (N + 1) + 40N * length(A.y)
     t3 = time()
 
-    r = similar(x); p = similar(x); Ap = similar(x)
-    its = _gal_cg!(x, r, p, Ap, f, d, A, Ud, cut2, gr.itmax, Float64(gr.field_tol), oo)
+    blk = gr.block_cap > 0 ? _gal_blocks(U, Float64.(vec(Array(d))), cut2, Float64(gr.block_cell) * sgm0, gr.block_cap, R) : nothing
+    mem += blk === nothing ? 0 : sizeof(R) * length(blk.minv)
+    blk = blk === nothing || P isa Matrix ? blk : map(a -> copyto!(similar(P, eltype(a), length(a)), a), blk)
+    t3b = time()
+
+    r = similar(x); p = similar(x); Ap = similar(x); z = similar(x)
+    its = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
     err = _gal_ferr(x, r, f, d, oo)
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
     t4 = time()
@@ -500,5 +545,5 @@ function _galerkin_reset!(pfield, cs, idx::Vector{Int})
             " after $its its, halo $H, +$(length(ekeep)) edge -$(length(subd)) thinned, ",
             Printf.@sprintf("%.2f s", t5 - t0))
     return (; K, Kk, H, E=length(ekeep), D=length(subd), its, err, nnz, mem,
-            t_select=t1 - t0, t_rhs=t2 - t1, t_gram=t3 - t2, t_cg=t4 - t3, t_write=t5 - t4)
+            t_select=t1 - t0, t_rhs=t2 - t1, t_gram=t3 - t2, t_pc=t3b - t3, t_cg=t4 - t3b, t_write=t5 - t4)
 end

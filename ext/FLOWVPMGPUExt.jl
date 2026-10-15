@@ -367,6 +367,8 @@ end
     end
 end
 
+FLOWVPM._gal_block_apply!(Z::AnyGPUMatrix, R, blk) = _cs_block_apply_device!(Z, R, blk)
+
 function _cs_block_apply_device!(Z, R, blk)
     K = length(blk.perm)
     K == 0 && return Z
