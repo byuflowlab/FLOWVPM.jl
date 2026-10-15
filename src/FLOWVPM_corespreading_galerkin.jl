@@ -1,6 +1,7 @@
 #=##############################################################################
 # DESCRIPTION
-    Galerkin (L2-projection) core-spreading reset, `CoreSpreading(...; reset=:galerkin)`.
+    Galerkin (L2-projection) core-size reset: `galerkin_shrink!`, the reset of
+    `CoreSpreading`.
 
     The reset particles (the subset, or every particle in a full reset) go to
     `sgm0`; their non-reset neighbours keep their own cores and take strength
@@ -12,16 +13,17 @@
                                  f_i  = sum_k Gold_k N(x_i - x_k; s_i^2 + so_k^2),
 
     N the normalized 3D Gaussian (FLOWVPM's gaussianerf zeta), the overlaps cut
-    at r^2 <= gram_cut^2 (s_i^2 + s_j^2). M is SPD: plain conjugate gradient,
-    one matrix-vector product per iteration. Study and parameters:
-    research-notes flowunsteady-update/details/2026-10-14_rbf-reset-fix_1.md,
-    "Overnight: recommended reset method".
+    at r^2 <= gram_cut^2 (s_i^2 + s_j^2). Study and parameters: research-notes
+    flowunsteady-update/details/2026-10-14_rbf-reset-fix_1.md and
+    2026-10-15_cs-galerkin_1.md.
 
-    Host fields evaluate M with each pair once (`_GalOp`), storing the pairs of
-    as many rows as fit in `gram_mem` and the rest on the fly; device fields
-    evaluate it on the fly with the pair kernel (`_gal_row`, KA kernel in the GPU
-    extension). The CG is block-Jacobi preconditioned (`_gal_blocks`). The selection (thinning, halo, edge points) runs on the host
-    over a copy of positions, strengths and cores.
+    Two parts: the selection (`_gal_plan`: thinning, halo, edge points; indices
+    only, no derivative) and the linear solve on that fixed geometry
+    (`_gal_solve`, block-Jacobi preconditioned CG; reverse-mode AD through it
+    uses the implicit rule in ext/FLOWVPMEnzymeExt.jl). Host fields evaluate M
+    with each pair once (`_GalOp`), storing the pairs of as many rows as fit in
+    `gram_mem` and the rest on the fly; device fields evaluate it on the fly
+    with the pair kernel (`_gal_row`, KA kernel in the GPU extension).
 =###############################################################################
 
 const _GAL_C3 = (2pi)^-1.5
@@ -233,10 +235,50 @@ function _gal_gram!(y, A::_GalOp, S, x, cut2)
 end
 _gal_gram!(y, ::Nothing, S, x, cut2) = _gal_pairsum!(y, S.x, S.v, S, x, cut2)   # device
 
+# split `ids` (local indices into the columns of X) into octants of the cell at
+# `lo` with edge `h` until each piece holds at most `cap`; coincident points (a
+# piece that never splits) are cut into `cap`-sized runs
+function _cs_split!(blocks, X, ids, lo, h, cap, depth=0)
+    if length(ids) <= cap
+        push!(blocks, ids); return blocks
+    end
+    if depth > 40
+        for c in Iterators.partition(ids, cap); push!(blocks, collect(c)); end
+        return blocks
+    end
+    hh = h / 2
+    oct = [Int(X[1, k] - lo[1] >= hh) + 2 * Int(X[2, k] - lo[2] >= hh) + 4 * Int(X[3, k] - lo[3] >= hh) for k in ids]
+    for o in 0:7
+        sub = ids[oct .== o]
+        isempty(sub) || _cs_split!(blocks, X, sub, lo .+ hh .* (o & 1, (o >> 1) & 1, (o >> 2) & 1), hh, cap, depth + 1)
+    end
+    return blocks
+end
+
+# Z = M^-1 R (host): one small dense product per block; `perm` the unknowns block
+# by block, `start` each block's first position (and one past the end), `moff`
+# each block's first entry in `minv` (the block inverses, column-major)
+function _cs_block_apply!(Z::AbstractMatrix, R::AbstractMatrix, blk)
+    Threads.@threads for b in 1:blk.nblocks
+        s = Int(blk.start[b]); n = Int(blk.start[b + 1]) - s; m0 = blk.moff[b]
+        for q in 1:n
+            z1 = zero(eltype(Z)); z2 = zero(eltype(Z)); z3 = zero(eltype(Z))
+            for k in 1:n
+                m = blk.minv[m0 + (q - 1) + (k - 1) * n]; j = blk.perm[s + k - 1]
+                z1 += m * R[1, j]; z2 += m * R[2, j]; z3 += m * R[3, j]
+            end
+            i = blk.perm[s + q - 1]
+            Z[1, i] = z1; Z[2, i] = z2; Z[3, i] = z3
+        end
+    end
+    return Z
+end
+
 # Block-Jacobi preconditioner of M + D: the unknowns grouped on a grid of cell h,
 # crowded cells split into octants down to `cap` (`_cs_split!`), each block's
-# dense matrix inverted once per reset. Same storage as `_cs_blocks` (perm =
-# positions in the set), applied by `_cs_block_apply!` (device: GPU extension).
+# dense matrix inverted once per reset (perm = positions in the set, `block_of`
+# each position's block for the device kernel), applied by `_cs_block_apply!`
+# (device: GPU extension).
 function _gal_blocks(S::_GalSet, d::Vector{Float64}, cut2, h, cap, ::Type{TF}) where TF
     N = size(S.x, 2)
     keys = [(floor(Int, S.x[1, k] / h), floor(Int, S.x[2, k] / h), floor(Int, S.x[3, k] / h)) for k in 1:N]
@@ -276,8 +318,10 @@ _gal_block_apply!(z, r, blk) = _cs_block_apply!(z, r, (; blk..., nblocks = lengt
 # Preconditioned conjugate gradient on (M + D) x = f, the three components stacked
 # (one step length), from the x on entry. Each iteration lowers the damped squared
 # field error, oo + 2 (x'(M + D)x/2 - x'f), by alpha r'z (no extra product); the
-# solve stops when the last 10 iterations lowered it by less than tol^2 oo, at
+# solve has converged when the last 10 iterations lowered it by less than tol^2 oo
+# (oo <= 0: tol^2 of the total decrease so far) or r'z = 0, and stops there, at
 # itmax, or where the cut Gram matrix stops being positive (p'Ap <= 0).
+# Returns (iterations, converged).
 function _gal_cg!(x, r, p, Ap, z, f, d, A, S, cut2, blk, itmax, tol, oo)
     T = eltype(x)
     _gal_gram!(Ap, A, S, x, cut2); Ap .+= d .* x
@@ -285,9 +329,9 @@ function _gal_cg!(x, r, p, Ap, z, f, d, A, S, cut2, blk, itmax, tol, oo)
     _gal_precond!(z, r, blk); p .= z
     rz = Float64(dot(r, z))
     dec = zeros(itmax)
-    its = 0
+    its = 0; conv = false; tot = 0.0
     for it in 1:itmax
-        rz > 0 || break
+        rz > 0 || (conv = true; break)
         _gal_gram!(Ap, A, S, p, cut2); Ap .+= d .* p
         pAp = Float64(dot(p, Ap))
         pAp > 0 || break
@@ -295,12 +339,12 @@ function _gal_cg!(x, r, p, Ap, z, f, d, A, S, cut2, blk, itmax, tol, oo)
         x .+= T(alpha) .* p; r .-= T(alpha) .* Ap
         _gal_precond!(z, r, blk)
         rzn = Float64(dot(r, z))
-        its = it; dec[it] = alpha * rz
-        it >= 10 && sum(view(dec, it-9:it)) <= tol^2 * oo && break
+        its = it; dec[it] = alpha * rz; tot += dec[it]
+        it >= 10 && sum(view(dec, it-9:it)) <= tol^2 * (oo > 0 ? oo : tot) && (conv = true; break)
         p .= z .+ T(rzn / rz) .* p
         rz = rzn
     end
-    return its
+    return its, conv
 end
 
 # Relative L2 error of the new field against the old: with r = f - (M + D) x,
@@ -366,30 +410,31 @@ end
 
 # Edge-point candidates: the axial stencil x_k +- a sgm0 e_j of every reset
 # particle, kept where no field particle and no accepted point lies within
-# `spacing` sgm0
+# `spacing` sgm0; returns the points and their parents (global indices)
 function _gal_edges(X::AbstractMatrix, sub::Vector{Int}, sgm0, offsets, spacing)
     q = spacing * sgm0
-    C = zeros(3, 6 * length(offsets) * length(sub))
+    n = 6 * length(offsets) * length(sub)
+    C = zeros(3, n); par = zeros(Int, n)
     col = 0
     for k in sub, a in offsets, dir in 1:3, sgn in (-1, 1)
-        col += 1
+        col += 1; par[col] = k
         for j in 1:3
             C[j, col] = X[j, k] + (j == dir ? sgn * a * sgm0 : 0.0)
         end
     end
-    S, perm = _gal_set(C, fill(q^2, size(C, 2)), q)
-    hit = zeros(Bool, size(C, 2))
+    S, perm = _gal_set(C, fill(q^2, n), q)
+    hit = zeros(Bool, n)
     _gal_cover!(zeros(Bool, size(X, 2)), hit, S, X)
-    C = C[:, sort(perm[.!hit])]            # acceptance below in stencil order
-    isempty(C) && return C
-    return C[:, _gal_thin(C, zeros(size(C, 2)), q)]
+    e = sort(perm[.!hit])                  # acceptance below in stencil order
+    isempty(e) || (e = e[_gal_thin(C[:, e], zeros(length(e)), q)])
+    return C[:, e], par[e]
 end
 
 """
     GalerkinReset(; <keyword arguments>)
 
-Parameters of the Galerkin core-spreading reset (`CoreSpreading(...; reset=:galerkin)`).
-Lengths are in units of the scheme's `sgm0`.
+Parameters of the Galerkin core-size reset (`galerkin_shrink!`, the reset of
+`CoreSpreading`). Lengths are in units of `sgm0`.
 
 - `halo_tail = 2.0`, `halo_min = 1.0`: a non-reset particle within
   `max(halo_min, halo_tail * s_k)` of reset particle k (s_k^2 = sigma_k^2 - sgm0^2,
@@ -449,78 +494,108 @@ Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
     GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
 
 """
-    galerkin_shrink!(pfield, idx, sgm0; galerkin = GalerkinReset(), verbose = false, v_lvl = 0) -> NamedTuple
+    galerkin_shrink!(pfield, idx, sgm0; galerkin = GalerkinReset(), iterror = false, verbose = false, v_lvl = 0) -> NamedTuple
 
 Shrink the cores of the particles `idx` (global indices) to `sgm0` by the Galerkin
 L2 projection (see `GalerkinReset`), keeping the vorticity field: their non-reset
 neighbours take strength increments, edge points may be added and close reset
 particles thinned, so the particle count and order change. Works on any field (no
 viscous scheme needed, e.g. `Inviscid`), host or device. It is also the reset of
-`CoreSpreading(...; reset=:galerkin)`. Keep one `GalerkinReset` across calls: its
-workspace (stored Gram pairs) is reused.
+`CoreSpreading`. Keep one `GalerkinReset` across calls: its workspace (stored Gram
+pairs) is reused.
+
+The conjugate gradient has not converged when it stops at `itmax` (or breaks down)
+before its stopping rule; if the relative field error is then above `tol`, it
+throws with `iterror = true` and warns otherwise.
 
 Example, cores above 1.5 sgm0: `idx = findall(>(1.5sgm0), Array(view(pfield.particles, FLOWVPM.SIGMA_INDEX, 1:get_np(pfield))))`.
 
 Returns counts (K reset, Kk kept, H halo, E edge points added, D thinned),
 iterations, the relative L2 field error, Gram pairs, the solve's memory (bytes:
 stored Gram pairs, buffers and block inverses), and the time of each phase.
+
+Reverse-mode AD (Enzyme, host fields): the derivative covers the linear solve on
+the selected geometry, i.e. the new strengths as functions of the positions, cores
+and strengths of the reset particles, the halo and the edge points' parents
+(`ext/FLOWVPMEnzymeExt.jl`, implicit rule: one adjoint solve with the same
+preconditioned CG). The selection (which particles are thinned, which form the
+halo, where edge points go, which are pruned) is piecewise constant and carries no
+derivative; so does the overlap cut. The rule differentiates the exact solution:
+tighten `tol` (e.g. 1e-10) and raise `itmax` for differentiable runs.
 """
 galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Real; galerkin::GalerkinReset = GalerkinReset(),
-                 verbose::Bool = false, v_lvl::Int = 0) =
-    _galerkin_shrink!(pfield, idx, Float64(sgm0), galerkin, verbose, v_lvl)
+                 iterror::Bool = false, verbose::Bool = false, v_lvl::Int = 0) =
+    _galerkin_shrink!(pfield, idx, Float64(sgm0), galerkin, verbose, v_lvl, iterror)
 
 # the CoreSpreading reset
 _galerkin_reset!(pfield, cs, idx::Vector{Int}) =
-    _galerkin_shrink!(pfield, idx, Float64(cs.sgm0), cs.galerkin::GalerkinReset, cs.verbose, cs.v_lvl)
+    _galerkin_shrink!(pfield, idx, Float64(cs.sgm0), cs.galerkin, cs.verbose, cs.v_lvl, cs.iterror)
 
-function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::GalerkinReset, verbose::Bool, v_lvl::Int)
-    P = pfield.particles; np = get_np(pfield); R = eltype(P)
-    s02 = sgm0^2
-    cut2 = Float64(gr.gram_cut)^2
-    t0 = time()
+_gal_cols(Q, rows, js) = Float64[Q[r, j] for r in rows, j in js]
 
-    # positions, strengths and cores: a view of a host field, one gather of a device one
-    Q = P isa Matrix ? view(P, first(X_INDEX):SIGMA_INDEX, 1:np) : _radix_oversize_gather(P, collect(1:np), first(X_INDEX):SIGMA_INDEX)
+# Selection (no derivative): thinning of the subset, the halo (non-static particles
+# within the tail width, pruned to where the old subset field is at least halo_tol
+# of its peak) and the edge points (stencil points away from every particle where
+# the old field is at least edge_tol of its peak) as their parent and offset.
+function _gal_plan(Q, P, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset)
+    np = size(Q, 2); K = length(sub); s02 = sgm0^2; cut2 = Float64(gr.gram_cut)^2
     X = view(Q, X_INDEX, :); S = view(Q, SIGMA_INDEX, :)
-    sub = idx; K = length(sub)
-    Xo = Float64.(X[:, sub]); Go = Float64.(Q[GAMMA_INDEX, sub]); vo = Float64.(S[sub]) .^ 2
-
-    # thinning, halo (per-particle radius from the tail width), edge candidates
+    Xo = _gal_cols(Q, X_INDEX, sub); Go = _gal_cols(Q, GAMMA_INDEX, sub); vo = Float64.(S[sub]) .^ 2
     keep = _gal_thin(Xo, [sqrt(Go[1, k]^2 + Go[2, k]^2 + Go[3, k]^2) for k in 1:K], gr.thin * sgm0)
-    subk = sub[keep]; subd = sub[.!keep]; Kk = length(subk)
     rk2 = [(max(gr.halo_min, gr.halo_tail * sqrt(max(S[k]^2 - s02, 0.0)) / sgm0) * sgm0)^2 for k in sub]
     Hs, _ = _gal_set(Xo, rk2, sqrt(maximum(rk2)))
     mark = zeros(Bool, np)
     _gal_cover!(mark, zeros(Bool, K), Hs, X)
     mark[sub] .= false
     mark .&= iszero.(P isa Matrix ? view(P, STATIC_INDEX, 1:np) : Array(view(P, STATIC_INDEX, 1:np)))   # static: no increments
-    hal = findall(mark); H = length(hal)
-    Ec = isempty(gr.edge_offsets) ? zeros(3, 0) : _gal_edges(X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
-    t1 = time()
-
-    # old subset as the source set; edge filter (old tail >= edge_tol of its peak)
-    O, operm = _gal_set(Xo, vo, sqrt(cut2 * 2 * maximum(vo)) / 2)
-    Od = _gal_to(P, O); God = _gal_to(P, Go[:, operm])
+    hal = findall(mark)
+    Ec, epar = isempty(gr.edge_offsets) ? (zeros(3, 0), Int[]) : _gal_edges(X, sub, sgm0, gr.edge_offsets, gr.edge_spacing)
     # edge points and (halo_tol > 0) halo particles where the old tail is at least
     # edge_tol / halo_tol of its peak (the old subset field at the subset points)
-    nrm3(A, j) = sqrt(A[1, j]^2 + A[2, j]^2 + A[3, j]^2)
-    tail(Y, v) = (o = _gal_to(P, zeros(3, size(Y, 2))); _gal_pairsum!(o, _gal_to(P, Y), _gal_to(P, v), Od, God, cut2); Float64.(Array(o)))
-    if size(Ec, 2) > 0 || (gr.halo_tol > 0 && H > 0)
+    if !isempty(epar) || (gr.halo_tol > 0 && !isempty(hal))
+        O, operm = _gal_set(Xo, vo, sqrt(cut2 * 2 * maximum(vo)) / 2)
+        Od = _gal_to(P, O); God = _gal_to(P, Go[:, operm])
+        nrm3(A, j) = sqrt(A[1, j]^2 + A[2, j]^2 + A[3, j]^2)
+        tail(Y, v) = (o = _gal_to(P, zeros(3, size(Y, 2))); _gal_pairsum!(o, _gal_to(P, Y), _gal_to(P, v), Od, God, cut2); Float64.(Array(o)))
         fs = tail(Xo[:, operm], fill(s02, K)); peak = maximum(nrm3(fs, k) for k in 1:K)
-        if size(Ec, 2) > 0
+        if !isempty(epar)
             fx = tail(Ec, fill(s02, size(Ec, 2)))
-            Ec = Ec[:, [nrm3(fx, e) >= gr.edge_tol * peak for e in 1:size(Ec, 2)]]
+            e = [nrm3(fx, e) >= gr.edge_tol * peak for e in 1:size(Ec, 2)]
+            Ec = Ec[:, e]; epar = epar[e]
         end
-        if gr.halo_tol > 0 && H > 0
-            fh = tail(Float64.(X[:, hal]), Float64.(S[hal]) .^ 2)
-            hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:H]]; H = length(hal)
+        if gr.halo_tol > 0 && !isempty(hal)
+            fh = tail(_gal_cols(Q, X_INDEX, hal), Float64.(S[hal]) .^ 2)
+            hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:length(hal)]]
         end
     end
-    E = size(Ec, 2); N = Kk + H + E
+    return (; subk = sub[keep], subd = sub[.!keep], hal, epar, eoff = Ec .- _gal_cols(Q, X_INDEX, epar))
+end
 
-    # unknowns [kept subset at sgm0; halo on own cores; edge points at sgm0], cell-sorted
-    Y = hcat(X[:, subk], X[:, hal], Ec)
-    v = vcat(fill(s02, Kk), S[hal] .^ 2, fill(s02, E))
+# The solve's settings, a template of the field's array type, and what it reports
+mutable struct _GalSolve{TG<:GalerkinReset,TP}
+    gr::TG; sgm0::Float64; proto::TP
+    its::Int; conv::Bool; err::Float64; nnz::Int; mem::Int; t::NTuple{4,Float64}
+end
+_GalSolve(gr, sgm0, proto) = _GalSolve(gr, sgm0, proto, 0, false, 0.0, 0, 0, (0.0, 0.0, 0.0, 0.0))
+
+"""
+    _gal_solve(Y, v, Xo, vo, Go, x0, sol) -> c
+
+The linear solve of the reset on fixed geometry: unknowns at `Y` (3 x N) with
+variances `v`, target the old subset field (positions `Xo`, variances `vo`,
+strengths `Go`), warm start `x0`; returns the strengths `c` (3 x N, `Y`'s order).
+Differentiable (Enzyme rule in ext/FLOWVPMEnzymeExt.jl, host fields).
+"""
+_gal_solve(Y, v, Xo, vo, Go, x0, sol::_GalSolve) = first(_gal_solve_sys(Y, v, Xo, vo, Go, x0, sol))
+
+# ... also returns the system and the solution in set order (for the adjoint)
+function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float64}, vo::Vector{Float64},
+                        Go::Matrix{Float64}, x0::Matrix{Float64}, sol::_GalSolve)
+    gr = sol.gr; P = sol.proto; R = eltype(P)
+    cut2 = Float64(gr.gram_cut)^2; N = size(Y, 2); K = size(Xo, 2)
+    t0 = time()
+    O, operm = _gal_set(Xo, vo, sqrt(cut2 * 2 * maximum(vo)) / 2)
+    Od = _gal_to(P, O); God = _gal_to(P, Go[:, operm])
     # cells: half the widest pair cut on a device (its rows search vi + vmax), half
     # the median one on the host (its rows search 2 vi)
     U, uperm = _gal_set(Y, v, sqrt(cut2 * 2 * (P isa Matrix ? sort(v)[cld(N, 2)] : maximum(v))) / 2)
@@ -531,43 +606,135 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
     _gal_pairsum!(fo, Od.x, Od.v, Od, God, cut2)
     oo = Float64(dot(God, fo))
     d = _gal_to(P, reshape(gr.damping * _GAL_C3 .* (2 .* U.v) .^ -1.5, 1, N))
-    x0 = zeros(3, N); x0[:, 1:Kk] .= Q[GAMMA_INDEX, subk]
     x = _gal_to(P, x0[:, uperm])
-    t2 = time()
+    t1 = time()
 
     A, nnz = P isa Matrix ? _GalOp(U, cut2, gr.gram_mem, gr.ws) : (nothing, -1)
     mem = A === nothing ? 0 : 8 * (A.rp[A.R + 1] - 1) + 8 * (N + 1) + 40N * length(A.y)
-    t3 = time()
+    t2 = time()
 
-    blk = gr.block_cap > 0 ? _gal_blocks(U, Float64.(vec(Array(d))), cut2, Float64(gr.block_cell) * sgm0, gr.block_cap, R) : nothing
+    blk = gr.block_cap > 0 ? _gal_blocks(U, Float64.(vec(Array(d))), cut2, Float64(gr.block_cell) * sol.sgm0, gr.block_cap, R) : nothing
     mem += blk === nothing ? 0 : sizeof(R) * length(blk.minv)
     blk = blk === nothing || P isa Matrix ? blk : map(a -> copyto!(similar(P, eltype(a), length(a)), a), blk)
-    t3b = time()
+    t3 = time()
 
     r = similar(x); p = similar(x); Ap = similar(x); z = similar(x)
-    its = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
+    its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
     err = _gal_ferr(x, r, f, d, oo)
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
+    t4 = time()
+
+    sol.its = its; sol.conv = conv; sol.err = err; sol.nnz = nnz; sol.mem = mem
+    sol.t = (t1 - t0, t2 - t1, t3 - t2, t4 - t3)
+    return c, (; U, uperm, O, operm, God, d, A, blk, cut2), x
+end
+
+# Reverse of `_gal_solve` (host): lambda solves (M + D) lambda = cbar with the same
+# preconditioned CG (the operator is symmetric); the inputs' adjoints are then the
+# derivatives of lambda' f - lambda' (M + D) c at fixed lambda and c (implicit
+# function theorem). Returns them in the inputs' order.
+function _gal_solve_adjoint(sys, x, cbar, sol::_GalSolve)
+    sys.A isa _GalOp || error("reverse-mode AD through the Galerkin reset: host fields only")
+    gr = sol.gr; U = sys.U; O = sys.O; N = size(U.x, 2); K = size(O.x, 2)
+    b = cbar[:, sys.uperm]
+    lam = zeros(3, N); r = similar(lam); p = similar(lam); Ap = similar(lam); z = similar(lam)
+    _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, Float64(gr.tol), 0.0)
+    gY = zeros(3, N); gv = zeros(N); gXo = zeros(3, K); gvo = zeros(K); gGo = zeros(3, K)
+    _gal_pair_adj!(gY, gv, gXo, gvo, gGo, U.x, U.v, lam, O, sys.God, sys.cut2, 1.0)    # lambda' f
+    _gal_pair_adj!(gY, gv, gY, gv, nothing, U.x, U.v, lam, U, x, sys.cut2, -1.0)        # -lambda' M c
+    for i in 1:N                                       # -lambda' D c, D_ii = damping N(0; 2 v_i)
+        gv[i] += 1.5 * sys.d[i] * (lam[1, i] * x[1, i] + lam[2, i] * x[2, i] + lam[3, i] * x[3, i]) / U.v[i]
+    end
+    Y = similar(gY); Y[:, sys.uperm] .= gY; v = similar(gv); v[sys.uperm] .= gv
+    Xo = similar(gXo); Xo[:, sys.operm] .= gXo; vo = similar(gvo); vo[sys.operm] .= gvo
+    Go = similar(gGo); Go[:, sys.operm] .= gGo
+    return (; Y, v, Xo, vo, Go)
+end
+
+# Adjoint of the pair sum sgn sum_i sum_p (a_i . b_p) N(t_i - s_p; tv_i + sv_p) over
+# the pairs within the cut (host): adds its derivatives with respect to the target
+# positions and variances (gt, gtv), the source ones (gs, gsv; may alias gt, gtv)
+# and, unless gb === nothing, the source strengths b (gb).
+function _gal_pair_adj!(gt, gtv, gs, gsv, gb, tx, tv, a, S::_GalSet, b, cut2, sgn)
+    @inbounds for i in axes(tx, 2)
+        x1 = tx[1, i]; x2 = tx[2, i]; x3 = tx[3, i]; vi = tv[i]
+        m = ceil(Int, sqrt(cut2 * (vi + S.vmax)) / S.h)
+        ia = floor(Int, (x1 - S.lo[1]) / S.h); ib = floor(Int, (x2 - S.lo[2]) / S.h); ic = floor(Int, (x3 - S.lo[3]) / S.h)
+        a0 = max(ia - m, 0); a1 = min(ia + m, S.n[1] - 1)
+        a0 > a1 && continue
+        for kc in max(ic - m, 0):min(ic + m, S.n[3] - 1), kb in max(ib - m, 0):min(ib + m, S.n[2] - 1)
+            k0 = 1 + a0 + S.n[1] * (kb + S.n[2] * kc)
+            for p in S.cstart[k0]:S.cstart[k0 + a1 - a0 + 1] - 1
+                d1 = x1 - S.x[1, p]; d2 = x2 - S.x[2, p]; d3 = x3 - S.x[3, p]
+                r2 = d1 * d1 + d2 * d2 + d3 * d3; V = vi + S.v[p]
+                r2 <= cut2 * V || continue
+                Nw = sgn * _GAL_C3 * exp(-0.5 * r2 / V) / (V * sqrt(V))
+                w = (a[1, i] * b[1, p] + a[2, i] * b[2, p] + a[3, i] * b[3, p]) * Nw
+                gx = -w / V                            # dN/dt = -N (t - s) / V
+                gt[1, i] += gx * d1; gt[2, i] += gx * d2; gt[3, i] += gx * d3
+                gs[1, p] -= gx * d1; gs[2, p] -= gx * d2; gs[3, p] -= gx * d3
+                gV = w * (0.5 * r2 / V - 1.5) / V      # dN/dV
+                gtv[i] += gV; gsv[p] += gV
+                if gb !== nothing
+                    gb[1, p] += a[1, i] * Nw; gb[2, p] += a[2, i] * Nw; gb[3, p] += a[3, i] * Nw
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# Convergence check and summary line (no derivative)
+function _gal_report(sol::_GalSolve, iterror::Bool, verbose::Bool, v_lvl::Int, K, np, H, E, D, t)
+    if !sol.conv && sol.err > sol.gr.tol
+        msg = "Galerkin reset: conjugate gradient not converged after $(sol.its) iterations (itmax $(sol.gr.itmax)), " *
+              "field error $(Printf.@sprintf("%.2e", sol.err)) > tol $(sol.gr.tol)"
+        iterror ? error(msg) : @warn(msg)
+    end
+    verbose && println("\t"^v_lvl, "core reset (Galerkin, $K of $np): field error ", Printf.@sprintf("%.2e", sol.err),
+                       " after $(sol.its) its, halo $H, +$E edge -$D thinned, ", Printf.@sprintf("%.2f s", t))
+    return nothing
+end
+
+function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::GalerkinReset, verbose::Bool, v_lvl::Int,
+                           iterror::Bool = false)
+    P = pfield.particles; np = get_np(pfield); R = eltype(P)
+    t0 = time()
+
+    # positions, strengths and cores: a view of a host field, one gather of a device one
+    Q = P isa Matrix ? view(P, first(X_INDEX):SIGMA_INDEX, 1:np) : _radix_oversize_gather(P, collect(1:np), first(X_INDEX):SIGMA_INDEX)
+    pl = _gal_plan(Q, P, idx, sgm0, gr)
+    subk = pl.subk; hal = pl.hal; Kk = length(subk); H = length(hal); N = Kk + H + length(pl.epar)
+    t1 = time()
+
+    # unknowns [kept subset at sgm0; halo on own cores; edge points at parent + offset]
+    Y = _gal_cols(Q, X_INDEX, vcat(subk, hal, pl.epar)); Y[:, Kk+H+1:N] .+= pl.eoff
+    v = vcat(fill(sgm0^2, Kk), [Float64(Q[SIGMA_INDEX, j])^2 for j in hal], fill(sgm0^2, N - Kk - H))
+    x0 = zeros(3, N); x0[:, 1:Kk] .= _gal_cols(Q, GAMMA_INDEX, subk)
+    sol = _GalSolve(gr, sgm0, similar(P, 0, 0))
+    c = _gal_solve(Y, v, _gal_cols(Q, X_INDEX, idx), [Float64(Q[SIGMA_INDEX, j])^2 for j in idx],
+                   _gal_cols(Q, GAMMA_INDEX, idx), x0, sol)
     t4 = time()
 
     # prune weak edge points; keep within maxparticles (weakest dropped first)
     cn = [sqrt(c[1, j]^2 + c[2, j]^2 + c[3, j]^2) for j in 1:N]
     ekeep = findall(cn[Kk+H+1:N] .>= gr.prune_tol * maximum(cn[1:Kk]))
-    room = pfield.maxparticles - (np - length(subd))
+    room = pfield.maxparticles - (np - length(pl.subd))
     if length(ekeep) > room
         @warn "Galerkin reset: $(length(ekeep)) edge points, room for $room (maxparticles $(pfield.maxparticles)); dropping the weakest"
         ekeep = ekeep[sortperm(cn[Kk+H.+ekeep]; rev=true)[1:max(room, 0)]]
     end
 
     # write back: subset strengths and cores, halo increments, thinned out, edge points in
+    Gh = Matrix{R}(_gal_cols(Q, GAMMA_INDEX, hal) .+ c[:, Kk+1:Kk+H])
     _radix_oversize_scatter!(P, subk, first(GAMMA_INDEX):SIGMA_INDEX, Matrix{R}(vcat(c[:, 1:Kk], fill(sgm0, 1, Kk))))
-    H > 0 && _radix_oversize_scatter!(P, hal, GAMMA_INDEX, Matrix{R}(Q[GAMMA_INDEX, hal] .+ c[:, Kk+1:Kk+H]))
-    for i in sort(subd; rev=true)
+    H > 0 && _radix_oversize_scatter!(P, hal, GAMMA_INDEX, Gh)
+    for i in sort(pl.subd; rev=true)
         remove_particle(pfield, i)
     end
     if !isempty(ekeep)
         blk = zeros(R, nfields, length(ekeep))
-        blk[X_INDEX, :] .= Ec[:, ekeep]
+        blk[X_INDEX, :] .= Y[:, Kk+H.+ekeep]
         blk[GAMMA_INDEX, :] .= c[:, Kk+H.+ekeep]
         blk[SIGMA_INDEX, :] .= sgm0
         blk[CIRCULATION_INDEX, :] .= 1
@@ -576,9 +743,8 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
     clear_radix_fmm_cache!(pfield)
     t5 = time()
 
-    verbose && println("\t"^v_lvl, "core reset (Galerkin, $K of $np): field error ", Printf.@sprintf("%.2e", err),
-            " after $its its, halo $H, +$(length(ekeep)) edge -$(length(subd)) thinned, ",
-            Printf.@sprintf("%.2f s", t5 - t0))
-    return (; K, Kk, H, E=length(ekeep), D=length(subd), its, err, nnz, mem,
-            t_select=t1 - t0, t_rhs=t2 - t1, t_gram=t3 - t2, t_pc=t3b - t3, t_cg=t4 - t3b, t_write=t5 - t4)
+    K = length(idx); E = length(ekeep); D = length(pl.subd)
+    _gal_report(sol, iterror, verbose, v_lvl, K, np, H, E, D, t5 - t0)
+    return (; K, Kk, H, E, D, its=sol.its, err=sol.err, nnz=sol.nnz, mem=sol.mem,
+            t_select=t1 - t0, t_rhs=sol.t[1], t_gram=sol.t[2], t_pc=sol.t[3], t_cg=sol.t[4], t_write=t5 - t4)
 end

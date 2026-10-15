@@ -2,7 +2,7 @@ using Test
 import Random
 import FLOWVPM
 
-# Galerkin core-spreading reset (`CoreSpreading(...; reset=:galerkin)`) on a
+# Galerkin core-size reset (`galerkin_shrink!`, the reset of `CoreSpreading`) on a
 # Lamb-Oseen tube: a Gaussian vortex (core 1.5) sampled on an h = 0.5 lattice in
 # a finite box, sgm0 = 1. A reset only changes the representation, so the
 # reference is the field before it (cores grown = the exactly diffused field).
@@ -22,8 +22,7 @@ function gal_tube(c, sigf; h=0.5, s0v=1.5)
 end
 
 function gal_field(X, G, S; maxparticles=size(X, 2), beta=1.5, gal...)
-    cs = FLOWVPM.CoreSpreading(0.0, GAL_SGM0, FLOWVPM.zeta_direct; beta, reset=:galerkin,
-                               galerkin=FLOWVPM.GalerkinReset(; gal...))
+    cs = FLOWVPM.CoreSpreading(0.0, GAL_SGM0; beta, galerkin=FLOWVPM.GalerkinReset(; gal...))
     pf = FLOWVPM.ParticleField(maxparticles, Float64; viscous=cs)
     for j in axes(X, 2)
         FLOWVPM.add_particle(pf, X[:, j], G[:, j], S[j])
@@ -67,14 +66,33 @@ const GAL_CASES = [("A centred", (0.0, 0.0), GAL_UNI, (x, y, s) -> x^2 + y^2 < 4
                    ("D variable, beta 1.25", (2.5, 1.0), GAL_VAR, (x, y, s) -> s > 1.25),
                    ("E variable, beta 1.5", (2.5, 1.0), GAL_VAR, (x, y, s) -> s > 1.5)]
 
-@testset "Galerkin reset, selector and precision conversion" begin
-    cs = FLOWVPM.CoreSpreading(0.0, 1.0; reset=:galerkin, galerkin=FLOWVPM.GalerkinReset(; thin=0.7))
+@testset "Galerkin reset, precision conversion, iterror, preconditioner blocks" begin
+    cs = FLOWVPM.CoreSpreading(0.0, 1.0; galerkin=FLOWVPM.GalerkinReset(; thin=0.7))
     pf = FLOWVPM.ParticleField(10, Float32; viscous=cs)        # the field converts its scheme
     @test pf.viscous.galerkin isa FLOWVPM.GalerkinReset{Float32}
     @test pf.viscous.galerkin.thin == 0.7f0
-    @test FLOWVPM.CoreSpreading(0.0, 1.0; galerkin=FLOWVPM.GalerkinReset()).galerkin === nothing
-    @test FLOWVPM.CoreSpreading(0.0, 1.0).galerkin === nothing
-    @test_throws ErrorException FLOWVPM.CoreSpreading(0.0, 1.0; reset=:other)
+    @test FLOWVPM.CoreSpreading(0.0, 1.0).galerkin isa FLOWVPM.GalerkinReset
+
+    # not converged at itmax with the field error above tol: warn, or throw with iterror
+    X0, G0, S0 = gal_tube((2.5, 1.0), GAL_UNI)
+    sub = findall(j -> (X0[1, j] - 2.5)^2 + (X0[2, j] - 1.0)^2 < 4, axes(X0, 2))
+    pf, cs = gal_field(X0, G0, S0; maxparticles=2size(X0, 2), itmax=2, block_cap=0)
+    @test_logs (:warn, r"not converged") FLOWVPM.corespreading_reset_subset!(pf, cs, sub)
+    pf, _ = gal_field(X0, G0, S0; maxparticles=2size(X0, 2), itmax=2, block_cap=0)
+    @test_throws ErrorException FLOWVPM.galerkin_shrink!(pf, sub, GAL_SGM0; iterror=true,
+                                                          galerkin=FLOWVPM.GalerkinReset(; itmax=2, block_cap=0))
+
+    # each stored block is the inverse of its block of M + D
+    U, _ = FLOWVPM._gal_set(X0, S0 .^ 2, 2.0)
+    d = 1e-2 * GAL_C3 .* (2 .* U.v) .^ -1.5
+    blk = FLOWVPM._gal_blocks(U, d, 25.0, 3.0, 64, Float64)
+    @test sort(Int.(blk.perm)) == collect(axes(X0, 2))
+    b = argmax(diff(blk.start)); s = Int(blk.start[b]); m = Int(blk.start[b + 1]) - s
+    ids = Int.(blk.perm[s:s + m - 1])
+    A = [(vv = U.v[a] + U.v[c]; r2 = sum(abs2, U.x[:, a] .- U.x[:, c]);
+          (r2 <= 25vv) * GAL_C3 * exp(-r2 / 2vv) / vv^1.5 + (a == c) * d[a]) for a in ids, c in ids]
+    Minv = reshape(blk.minv[blk.moff[b]:blk.moff[b + 1] - 1], m, m)
+    @test maximum(abs.(Minv * A .- [a == c ? 1.0 : 0.0 for a in 1:m, c in 1:m])) < 1e-8
 end
 
 @testset "Galerkin reset, Lamb-Oseen single subset reset: $name" for (name, c, sigf, insub) in GAL_CASES

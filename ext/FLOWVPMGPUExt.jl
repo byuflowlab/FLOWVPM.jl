@@ -345,10 +345,9 @@ for (fn, corrected) in ((FLOWVPM.relax_pedrizzetti, false), (FLOWVPM.relax_corre
     end
 end
 
-#------- core spreading on the device: ζ reconstruction + RBF conjugate gradient -------#
+#------- core spreading on the device: the Galerkin reset's preconditioner -------#
 
-
-# z = M^-1 r for the block-Jacobi preconditioner (FLOWVPM._cs_blocks): one thread per
+# z = M^-1 r for the block-Jacobi preconditioner (FLOWVPM._gal_blocks): one thread per
 # particle in block order, its row of the block's inverse against the block's r; one
 # store per particle, no atomics
 @kernel function ka_cs_block_apply_kernel!(Z, @Const(R), @Const(perm), @Const(start), @Const(block_of),
@@ -378,90 +377,6 @@ function _cs_block_apply_device!(Z, R, blk)
     return Z
 end
 
-# Same algorithm and storage as the host rbf_conjugategradient (x = M[1:3],
-# r = M[4:6], b = M[7:9], A p = vorticity rows, p = Gamma rows), with the
-# per-particle loops as whole-field broadcasts and the dot products as
-# device reductions. Static particles are excluded from the solve exactly as
-# `iterator(pfield)` excludes them on the host.
-# Residual: r = b - A*Gamma, the vorticity mismatch at the particles (see the
-# NOTES in the host version); stop on ||r||/||b|| <= tol per component.
-function FLOWVPM.rbf_conjugategradient(pfield::GPUField{R}, cs::FLOWVPM.CoreSpreading) where R
-    P = pfield.particles; np = pfield.np
-    X = view(P, FLOWVPM.M_INDEX[1:3], 1:np)      # solution
-    Rr = view(P, FLOWVPM.M_INDEX[4:6], 1:np)     # residual
-    B = view(P, FLOWVPM.M_INDEX[7:9], 1:np)      # target vorticity
-    G = view(P, FLOWVPM.GAMMA_INDEX, 1:np)       # search direction p
-    W = view(P, FLOWVPM.VORTICITY_INDEX, 1:np)   # A p
-    act = view(P, FLOWVPM.STATIC_INDEX:FLOWVPM.STATIC_INDEX, 1:np) .== 0   # 1 x np mask
-    dots(A, Bm) = [sum(view(A, i:i, :) .* view(Bm, i:i, :) .* act) for i in 1:3]
-
-    cs.rr0s .= 0; cs.rrs .= 0; cs.flags .= false
-    X .= ifelse.(act, G, X)                      # x0 = the strengths on entry (was B .* vol: 0 when vol = 0)
-    cs.zeta(pfield)
-    Rr .= ifelse.(act, B .- W, Rr)               # r0 = b - A x0
-    G .= ifelse.(act, Rr, G)                     # p0 = r0
-    cs.rr0s .= dots(B, B)                        # ||b||^2: convergence is ||r||/||b|| <= tol
-    cs.rrs .= dots(Rr, Rr)
-    # block-Jacobi preconditioner, built on the host (FLOWVPM._cs_blocks) and applied
-    # here: z0 = M^-1 r0, p0 = z0, step lengths from r.z; without it this is the plain CG
-    blk = nothing; Z = nothing; rzs = copy(cs.rrs)
-    if cs.precondition
-        h = FLOWVPM._cs_blocks(pfield, cs)
-        up(A) = (d = KA.allocate(KA.get_backend(P), eltype(A), length(A)); copyto!(d, A); d)
-        blk = (; perm = up(h.perm), start = up(h.start), block_of = up(h.block_of), moff = up(h.moff), minv = up(h.minv))
-        Z = KA.zeros(KA.get_backend(P), R, 3, np)
-        _cs_block_apply_device!(Z, Rr, blk)
-        G .= ifelse.(act, Z, G)
-        rzs .= dots(Rr, Z)
-    end
-    for i in 1:3
-        cs.flags[i] = cs.rr0s[i] > 2 * eps() && sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
-    end
-    for it in 1:cs.itmax
-        true in cs.flags || break
-        cs.zeta(pfield)                          # A p -> W
-        cs.pAps .= dots(G, W)
-        for i in 1:3
-            # an inactive component may have pAps = 0: 0/0 * false is NaN (host fix mirrored, 2026-09-26)
-            cs.alphas[i] = cs.flags[i] ? rzs[i] / cs.pAps[i] : zero(eltype(cs.alphas))
-        end
-        cs.prev_rrs .= cs.rrs
-        al = _rowvec(P, cs.alphas)
-        X .= ifelse.(act, X .+ al .* G, X)
-        Rr .= ifelse.(act, Rr .- al .* W, Rr)
-        cs.rrs .= dots(Rr, Rr)
-        if blk === nothing
-            cs.betas .= cs.rrs ./ cs.prev_rrs
-            for i in 1:3
-                abs(cs.prev_rrs[i]) <= 2 * eps() && (cs.betas[i] = 1)
-            end
-            rzs .= cs.rrs
-            be = _rowvec(P, cs.betas)
-            G .= ifelse.(act, Rr .+ be .* G, G)
-        else
-            _cs_block_apply_device!(Z, Rr, blk)                  # z = M^-1 r
-            prev_rzs = copy(rzs); rzs .= dots(Rr, Z)
-            for i in 1:3
-                cs.betas[i] = abs(prev_rzs[i]) <= 2 * eps() ? one(eltype(cs.betas)) : rzs[i] / prev_rzs[i]
-            end
-            be = _rowvec(P, cs.betas)
-            G .= ifelse.(act, Z .+ be .* G, G)
-        end
-        for i in 1:3
-            cs.flags[i] *= abs(cs.rr0s[i]) <= 2 * eps() ? false : sqrt(cs.rrs[i] / cs.rr0s[i]) > cs.tol
-        end
-        if it == cs.itmax && true in cs.flags
-            msg = "Maximum number of iterations $(cs.itmax) reached before convergence." *
-                  " Errors: $(sqrt.(cs.rrs ./ cs.rr0s)), tolerance:$(cs.tol)"
-            cs.iterror ? error(msg) : (cs.verbose && @warn(msg))
-        end
-    end
-    G .= ifelse.(act, X, G)                      # Gamma = solution
-    return nothing
-end
-
-# 3 x 1 device column of per-dimension scalars, for broadcasting against 3 x np views
-_rowvec(P, v) = (c = similar(P, eltype(P), 3, 1); copyto!(c, reshape(eltype(P).(v), 3, 1)); c)
 
 end # FLOWVPM._FMM_HAS_RADIX
 

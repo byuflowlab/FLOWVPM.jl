@@ -1,6 +1,5 @@
 using Test
 import FLOWVPM
-import Random
 
 function vorticity_storage_fmm()
     return FLOWVPM.FMM(;
@@ -101,7 +100,7 @@ end
         @test nonzero_vorticity
     end
 
-    @testset "Basis-function vorticity uses VORTICITY_INDEX and consumers read it" begin
+    @testset "Basis-function vorticity uses VORTICITY_INDEX" begin
         direct = vorticity_storage_field(; integration=FLOWVPM.euler)
         J_sentinel = collect(1.0:9.0)
         set_all_J!(direct, J_sentinel)
@@ -118,55 +117,5 @@ end
             @test J_fmm[i] == J_sentinel
             @test V_fmm[i] ≈ V_direct[i] rtol=1e-12 atol=1e-14
         end
-
-        captured_targets = Ref{Vector{Vector{Float64}}}()
-        function capture_rbf!(pfield, scheme)
-            captured_targets[] = [copy(FLOWVPM.get_M(pfield, i)[7:9]) for i in 1:FLOWVPM.get_np(pfield)]
-            return nothing
-        end
-
-        scheme = FLOWVPM.CoreSpreading(1.0, 1.0, FLOWVPM.zeta_direct; beta=1.0, rbf=capture_rbf!)
-        viscous = vorticity_storage_field(; integration=FLOWVPM.euler)
-        set_all_J!(viscous, (-100.0, -200.0, -300.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0))
-        FLOWVPM.viscousdiffusion(viscous, scheme, 1.0)
-
-        @test captured_targets[] !== nothing
-        for i in 1:FLOWVPM.get_np(viscous)
-            @test captured_targets[][i] ≈ collect(FLOWVPM.get_vorticity(viscous, i)) rtol=1e-12 atol=1e-14
-            @test captured_targets[][i] != [-100.0, -200.0, -300.0]
-        end
     end
-end
-
-@testset "CS-RBF block-Jacobi preconditioner" begin
-    # a full reset of a field grown uniformly to 1.5 sgm0, same iteration budget: the
-    # preconditioned CG ends with a smaller residual, and the block apply is the exact
-    # inverse of each block's basis-function matrix
-    n = 1500; sgm0 = 0.12
-    function grown_field(precondition)
-        cs = FLOWVPM.CoreSpreading(1e-3, sgm0, FLOWVPM.zeta_direct; itmax = 20, iterror = false,
-                                   precondition = precondition)
-        pf = FLOWVPM.ParticleField(n; viscous = cs, UJ = FLOWVPM.UJ_direct)
-        r = Random.MersenneTwister(4)
-        for _ in 1:n
-            FLOWVPM.add_particle(pf, rand(r, 3), 2 .* rand(r, 3) .- 1, 1.5 * sgm0)
-        end
-        return pf
-    end
-    res = map((false, true)) do pc
-        pf = grown_field(pc)
-        FLOWVPM._corespreading_reset!(pf, pf.viscous)
-        maximum(sqrt.(pf.viscous.rrs ./ pf.viscous.rr0s))
-    end
-    @test res[2] < res[1]
-    pf = grown_field(true)
-    pf.particles[FLOWVPM.SIGMA_INDEX, 1:n] .= sgm0
-    blk = FLOWVPM._cs_blocks(pf, pf.viscous)
-    @test sort(Int.(blk.perm)) == collect(1:n)
-    b = argmax(diff(blk.start)); s = Int(blk.start[b]); m = Int(blk.start[b + 1]) - s
-    ids = Int.(blk.perm[s:s + m - 1]); X = pf.particles[FLOWVPM.X_INDEX, ids]
-    A = [pf.kernel.zeta(sqrt(sum(abs2, X[:, a] .- X[:, c])) / sgm0) / sgm0^3 for a in 1:m, c in 1:m]
-    for a in 1:m; A[a, a] *= 1 + FLOWVPM._CS_BLOCK_SHIFT[]; end
-    Minv = reshape(blk.minv[blk.moff[b]:blk.moff[b + 1] - 1], m, m)
-    @test maximum(abs.(Minv * A .- [a == c ? 1.0 : 0.0 for a in 1:m, c in 1:m])) < 1e-6
 end

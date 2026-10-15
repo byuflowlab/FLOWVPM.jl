@@ -51,4 +51,33 @@ EnzymeRules.inactive_type(::Type{<:vpm.KConst}) = true
 # IdDict, a runtime-activity error under Enzyme); carries no derivative.
 EnzymeRules.inactive(::typeof(vpm.clear_radix_fmm_cache!), args...) = nothing
 
+# Core-size reset (Galerkin): the selection is integer bookkeeping and the report
+# only prints; the linear solve on the selected geometry carries an implicit rule
+# (its adjoint is one solve with the same preconditioned CG, `_gal_solve_adjoint`)
+# instead of being differentiated iteration by iteration.
+EnzymeRules.inactive(::typeof(vpm._gal_plan), args...) = nothing
+EnzymeRules.inactive(::typeof(vpm._gal_report), args...) = nothing
+EnzymeRules.inactive_type(::Type{<:vpm._GalSolve}) = true
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._gal_solve)}, ::Type{RT},
+                                      Y, v, Xo, vo, Go, x0, sol) where RT
+    c, sys, x = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, x0.val, sol.val)
+    A = sys.A                  # its stored pairs live in the GalerkinReset's workspace: keep a copy
+    A isa vpm._GalOp && (sys = merge(sys, (; A = vpm._GalOp(A.R, A.rp, copy(A.col), copy(A.val), A.y, A.ib, A.rb))))
+    dc = zero(c)
+    return EnzymeRules.AugmentedReturn(EnzymeRules.needs_primal(config) ? c : nothing,
+                                       EnzymeRules.needs_shadow(config) ? dc : nothing, (sys, x, dc))
+end
+
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._gal_solve)}, ::Type{RT}, tape,
+                             Y, v, Xo, vo, Go, x0, sol) where RT
+    sys, x, dc = tape
+    g = vpm._gal_solve_adjoint(sys, x, dc, sol.val)
+    for (a, ga) in ((Y, g.Y), (v, g.v), (Xo, g.Xo), (vo, g.vo), (Go, g.Go))
+        a isa EnzymeCore.Duplicated && (a.dval .+= ga)
+    end
+    dc .= 0                    # x0 (warm start) does not change the solution: no adjoint
+    return ntuple(_ -> nothing, 7)
+end
+
 end

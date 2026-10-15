@@ -15,7 +15,7 @@ import Statistics
     TF = dev == "" ? Float64 : Float32
     pkw = dev == "" ? (;) : (; arraytype=(dev == "Metal" ? Metal.MtlArray : CUDA.CuArray))
     gmem = parse(Int, get(ENV, "FLOWVPM_CS_GRAM_MEM", string(Int(Sys.total_memory() ÷ 4))))
-    cs = FLOWVPM.CoreSpreading(0.0, sg0, FLOWVPM.zeta_fmm; reset=:galerkin, galerkin=FLOWVPM.GalerkinReset(; gram_mem=gmem))
+    cs = FLOWVPM.CoreSpreading(0.0, sg0; galerkin=FLOWVPM.GalerkinReset(; gram_mem=gmem))
     pf = FLOWVPM.ParticleField(ceil(Int, 1.02N), TF; viscous=cs, pkw...)
     blk = zeros(TF, FLOWVPM.nfields, N); blk[1:7, :] .= Q; blk[FLOWVPM.CIRCULATION_INDEX, :] .= 1
     FLOWVPM.add_particles!(pf, blk); blk = nothing

@@ -31,7 +31,7 @@ The VPM formulation to be used. Options include:
 ### `viscous::ViscousScheme`
 The viscous model used when propagating particles.
 - [`Inviscid`](@ref FLOWVPM.Inviscid): Uses no viscous modeling for the particles (default).
-- [`CoreSpreading`](@ref FLOWVPM.CoreSpreading): Uses a core spreading viscous model in which particles grow in size at each step. After a defined amount of time the particle size is reset and the particle strength recalculated to maintain the vorticity field strength. Core spreading assumes a single core size: use it with fields whose particles are all created at the same core `sgm0`, since a reset returns every particle to `sgm0`.
+- [`CoreSpreading`](@ref FLOWVPM.CoreSpreading): Uses a core spreading viscous model in which particles grow in size at each step. Once the cores have grown by `beta`, they are reset to `sgm0` by a Galerkin (L2) projection of the old vorticity field ([`galerkin_shrink!`](@ref FLOWVPM.galerkin_shrink!), parameters [`GalerkinReset`](@ref FLOWVPM.GalerkinReset)): neighbouring particles take strength increments, edge particles may be added and close ones merged, so the field needs `maxparticles` headroom.
 - [`ParticleStrengthExchange`](@ref FLOWVPM.ParticleStrengthExchange): Uses particle strength exchange to simulate viscosity.
 
 ### `kernel::Kernel`

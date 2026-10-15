@@ -23,7 +23,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
                                             ("Vortex stretching + Classic VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                             ("Reformulated VPM test: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.noSFS, true),
                                             ("Dynamic SFS: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), true),
-                                            ("Viscosity: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.CoreSpreading(nu, sgm0, vpm.zeta_fmm), vpm.DynamicSFS(vpm.Estr_fmm), false),
+                                            ("Viscosity: Thin Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.CoreSpreading(nu, sgm0), vpm.DynamicSFS(vpm.Estr_fmm), false),
                                             # ("Vortex stretching + Classic VPM test: Thick Leapfrog...", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                           )
 

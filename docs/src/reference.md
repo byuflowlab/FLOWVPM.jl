@@ -17,6 +17,8 @@ FLOWVPM.formulation_tube_momentum
 ```@docs
 FLOWVPM.Inviscid
 FLOWVPM.CoreSpreading
+FLOWVPM.GalerkinReset
+FLOWVPM.galerkin_shrink!
 FLOWVPM.ParticleStrengthExchange
 ```
 

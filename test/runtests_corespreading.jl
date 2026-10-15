@@ -2,109 +2,95 @@ using Test
 import Random
 import FLOWVPM
 
-# Core-spreading RBF solve (rbf_conjugategradient): A*Gamma = b with
-# A_ij = zeta(r_ij/sigma)/sigma^3 and b the target vorticity in M[7:9].
-# Guards the initial guess (the strengths on entry, not omega*vol, which is 0 for
-# particles added without a volume) and the stopping test (||r||/||b||, not ||r||/||r0||).
+# CoreSpreading through `viscousdiffusion` (euler): cores grow as sigma^2 + 2 nu dt
+# and go back to sgm0 by the Galerkin reset once sigma/sgm0 reaches beta. A Gaussian
+# vortex tube (core 1.5, h = 0.5 lattice, sgm0 = 1) under pure diffusion: the exact
+# field after a time t is the initial particles with every core sqrt(sgm0^2 + 2 nu t).
 
-function cs_field(; n=4, h=1.0, sgm=1.3, seed=1)
-    rng = Random.MersenneTwister(seed)
-    pfield = FLOWVPM.ParticleField(n^3, Float64)
-    for i in 1:n, j in 1:n, k in 1:n
-        X = h .* ([i, j, k] .+ 0.1 .* (rand(rng, 3) .- 0.5))
-        FLOWVPM.add_particle(pfield, X, zeros(3), sgm)    # vol = 0, as every shed particle
+const CS_SGM0 = 1.0
+const CS_C3 = (2pi)^-1.5
+
+function cs_tube(; h=0.5, s0v=1.5)
+    X = Float64[]; G = Float64[]
+    for x in -4:h:4, y in -4:h:4, z in -2:h:2
+        append!(X, (x, y, z))
+        append!(G, (0.0, 0.0, exp(-(x^2 + y^2) / (2s0v^2)) / (2pi * s0v^2) * h^3))
     end
-    return pfield
+    return reshape(X, 3, :), reshape(G, 3, :)
 end
 
-get_Gammas(pfield) = [FLOWVPM.get_Gamma(pfield, j)[i] for i in 1:3, j in 1:FLOWVPM.get_np(pfield)]
-set_Gammas!(pfield, G) = for (j, P) in enumerate(FLOWVPM.iterator(pfield)); FLOWVPM.get_Gamma(P) .= G[:, j]; end
-
-# A*G, evaluated by zeta_direct (into the vorticity slot)
-function cs_apply(pfield, G)
-    set_Gammas!(pfield, G)
-    FLOWVPM.zeta_direct(pfield)
-    return [FLOWVPM.get_vorticity(pfield, j)[i] for i in 1:3, j in 1:FLOWVPM.get_np(pfield)]
+function cs_field(X, G; TF=Float64, pkw=(;), static=Int[])
+    cs = FLOWVPM.CoreSpreading(0.5, CS_SGM0; beta=1.25)
+    pf = FLOWVPM.ParticleField(4size(X, 2), TF; viscous=cs, integration=FLOWVPM.euler, pkw...)
+    blk = zeros(TF, FLOWVPM.nfields, size(X, 2))
+    blk[1:3, :] .= X; blk[4:6, :] .= G; blk[7, :] .= CS_SGM0; blk[FLOWVPM.CIRCULATION_INDEX, :] .= 1
+    blk[FLOWVPM.STATIC_INDEX, static] .= 1
+    FLOWVPM.add_particles!(pf, blk)
+    return pf
 end
 
-function cs_solve!(pfield, b, G0; tol=1e-6, itmax=200, precondition=true)
-    ncalls = Ref(0)
-    zeta = pf -> (ncalls[] += 1; FLOWVPM.zeta_direct(pf))
-    cs = FLOWVPM.CoreSpreading(0.0, 1.3, zeta; tol, itmax, precondition)
-    for (j, P) in enumerate(FLOWVPM.iterator(pfield))
-        FLOWVPM.get_M(P)[7:9] .= b[:, j]
+cs_state(pf) = (n = FLOWVPM.get_np(pf); P = Float64.(Array(pf.particles)[:, 1:n]); (P[1:3, :], P[4:6, :], P[7, :], P[FLOWVPM.STATIC_INDEX, :]))
+
+function cs_omega(X, G, S, Y)
+    W = zeros(3, size(Y, 2))
+    for i in axes(Y, 2), j in axes(X, 2)
+        r2 = (Y[1, i] - X[1, j])^2 + (Y[2, i] - X[2, j])^2 + (Y[3, i] - X[3, j])^2
+        W[:, i] .+= CS_C3 * exp(-r2 / (2S[j]^2)) / S[j]^3 .* G[:, j]
     end
-    set_Gammas!(pfield, G0)
-    FLOWVPM.rbf_conjugategradient(pfield, cs)
-    return cs, ncalls[]
+    return W
 end
 
-relres(pfield, G, b) = [sqrt(sum(abs2, cs_apply(pfield, G)[i, :] .- b[i, :]) / sum(abs2, b[i, :])) for i in 1:3]
+const CS_PROBES = (rng = Random.MersenneTwister(5); [3.6, 3.6, 2.0] .* (2 .* rand(rng, 3, 400) .- 1))
 
-@testset "Core-spreading RBF solve, precondition=$precondition" for precondition in (false, true)
-    pfield = cs_field()
-    rng = Random.MersenneTwister(2)
-    Gtrue = randn(rng, 3, FLOWVPM.get_np(pfield))
-    b = cs_apply(pfield, Gtrue)
-    tol = 1e-6
-
-    # From zero: true residual meets ||A*Gamma - b||/||b|| <= tol, and the
-    # residual the solver reports is that same quantity
-    cs, n0 = cs_solve!(pfield, b, zeros(size(Gtrue)); tol, precondition)
-    G = get_Gammas(pfield)
-    rr = relres(pfield, G, b)
-    @test all(rr .<= tol)
-    @test sqrt.(cs.rrs ./ cs.rr0s) ≈ rr rtol=1e-4
-
-    # Entry strengths already solve the system: one zeta evaluation, no iteration
-    cs, n1 = cs_solve!(pfield, b, Gtrue; tol, precondition)
-    @test n1 == 1
-    @test get_Gammas(pfield) == Gtrue
-
-    # A good initial guess is used (fewer iterations than from zero) and the
-    # target stays ||r||/||b||, not the stricter ||r||/||r0||
-    Gnear = Gtrue .+ 1e-3 .* randn(rng, size(Gtrue)...)
-    cs, n2 = cs_solve!(pfield, b, Gnear; tol, precondition)
-    @test n2 < n0
-    @test all(relres(pfield, get_Gammas(pfield), b) .<= tol)
+# 7 steps of 2 nu dt = 0.25 sgm0^2 with beta 1.25: full resets after steps 3 and 6
+function cs_run!(pf; nsteps=7, dt=0.25)
+    nres = 0
+    for _ in 1:nsteps
+        t0 = pf.viscous.t_sgm
+        FLOWVPM.viscousdiffusion(pf, dt)
+        nres += pf.viscous.t_sgm < t0 + dt / 2
+    end
+    return nres
 end
 
-# The device CG (ext/FLOWVPMGPUExt.jl) on the same field, with a device backend
-# loaded via the FLOWVPM_CS_DEVICE env (value = array type module: Metal or CUDA)
+@testset "CoreSpreading: Lamb-Oseen diffusion with Galerkin resets" begin
+    X0, G0 = cs_tube()
+    pf = cs_field(X0, G0)
+    @test cs_run!(pf) == 2
+    X, G, S, _ = cs_state(pf)
+    @test all(S .≈ sqrt(CS_SGM0^2 + 0.25))           # one step since the last reset
+    W = cs_omega(X0, G0, fill(sqrt(CS_SGM0^2 + 7 * 0.25), size(X0, 2)), CS_PROBES)
+    E = cs_omega(X, G, S, CS_PROBES) .- W
+    @test sqrt(sum(abs2, E) / sum(abs2, W)) <= 2e-3
+    @test abs(sum(G[3, :]) - sum(G0[3, :])) <= 1e-3 * sum(G0[3, :])
+end
+
+@testset "CoreSpreading: static particles are neither grown nor reset" begin
+    X0, G0 = cs_tube()
+    st = collect(1:7:size(X0, 2))
+    pf = cs_field(X0, G0; static=st)
+    @test cs_run!(pf) == 2
+    X, G, S, St = cs_state(pf)
+    ks = findall(==(1), St)
+    @test length(ks) == length(st)
+    @test sort(collect(eachcol(vcat(X[:, ks], G[:, ks], S[ks]')))) ==
+          sort(collect(eachcol(vcat(X0[:, st], G0[:, st], fill(CS_SGM0, 1, length(st))))))
+    @test all(S[St .== 0] .≈ sqrt(CS_SGM0^2 + 0.25))
+end
+
+# The device path (ext/FLOWVPMGPUExt.jl) against the host Float64 run, with a device
+# backend loaded via the FLOWVPM_CS_DEVICE env (Metal or CUDA)
 if haskey(ENV, "FLOWVPM_CS_DEVICE")
-    @testset "Core-spreading RBF solve, device ($(ENV["FLOWVPM_CS_DEVICE"]))" begin
+    @testset "CoreSpreading: device ($(ENV["FLOWVPM_CS_DEVICE"])) vs host" begin
         mod = ENV["FLOWVPM_CS_DEVICE"]
         @eval using KernelAbstractions, $(Symbol(mod))
         AT = mod == "Metal" ? Metal.MtlArray : CUDA.CuArray
         TF = mod == "Metal" ? Float32 : Float64
-        tol = TF == Float32 ? 1e-3 : 1e-6
-
-        ph = cs_field()
-        np = FLOWVPM.get_np(ph)
-        Gtrue = randn(Random.MersenneTwister(2), 3, np)
-        b = cs_apply(ph, Gtrue)
-        Gnear = Gtrue .+ 1e-3 .* randn(Random.MersenneTwister(3), 3, np)
-        pd = FLOWVPM.ParticleField(np, TF; arraytype=AT)
-        pd.np = np
-
-        function solve_device(G0)
-            Ph = copy(ph.particles)
-            Ph[FLOWVPM.M_INDEX[7:9], 1:np] .= b
-            Ph[FLOWVPM.GAMMA_INDEX, 1:np] .= G0
-            copyto!(pd.particles, TF.(Ph))
-            ncalls = Ref(0)
-            zeta = pf -> (ncalls[] += 1; FLOWVPM.zeta_direct(pf))
-            cs = FLOWVPM.CoreSpreading(0.0, 1.3, zeta; tol, itmax=200)
-            FLOWVPM.rbf_conjugategradient(pd, cs)
-            G = Float64.(Array(pd.particles)[FLOWVPM.GAMMA_INDEX, 1:np])
-            return G, ncalls[]
-        end
-
-        G, n0 = solve_device(zeros(3, np))
-        @test all(relres(ph, G, b) .<= 2tol)          # true residual, Float64 A on the host
-        G, n1 = solve_device(Gtrue)
-        @test n1 == 1
-        G, n2 = solve_device(Gnear)
-        @test n2 < n0
+        X0, G0 = cs_tube()
+        ph = cs_field(X0, G0); cs_run!(ph)
+        pd = cs_field(X0, G0; TF, pkw=(; arraytype=AT))
+        @test cs_run!(pd) == 2
+        Wh = cs_omega(cs_state(ph)[1:3]..., CS_PROBES); Wd = cs_omega(cs_state(pd)[1:3]..., CS_PROBES)
+        @test sqrt(sum(abs2, Wd .- Wh) / sum(abs2, Wh)) <= 1e-3
     end
 end

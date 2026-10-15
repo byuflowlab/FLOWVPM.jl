@@ -24,7 +24,7 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
                                             ("FMM UJ", vpm.euler, vpm.UJ_fmm, 0, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                             ("Full inviscid scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.Inviscid(), vpm.noSFS, true),
                                             ("Reformulation", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.rVPM, vpm.Inviscid(), vpm.noSFS, true),
-                                            ("Viscous scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.CoreSpreading(nu, sgm0, vpm.zeta_fmm), vpm.noSFS, true),
+                                            ("Viscous scheme", vpm.rungekutta3, vpm.UJ_fmm, 1, vpm.cVPM, vpm.CoreSpreading(nu, sgm0), vpm.noSFS, true),
                                             ("Constant SFS + Euler", vpm.euler, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.ConstantSFS(vpm.Estr_fmm), false),
                                             ("Constant SFS + RK3", vpm.rungekutta3, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.ConstantSFS(vpm.Estr_fmm), true),
                                             ("Dynamic SFS + Euler", vpm.euler, vpm.UJ_fmm, 0, vpm.rVPM, vpm.Inviscid(), vpm.DynamicSFS(vpm.Estr_fmm), false),
