@@ -184,8 +184,4 @@ function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(cs_implicit)}
     return (nothing, nothing, nothing)
 end
 
-# Cache plumbing: drops the radix coupling after a reset (delete! on a global
-# IdDict, a runtime-activity error under Enzyme); carries no derivative.
-EnzymeRules.inactive(::typeof(vpm.clear_radix_fmm_cache!), args...) = nothing
-
 end
