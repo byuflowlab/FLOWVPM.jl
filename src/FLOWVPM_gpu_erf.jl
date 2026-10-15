@@ -192,6 +192,7 @@ end
 
 custom_erf(x::Float64) = custom_erf64(x)
 custom_erf(x::Float32) = custom_erf32(x)
+custom_erf(x::Real) = erf(x)  # other Real types (e.g. ForwardDiff.Dual): SpecialFunctions
 
 # For ForwardDiff compatibility
 # using ForwardDiff
