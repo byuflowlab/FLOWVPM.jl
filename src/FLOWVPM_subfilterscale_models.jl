@@ -84,7 +84,9 @@ function Estr_direct_multithreaded(pfield::ParticleField)
             is_static(target_particle) && continue
             tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
-            for source_particle in iterator(pfield)
+            for i_source in 1:pfield.np
+                source_particle = get_particle(pfield, i_source)
+                is_static(source_particle) && continue
                 sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
                 dx, dy, dz = sx - tx, sy - ty, sz - tz
@@ -97,11 +99,15 @@ function Estr_direct_multithreaded(pfield::ParticleField)
 end
 
 function Estr_direct_singlethreaded(pfield::ParticleField)
-    for target_particle in iterator(pfield)
+    # integer loops, not the iterator(pfield) generator: Enzyme reverse crashes on it
+    for i_target in 1:pfield.np
+        target_particle = get_particle(pfield, i_target)
         is_static(target_particle) && continue
         tx, ty, tz = target_particle[1], target_particle[2], target_particle[3]
 
-        for source_particle in iterator(pfield)
+        for i_source in 1:pfield.np
+            source_particle = get_particle(pfield, i_source)
+            is_static(source_particle) && continue
             sx, sy, sz = source_particle[1], source_particle[2], source_particle[3]
 
             dx, dy, dz = sx - tx, sy - ty, sz - tz
