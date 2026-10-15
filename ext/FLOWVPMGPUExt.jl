@@ -392,6 +392,106 @@ end # FLOWVPM._FMM_HAS_RADIX
         out[1, i] = o1; out[2, i] = o2; out[3, i] = o3
     end
 end
+# Device conjugate gradient of the Galerkin reset (the host loop, FLOWVPM._gal_cg!,
+# in Chronopoulos-Gear form: z'Az from the product of z, A p by recurrence) with
+# its scalars on the device, so an iteration is five queued kernels and no sync;
+# the host reads the state every 16 iterations (iterations after a stop do nothing).
+# sc: 1 r'z, 2 p'Ap, 3 alpha (0: no update), 4 beta, 5 total decrease, 6 state
+# (0 running, 1 converged, 2 breakdown), 7 iterations, 8 previous alpha.
+
+# w += d z and per-workgroup partial sums of r'z and z'w (d: one value per column)
+@kernel function ka_gal_cg_dots!(part, w, @Const(r), @Const(z), @Const(d), n, ::Type{T}) where T
+    i = @index(Global); l = @index(Local); g = @index(Group)
+    a = @localmem T (256,); b = @localmem T (256,)
+    @inbounds begin
+        a[l] = zero(T); b[l] = zero(T)
+        if i <= n
+            wi = w[i] + d[(i - 1) ÷ 3 + 1] * z[i]
+            w[i] = wi; a[l] = r[i] * z[i]; b[l] = z[i] * wi
+        end
+        @synchronize
+        k = 128
+        while k >= 1
+            if l <= k
+                a[l] += a[l + k]; b[l] += b[l + k]
+            end
+            @synchronize
+            k >>= 1
+        end
+        if l == 1
+            part[1, g] = a[1]; part[2, g] = b[1]
+        end
+    end
+end
+
+# one thread: the step lengths of iteration `it` and the stopping rule
+@kernel function ka_gal_cg_step!(sc, dec, @Const(part), ng, it, tol2, oo)
+    @inbounds if @index(Global) == 1
+        T = eltype(sc)
+        s1 = zero(T); s2 = zero(T)
+        for g in 1:ng
+            s1 += part[1, g]; s2 += part[2, g]
+        end
+        sc[3] = zero(T); sc[4] = zero(T)
+        if sc[6] == 0
+            beta = it == 1 ? zero(T) : s1 / sc[1]
+            pAp = it == 1 ? s2 : s2 - beta * s1 / sc[8]
+            sc[1] = s1; sc[2] = pAp; sc[4] = beta
+            if !(s1 > 0)
+                sc[6] = 1
+            elseif !(pAp > 0)
+                sc[6] = 2
+            else
+                alpha = s1 / pAp
+                sc[3] = alpha; sc[8] = alpha; sc[7] = it
+                dec[it] = alpha * s1; sc[5] += dec[it]
+                if it >= 10
+                    sd = zero(T)
+                    for k in it-9:it
+                        sd += dec[k]
+                    end
+                    sd <= tol2 * (oo > 0 ? oo : sc[5]) && (sc[6] = 1)
+                end
+            end
+        end
+    end
+end
+
+# p = z + beta p, Ap = w + beta Ap, x += alpha p, r -= alpha Ap
+@kernel function ka_gal_cg_update!(x, r, p, Ap, @Const(z), @Const(w), @Const(sc), n)
+    i = @index(Global)
+    @inbounds if i <= n
+        a = sc[3]; b = sc[4]
+        pn = z[i] + b * p[i]; apn = w[i] + b * Ap[i]
+        p[i] = pn; Ap[i] = apn; x[i] += a * pn; r[i] -= a * apn
+    end
+end
+
+function FLOWVPM._gal_cg!(x::AnyGPUMatrix, r, p, Ap, z, f, d, A, S, cut2, blk, itmax, tol, oo)
+    T = eltype(x); backend = KA.get_backend(x); n = length(x); ng = cld(n, 256)
+    w = similar(x); part = similar(x, 2, ng); dec = KA.zeros(backend, T, itmax)
+    sc = KA.zeros(backend, T, 8)
+    dots! = ka_gal_cg_dots!(backend, 256); step! = ka_gal_cg_step!(backend, 1); upd! = ka_gal_cg_update!(backend, 256)
+    xv, rv, pv, Av, zv, wv = vec(x), vec(r), vec(p), vec(Ap), vec(z), vec(w)
+    FLOWVPM._gal_gram!(Ap, A, S, x, cut2); Ap .+= d .* x
+    r .= f .- Ap
+    fill!(p, 0); fill!(Ap, 0)
+    FLOWVPM._gal_precond!(z, r, blk); FLOWVPM._gal_gram!(w, A, S, z, cut2)
+    dots!(part, wv, rv, zv, d, Int32(n), T; ndrange = 256ng)
+    h = zeros(T, 8)
+    for it in 1:itmax
+        step!(sc, dec, part, Int32(ng), Int32(it), T(tol^2), T(oo); ndrange = 1)
+        upd!(xv, rv, pv, Av, zv, wv, sc, Int32(n); ndrange = n)
+        if it % 16 == 0 || it == itmax
+            copyto!(h, sc)
+            h[6] == 0 || break
+        end
+        FLOWVPM._gal_precond!(z, r, blk); FLOWVPM._gal_gram!(w, A, S, z, cut2)
+        dots!(part, wv, rv, zv, d, Int32(n), T; ndrange = 256ng)
+    end
+    return Int(h[7]), h[6] == 1
+end
+
 function FLOWVPM._gal_pairsum!(out::AnyGPUMatrix, tx, tv, S::FLOWVPM._GalSet, c, cut2)
     nt = size(tx, 2)
     nt == 0 && return out
