@@ -128,8 +128,12 @@ function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
 
         C::R = get_C(p)[1]
 
-        # Update position
-        get_X(p) .+= dt*(get_U(p) .+ Uinf)
+        # Update position (scalar updates, not allocating broadcasts: Enzyme-differentiable)
+        X = get_X(p)
+        U = get_U(p)
+        for k in 1:3
+            X[k] += dt*(U[k] + Uinf[k])
+        end
 
         # Update vectorial circulation
         ## Vortex stretching contributions
@@ -151,7 +155,11 @@ function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
         end
 
         ## Subfilter-scale contributions -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-        G .-= dt*C*get_SFS(p) * get_sigma(p)[]^3/zeta0
+        SFS = get_SFS(p)
+        sigma3 = get_sigma(p)[]^3
+        for k in 1:3
+            G[k] -= dt*C*SFS[k]*sigma3/zeta0
+        end
     end
     return nothing
 end
