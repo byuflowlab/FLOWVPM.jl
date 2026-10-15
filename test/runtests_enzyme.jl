@@ -5,12 +5,14 @@ import FLOWVPM
 import Enzyme
 import ForwardDiff
 
-# Enzyme reverse mode (default settings) through one UJ_direct time step:
-# dot-product test of the gradient against central FD along random directions.
+# Enzyme reverse and forward mode (default settings) through one UJ_direct time
+# step: dot-product test of the gradient against central FD along random
+# directions, forward tangents against the gradient (repeated: deterministic),
+# and ForwardDiff against the gradient.
 # The field is built inside the differentiated function (FLOWVPMEnzymeExt marks
 # its filament workspaces and the ρ/σ tuning inactive). Objective: weights on
 # [X; Gamma; sigma] after the step; inputs x = [X; Gamma; sigma] before it.
-# Three configurations cover every option of each axis at least once.
+# Four configurations cover every option of each axis at least once.
 
 const ENZ_N = 50
 
@@ -32,19 +34,22 @@ function enz_step(x::AbstractVector{T}, w, cfg) where T
     return s
 end
 
-@testset "Enzyme reverse: one UJ_direct step" begin
+@testset verbose=true "Enzyme: one UJ_direct step" begin
     pedr = FLOWVPM.Relaxation(FLOWVPM.relax_pedrizzetti, 1, 0.3)
     cpedr = FLOWVPM.Relaxation(FLOWVPM.relax_correctedpedrizzetti, 1, 0.3)
     constsfs = FLOWVPM.ConstantSFS(FLOWVPM.Estr_fmm; Cs=1.0, clippings=(FLOWVPM.clipping_backscatter,))
     cfgs = (
         (name="classic, gaussianerf, pedrizzetti, constant SFS, euler", formulation=FLOWVPM.formulation_classic,
-         kernel=FLOWVPM.kernel_gaussianerf, relaxation=pedr, relax=true, SFS=constsfs, integration=FLOWVPM.euler),
+         kernel=FLOWVPM.kernel_gaussianerf, relaxation=pedr, relax=true, SFS=constsfs, integration=FLOWVPM.euler, fwd=true),
         (name="rVPM, winckelmans, correctedpedrizzetti, dynamic SFS, rungekutta3", formulation=FLOWVPM.formulation_rVPM,
          kernel=FLOWVPM.kernel_winckelmans, relaxation=cpedr, relax=true, SFS=FLOWVPM.SFS_Cd_twolevel_nobackscatter,
-         integration=FLOWVPM.rungekutta3),
+         integration=FLOWVPM.rungekutta3, fwd=true),
         (name="rVPM, gaussianerf, no relaxation, no SFS, rungekutta3", formulation=FLOWVPM.formulation_rVPM,
          kernel=FLOWVPM.kernel_gaussianerf, relaxation=cpedr, relax=false, SFS=FLOWVPM.SFS_none,
-         integration=FLOWVPM.rungekutta3),
+         integration=FLOWVPM.rungekutta3, fwd=false),
+        (name="rVPM, gaussianerf, pedrizzetti, two-level dynamic SFS, euler", formulation=FLOWVPM.formulation_rVPM,
+         kernel=FLOWVPM.kernel_gaussianerf, relaxation=pedr, relax=true,
+         SFS=FLOWVPM.SFS_Cd_twolevel_analytic_nobackscatter, integration=FLOWVPM.euler, fwd=false),
     )
     n = ENZ_N
     Random.seed!(1)
@@ -59,14 +64,19 @@ end
             for k in 1:3
                 v = randn(7n); v ./= LinearAlgebra.norm(v)
                 gv = LinearAlgebra.dot(g, v)
-                # FD truncation error is O(h^2), roundoff O(1/h): best of three steps
-                err = minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - gv)/abs(gv), (1e-4, 1e-5, 1e-6))
+                # FD truncation error is O(h^2), roundoff O(1/h): best of four steps
+                err = minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - gv)/abs(gv), (1e-4, 1e-5, 1e-6, 1e-7))
                 @test err < 1e-5
             end
-            if cfg.SFS === FLOWVPM.SFS_none   # ForwardDiff through custom_erf (SFS self pair is 0/0 for Dual)
-                v = randn(7n)
-                @test isapprox(ForwardDiff.derivative(t -> f(x .+ t .* v), 0.0), LinearAlgebra.dot(g, v); rtol=1e-10)
+            v = randn(7n)
+            if cfg.fwd   # two configurations (both integrators and formulations), to bound compile time
+                fwd = [Enzyme.autodiff(Enzyme.Forward, enz_step, Enzyme.Duplicated(x, v), Enzyme.Const(w), Enzyme.Const(cfg))[1]
+                       for _ in 1:3]
+                @test all(==(fwd[1]), fwd)
+                @test isapprox(fwd[1], LinearAlgebra.dot(g, v); rtol=1e-10)
+                @test minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - fwd[1])/abs(fwd[1]), (1e-4, 1e-5, 1e-6, 1e-7)) < 1e-5
             end
+            @test isapprox(ForwardDiff.derivative(t -> f(x .+ t .* v), 0.0), LinearAlgebra.dot(g, v); rtol=1e-10)
         end
     end
 end
