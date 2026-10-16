@@ -232,19 +232,8 @@ end
 method. See 20210901 notebook for derivation.
 """
 function Estr_fmm(pfield::ParticleField; reset_sfs=true, optargs...)
-    UJ_fmm(pfield; reset=false, sfs=true, sfs_type=0, reset_sfs,
-                            transposed_sfs=pfield.transposed, optargs...)
+    UJ_fmm(pfield; reset=false, sfs=true, reset_sfs, optargs...)
 end
-
-"""
-    SFS model wrapper meant to hide the static particles from the model, to avoid
-numerical instabilities at solid surfaces. Not available: it was written for the
-old per-particle body storage (`fmm.overwriteBody`, `pfield.bodies`, particle
-structs), which the matrix particle storage replaced; it throws when called.
-"""
-E_nostaticparticles(pfield, args...; optargs...) = error("E_nostaticparticles is not ",
-    "supported: it relies on the removed per-particle body storage (fmm.overwriteBody); ",
-    "use the SFS model directly (e.g. Estr_fmm)")
 
 ################################################################################
 # ANALYTIC CORE-SCALING DERIVATIVES (two-level dynamic procedure), all-pairs
