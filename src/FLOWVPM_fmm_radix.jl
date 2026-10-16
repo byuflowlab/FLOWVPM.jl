@@ -386,11 +386,17 @@ function radix_fmm_settings!(pfield::ParticleField; gpu::NamedTuple=NamedTuple()
     return _radix_fmm_settings[pfield]
 end
 
-"Drop the cached `RadixFMMCache` (if any) for `pfield`."
+"Drop the cached `RadixFMMCache` (if any) for `pfield`, releasing its device memory."
 function clear_radix_fmm_cache!(pfield::ParticleField)
-    delete!(_radix_fmm_couplings, pfield)
+    st = pop!(_radix_fmm_couplings, pfield, nothing)
+    st === nothing || _radix_free!(st, pfield, pfield.particles)
     return nothing
 end
+# Free the device arrays of a dropped coupling now (GPU extension): left to their
+# finalizers, a cache dropped every core reset stays allocated until a full GC
+# while the next evaluation builds a new one (HVAB Metal, per-step resets: 5.7 GB
+# peak against 0.93 GB without resets, ~0.5 GB per dropped cache).
+_radix_free!(st, pfield, P) = nothing
 
 """
     radix_state(pfield) -> Dict or nothing

@@ -134,7 +134,9 @@ function FLOWVPM._radix_oversize_gather(P::AnyGPUMatrix, idx::Vector{Int}, rows)
     out = KA.allocate(backend, eltype(P), nr, K)
     _oversize_gather_kernel!(backend, 64)(out, P, d_idx, first(rows), nr, K; ndrange=K)
     KA.synchronize(backend)
-    return Array(out)
+    h = Array(out)
+    finalize(out); finalize(d_idx)
+    return h
 end
 function FLOWVPM._radix_oversize_mask_rows!(P::AnyGPUMatrix, idx::Vector{Int}, rows)
     backend = KA.get_backend(P); K = length(idx); nr = length(rows)
@@ -150,6 +152,7 @@ function FLOWVPM._radix_oversize_scatter!(P::AnyGPUMatrix, idx::Vector{Int}, row
     d_vals = KA.allocate(backend, eltype(P), nr, K); copyto!(d_vals, eltype(P).(vals))
     _oversize_scatter_kernel!(backend, 64)(P, d_vals, d_idx, first(rows), nr, K, false; ndrange=K)
     KA.synchronize(backend)
+    finalize(d_vals); finalize(d_idx)
     return nothing
 end
 
@@ -378,6 +381,41 @@ function _cs_block_apply_device!(Z, R, blk)
 end
 
 
+# A dropped radix coupling (FLOWVPM.clear_radix_fmm_cache!): free every device
+# array reachable from it, except the ones the field itself holds
+function FLOWVPM._radix_free!(st, pfield, ::AnyGPUMatrix)
+    keep = _gpu_arrays!(IdDict{Any,Nothing}(), IdDict{Any,Nothing}(), pfield)
+    for a in keys(_gpu_arrays!(IdDict{Any,Nothing}(), IdDict{Any,Nothing}(), st))
+        haskey(keep, a) || finalize(a)      # as FLOWVPM._gal_free1!
+    end
+    return nothing
+end
+# the device arrays reachable from x (fields, tuples, containers), by identity
+function _gpu_arrays!(out::IdDict{Any,Nothing}, seen::IdDict{Any,Nothing}, x)
+    (isbits(x) || x isa Module || x isa Type || x isa WeakRef || x isa Core.SimpleVector ||
+     x isa AbstractString || x isa Symbol || x isa Task) && return out
+    haskey(seen, x) && return out
+    seen[x] = nothing
+    if x isa AbstractGPUArray
+        out[x] = nothing
+    elseif x isa AbstractDict
+        for (k, v) in x
+            _gpu_arrays!(out, seen, k); _gpu_arrays!(out, seen, v)
+        end
+    elseif x isa Array
+        isbitstype(eltype(x)) && return out
+        for i in eachindex(x)
+            isassigned(x, i) && _gpu_arrays!(out, seen, x[i])
+        end
+    else
+        for f in 1:nfields(x)
+            isdefined(x, f) && _gpu_arrays!(out, seen, getfield(x, f))
+        end
+    end
+    return out
+end
+
+
 end # FLOWVPM._FMM_HAS_RADIX
 
 # Galerkin core-spreading reset (src/FLOWVPM_corespreading_galerkin.jl): the
@@ -424,6 +462,7 @@ function FLOWVPM._gal_cover!(jmark, pmark, S::FLOWVPM._GalSet, X::AnyGPUMatrix)
     dj = KA.zeros(backend, Bool, np); dp = KA.zeros(backend, Bool, length(pmark))
     np > 0 && ka_gal_cover_kernel!(backend, 256)(dj, dp, X, S.x, S.v, S.cstart, S.n, S.lo, S.h, Int32(np); ndrange = np)
     jmark .|= Array(dj); pmark .|= Array(dp)
+    finalize(dj); finalize(dp)
     return nothing
 end
 
@@ -524,6 +563,7 @@ function FLOWVPM._gal_cg!(x::AnyGPUMatrix, r, p, Ap, z, f, d, A, S, cut2, blk, i
         FLOWVPM._gal_precond!(z, r, blk); FLOWVPM._gal_gram!(w, A, S, z, cut2)
         dots!(part, wv, rv, zv, d, Int32(n), T; ndrange = 256ng)
     end
+    FLOWVPM._gal_free!(w, part, dec, sc)
     return Int(h[7]), h[6] == 1
 end
 
@@ -619,6 +659,12 @@ function _gal_chunks(S::FLOWVPM._GalSet)
     _GAL_CHUNKS[] = (WeakRef(S.cstart), ch)
     return ch
 end
+
+# The reset's device temporaries are freed at the end of each phase
+# (FLOWVPM._gal_free!), not left to the GC. `finalize` runs the array's own
+# finalizer, its backend's unsafe_free! (one reference to the buffer released);
+# KA.unsafe_free! is a no-op for Metal arrays (Metal.jl 1.10).
+FLOWVPM._gal_free1!(a::AbstractGPUArray) = finalize(a)
 
 function FLOWVPM._gal_gram!(y::AnyGPUMatrix, ::Nothing, S, x, cut2)
     nt = size(S.x, 2)

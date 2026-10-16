@@ -118,6 +118,12 @@ function _gal_to(P, S::_GalSet)
     T = eltype(P)
     return _GalSet(_gal_to(P, S.x), _gal_to(P, S.v), _gal_to(P, S.cstart), S.n, T.(S.lo), T(S.h), T(S.vmax))
 end
+# Release device copies as soon as a phase is done (GPU extension; host arrays are
+# left to the GC)
+_gal_free!(xs...) = foreach(_gal_free1!, xs)
+_gal_free1!(a) = nothing
+_gal_free1!(S::_GalSet) = _gal_free!(S.x, S.v, S.cstart)
+_gal_free1!(t::NamedTuple) = foreach(_gal_free1!, t)
 
 # Host Gram operator. Each pair once, from the row of the wider core (ties: the
 # larger index), so row i searches r <= gram_cut sqrt(2 v_i) only; the transposed
@@ -425,7 +431,9 @@ function _gal_edges(Xo::Matrix{Float64}, X::AbstractMatrix, sgm0, offsets, spaci
     end
     S, perm = _gal_set(C, fill(q^2, n), q)
     hit = zeros(Bool, n)
-    _gal_cover!(zeros(Bool, size(X, 2)), hit, _gal_to(parent(X), S), X)
+    Sd = _gal_to(parent(X), S)
+    _gal_cover!(zeros(Bool, size(X, 2)), hit, Sd, X)
+    _gal_free!(Sd)
     e = sort(perm[.!hit])                  # acceptance below in stencil order
     isempty(e) || (e = e[_gal_thin(C[:, e], zeros(length(e)), q)])
     return C[:, e], par[e]
@@ -555,7 +563,9 @@ function _gal_plan(Qs, P, np, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset
     rk2 = [(max(gr.halo_min, gr.halo_tail * sqrt(max(s^2 - s02, 0.0)) / sgm0) * sgm0)^2 for s in so]
     Hs, _ = _gal_set(Xo, rk2, sqrt(maximum(rk2)))
     mark = zeros(Bool, np)
-    _gal_cover!(mark, zeros(Bool, K), _gal_to(P, Hs), X)
+    Hsd = _gal_to(P, Hs)
+    _gal_cover!(mark, zeros(Bool, K), Hsd, X)
+    _gal_free!(Hsd)
     mark[sub] .= false
     hal = findall(mark)
     hal = hal[iszero.(vec(_gal_gather(P, hal, STATIC_INDEX:STATIC_INDEX)))]   # static: no increments
@@ -566,7 +576,12 @@ function _gal_plan(Qs, P, np, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset
         O, operm = _gal_set(Xo, vo, sqrt(cut2 * 2 * maximum(vo)) / 2)
         Od = _gal_to(P, O); God = _gal_to(P, Go[:, operm])
         nrm3(A, j) = sqrt(A[1, j]^2 + A[2, j]^2 + A[3, j]^2)
-        tail(Y, v) = (o = _gal_to(P, zeros(3, size(Y, 2))); _gal_pairsum!(o, _gal_to(P, Y), _gal_to(P, v), Od, God, cut2); Float64.(Array(o)))
+        function tail(Y, v)
+            o = _gal_to(P, zeros(3, size(Y, 2))); Yd = _gal_to(P, Y); vd = _gal_to(P, v)
+            _gal_pairsum!(o, Yd, vd, Od, God, cut2)
+            fo = Float64.(Array(o)); _gal_free!(o, Yd, vd)
+            return fo
+        end
         fs = tail(Xo[:, operm], fill(s02, K)); peak = maximum(nrm3(fs, k) for k in 1:K)
         if !isempty(epar)
             fx = tail(Ec, fill(s02, size(Ec, 2)))
@@ -578,6 +593,7 @@ function _gal_plan(Qs, P, np, sub::Vector{Int}, sgm0::Float64, gr::GalerkinReset
             fh = tail(Qh[X_INDEX, :], Qh[SIGMA_INDEX, :] .^ 2)
             hal = hal[[nrm3(fh, j) >= gr.halo_tol * peak for j in 1:length(hal)]]
         end
+        _gal_free!(Od, God)
     end
     return (; ks = findall(keep), subd = sub[.!keep], hal, epar, eoff = Ec .- Xo[:, epar])
 end
@@ -633,6 +649,8 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
     err = _gal_ferr(x, r, f, d, oo)
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
+    # device fields: the system is not kept (the adjoint is host only)
+    P isa Matrix || _gal_free!(Ud, Od, God, f, fo, x, r, p, Ap, z, d, blk)
     t4 = time()
 
     sol.its = its; sol.conv = conv; sol.err = err; sol.nnz = nnz; sol.mem = mem
