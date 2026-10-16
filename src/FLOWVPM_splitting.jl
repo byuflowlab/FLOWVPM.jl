@@ -4,7 +4,6 @@
     FLOWVPM_merging.jl: a workspace on `ParticleField`, a single pass over
     candidates, severity-ranked cap, in-place mutation of `pfield.particles`.
 
-    See sfs_musings.md §Innovations / Particle subdivision for motivation.
     Default split is symmetric two-child, constant-σ, Γ/2 each, offset
     by ±a along `e_split` where 2a = κ_split · σ_p.
 
@@ -649,14 +648,12 @@ function _do_split!(pfield::ParticleField{R},
 end
 
 # ------------------------------------------------------------------------------
-# Filament edge graph storage helpers (Phase 2 — adjacency-only)
+# Filament edge graph storage helpers
 # ------------------------------------------------------------------------------
 # Bounded local-work mutators for `FilamentEdgeGraph`. No edge ids: an edge
 # is the matched pair of slots (down_neighbor[k, src] == dst,
 # up_neighbor[k′, dst] == src). Per-edge state (coherent, score) is stored
-# once on the canonical downstream slot. Phase 3+ refinement/inference will
-# layer score-based replacement, validation, and the cell-list candidate
-# scan on top of these primitives.
+# once on the canonical downstream slot.
 
 """
     add_edge!(graph, src, dst; coherent=false, score=0) -> Bool
@@ -893,8 +890,8 @@ gate on coherence, so this is enough to keep them from acting on torn
 topology. The next [`infer_filament_edges!`](@ref) call refreshes the
 region.
 
-Does not mutate `up_neighbor`, `down_neighbor`, `degree`, or `down_score`
-in this phase — structural mirror breakage that is not self-healing
+Does not mutate `up_neighbor`, `down_neighbor`, `degree`, or `down_score`;
+structural mirror breakage that is not self-healing
 remains visible in the returned report so calibration can decide whether
 to escalate to `remove_edge!`.
 """
@@ -1159,8 +1156,7 @@ and for each edge `p → q` with `‖x_q − x_p‖ > L_max * (σ_p + σ_q)/2`,
 insert a new particle `m` at the midpoint and replace the single edge
 with `p → m` and `m → q`. Returns the number of edges split.
 
-Per-particle quantities for the inserted `m` (see
-`hybrid_filement_edge.md` Phase 4b for the derivation):
+Per-particle quantities for the inserted `m`:
 
 - `x_m  = (x_p + x_q) / 2`
 - `σ_m  = (σ_p + σ_q) / 2`
@@ -1596,9 +1592,6 @@ end
 
     # Survivor = lower index, removed = higher index.
     u, v = a < b ? (a, b) : (b, a)
-    k_uc = (u == a) ? k_ac : k_bc
-    score_uc = graph.down_score[k_uc, u]
-    coh_uc   = graph.down_coherent[k_uc, u]
 
     # Degree gate on the non-trio side. Count how many of v's upstream
     # neighbors are not already upstream of u; this is the new edges u
@@ -1660,14 +1653,9 @@ end
     pfield.particles[VOL_INDEX,             u] = volm
     pfield.particles[CIRCULATION_INDEX,     u] = circu + circv
 
-    # Edge surgery: drop v→c (the trio edge on the removed side); transfer
-    # v's upstream edges to u. The kept u→c edge already carries the
-    # right metadata (coh_uc, score_uc) and is left alone.
+    # Drop v→c and transfer v's upstream edges to u. The kept u→c edge and
+    # its metadata are left unchanged.
     remove_edge!(graph, v, c)
-    # Note: coh_uc / score_uc would only need to be re-applied if the
-    # kept slot moved. find_down_slot(graph, u, c) is still k_uc unless v
-    # happened to overlap u's columns — but v ≠ u by construction and we
-    # only mutated v's column.
 
     # Transfer v's upstream edges. After each remove_edge!, compaction
     # moves slot 2 into slot 1, so we always read from slot 1 to drain.
@@ -1824,7 +1812,7 @@ end
 """
     merge_filament_bundles!(pfield; kwargs...) -> Int
 
-Cross-filament bundle merge (Phase 4f). Spatial-search-driven collapse of
+Cross-filament bundle merge. Spatial-search-driven collapse of
 particles from *different* filaments that are spatially overlapping and
 Γ-aligned. Thin wrapper around [`merge_particles!`](@ref) that supplies a
 Γ-alignment gate (`cos(cross_angle_tol)`) and a per-cluster callback
@@ -1948,7 +1936,7 @@ reports and stable nested mutation counts:
 ```
 
 `counts.merged` is the number of particles removed by the cross-filament
-merge pass (Phase 4f). It is zero unless `do_cross_merge=true`.
+merge pass. It is zero unless `do_cross_merge=true`.
 
 `reports.repair === reports.initial` (object identity) iff no repair was
 attempted — either because `do_repair=false` or because the initial
@@ -2090,7 +2078,7 @@ function _refine_impl!(::Val{true}, pfield::ParticleField{R};
 end
 
 # ------------------------------------------------------------------------------
-# Filament-edge calibration harness (Phase 5 — observation only)
+# Filament-edge calibration harness
 # ------------------------------------------------------------------------------
 
 """
