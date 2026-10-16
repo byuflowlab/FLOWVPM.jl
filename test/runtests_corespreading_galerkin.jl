@@ -95,6 +95,17 @@ const GAL_CASES = [("A centred", (0.0, 0.0), GAL_UNI, (x, y, s) -> x^2 + y^2 < 4
     @test maximum(abs.(Minv * A .- [a == c ? 1.0 : 0.0 for a in 1:m, c in 1:m])) < 1e-8
 end
 
+# a spread of 1000 thinning distances per axis would need 1e9 cells: the set's cells
+# are enlarged (2^26 cap) and the thinning must index them by the set's cell size
+@testset "Galerkin thinning over a very large spread" begin
+    q = 0.5
+    X = [0.0 0.1 300.0 300.1 500.0 500.0;
+         0.0 0.0 300.0 300.0 500.0 500.0;
+         0.0 0.0 300.0 300.0 0.0 0.3]
+    @test FLOWVPM._gal_set(X, zeros(6), q)[1].h > q
+    @test FLOWVPM._gal_thin(X, [2.0, 1.0, 1.0, 2.0, 1.0, 1.0], q) == [true, false, false, true, true, false]
+end
+
 @testset "Galerkin reset, Lamb-Oseen single subset reset: $name" for (name, c, sigf, insub) in GAL_CASES
     X0, G0, S0 = gal_tube(c, sigf)
     sub = [j for j in axes(X0, 2) if insub(X0[1, j] - c[1], X0[2, j] - c[2], S0[j])]

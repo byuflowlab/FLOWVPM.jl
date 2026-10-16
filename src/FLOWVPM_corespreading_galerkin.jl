@@ -417,7 +417,8 @@ function _gal_thin(X::Matrix{Float64}, gnorm::Vector{Float64}, q::Float64)
     kept = falses(K)                   # in set order
     for o in sortperm(gnorm; rev=true)
         x1 = X[1, o]; x2 = X[2, o]; x3 = X[3, o]
-        a = floor(Int, (x1 - S.lo[1]) / q); b = floor(Int, (x2 - S.lo[2]) / q); c = floor(Int, (x3 - S.lo[3]) / q)
+        # the set's cells (S.h >= q: enlarged when q would need more than 2^26 cells)
+        a = floor(Int, (x1 - S.lo[1]) / S.h); b = floor(Int, (x2 - S.lo[2]) / S.h); c = floor(Int, (x3 - S.lo[3]) / S.h)
         a0 = max(a - 1, 0); a1 = min(a + 1, S.n[1] - 1)
         drop = false
         for kc in max(c - 1, 0):min(c + 1, S.n[3] - 1), kb in max(b - 1, 0):min(b + 1, S.n[2] - 1)
