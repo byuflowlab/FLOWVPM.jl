@@ -667,13 +667,14 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
     err = _gal_ferr(x, r, f, d, oo)
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
-    # device fields: the system is not kept (the adjoint is host only)
-    P isa Matrix || _gal_free!(Ud, Od, God, f, fo, x, r, p, Ap, z, d, blk)
     t4 = time()
 
     sol.its = its; sol.conv = conv; sol.err = err; sol.nnz = nnz; sol.mem = mem
     sol.t = (t1 - t0, t2 - t1, t3 - t2, t4 - t3)
-    return c, (; U, uperm, O, operm, God, d, A, blk, cut2), x
+    P isa Matrix && return c, (; U, uperm, O, operm, God, d, A, blk, cut2), x
+    # device fields: the system is freed, not returned (the adjoint is host only)
+    _gal_free!(Ud, Od, God, f, fo, x, r, p, Ap, z, d, blk)
+    return c, (; A = nothing), nothing
 end
 
 # Reverse of `_gal_solve` (host): lambda solves (M + D) lambda = cbar with the same
