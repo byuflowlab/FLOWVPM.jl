@@ -61,10 +61,7 @@ _passes_relaxation_filter(::typeof(relax_filter_all), pfield, i::Integer) = true
     relax_broadcast!(rlx::Relaxation, pfield)
 
 Whole-field broadcast relaxation, applied to every non-static particle at
-once. Used unconditionally on both CPU and GPU (a single shared
-implementation -- see logs/2026-07-21-gpu-full.md for the benchmark showing
-the CPU cost of unifying is modest, 1.4-2.1x, unlike time integration's
-4-10x, which is why that one stayed forked and this one didn't).
+once for device-backed particle storage.
 
 Not made a callable method of `Relaxation` (e.g. `rlx(pfield)`) because that
 would collide with the existing single-particle callable `rlx(p)` -- both
@@ -75,14 +72,13 @@ relax_broadcast!(rlx::Relaxation, pfield) = _relax_broadcast!(rlx.relax, rlx.rlx
 
 _relax_broadcast!(relax, rlxf, pfield) = error(
     "No whole-field broadcast implementation registered for relaxation scheme `$relax`. " *
-    "Since relaxation now always runs through `relax_broadcast!` (no per-particle CPU loop " *
-    "fallback), a custom relaxation scheme must define a matching method of " *
+    "A custom relaxation scheme used with device-backed particle storage must define a matching method of " *
     "`FLOWVPM._relax_broadcast!(::typeof($relax), rlxf, pfield)`.")
 
 
 ##### RELAXATION METHODS #######################################################
 """
-    `relax_Pedrizzetti(rlxf::Real, p)`
+    `relax_pedrizzetti(rlxf::Real, p)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 """
@@ -129,7 +125,7 @@ function relax_pedrizzetti(rlxf::Real, pfield, i)
 end
 
 """
-    `relax_correctedPedrizzetti(rlxf::Real, p)`
+    `relax_correctedpedrizzetti(rlxf::Real, p)`
 
 Relaxation scheme where the vortex strength is aligned with the local vorticity.
 This version fixes the error in Pedrizzetti's relaxation that made the strength
@@ -245,12 +241,11 @@ function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfi
     nrmw = view(Sc, 4, :); nrmw .= sqrt.(w1.^2 .+ w2.^2 .+ w3.^2)
     nrmGamma = view(Sc, 5, :); nrmGamma .= sqrt.(G1.^2 .+ G2.^2 .+ G3.^2)
 
-    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0) .* (nrmGamma .> 0)   # the scalar form guards |Gamma| too (2026-09-26)
+    apply = view(Sc, 6, :); apply .= active .* (nrmw .> 0) .* (nrmGamma .> 0)
     safenrmw = view(Sc, 7, :); safenrmw .= ifelse.(nrmw .> 0, nrmw, one(eltype(nrmw)))
 
     # sqrtb2 reuses nrmw's row: its RHS reads only w1/w2/w3/G1/G2/G3/nrmGamma/safenrmw
-    # (never nrmw itself), so overwriting nrmw's row here is safe (see point 7 of
-    # feedback-gpu-verification-standards on fused read/overwrite of a shared row).
+    # (never nrmw itself), so overwriting nrmw's row here is safe.
     # No positivity guard, matching the scalar version's `sqrt(b2)` exactly.
     sqrtb2 = nrmw
     sqrtb2 .= sqrt.(1 .- 2 .* (1-rlxf) .* rlxf .* (1 .- (G1.*w1 .+ G2.*w2 .+ G3.*w3) ./ (nrmGamma .* safenrmw)))
@@ -262,4 +257,3 @@ function _relax_broadcast!(::typeof(relax_correctedpedrizzetti), rlxf::Real, pfi
     return nothing
 end
 ##### END OF RELAXATION SCHEME #################################################
-
