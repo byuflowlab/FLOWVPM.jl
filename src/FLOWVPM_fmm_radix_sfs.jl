@@ -7,9 +7,8 @@
     delivery into the particle rows; FastMultipole only hands out its sorted
     near-field data (`FastMultipole.radix_nearfield`) at the point of the
     lifecycle where the resident bodies' U and J are complete
-    (`fmm!(...; nearfield_pass)`). Moved here from FastMultipole on
-    2026-09-27 (maintainer request); the host loops are verbatim, the device
-    kernels live in ext/FLOWVPMGPUExt.jl.
+    (`fmm!(...; nearfield_pass)`). The device kernels live in
+    ext/FLOWVPMGPUExt.jl.
 
     Per evaluation: (a) T_i = op(J_i) Γ_i and the ζ-accumulators zeroed,
     (b) one sweep of the direct pair list accumulating Ω_i = Σ_j ζ_σj(r_ij) Γ_j
@@ -28,7 +27,6 @@
 const _SFS_ZETA_K1 = 0.06349363593424097  # (2π)^(-3/2)
 @inline _sfs_saturation_rc2(::Type{Float32}) = 42.25f0
 @inline _sfs_saturation_rc2(::Type{Float64}) = 81.0
-
 
 """
     _radix_sfs_context(pfield, maxn) -> NamedTuple
@@ -115,8 +113,8 @@ end
 # The particles' current U (rows 10:12) and J (16:24) into the resident output
 # (rows 2:4 and 5:13) in sorted body order, for a repass. Host arrays here; the
 # GPU extension has the kernel.
-# host storage only: the device method (ext) dispatches on the field's GPU array
-# type; a bare `::ParticleField` here out-ranked it (2026-09-27)
+# Host storage only: the device method dispatches on the field's GPU array type;
+# a bare `::ParticleField` here would outrank it.
 function _radix_output_from_particles!(pfield::ParticleField{<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Any,<:Matrix}, nf)
     P = pfield.particles; output = nf.output
     perm = nf.host_body_perm; n = nf.n_bodies
@@ -158,7 +156,7 @@ _radix_sfs_pass_device!(pfield, ctx, nf; dsigma=false) =
 _radix_sfs_deliver_device!(pfield, ctx, nf; dsigma=false) =
     error("the SFS delivery on a device field needs the FLOWVPM GPU extension")
 
-#------- the pass, verbatim from FastMultipole's host mirror of the device pass -------#
+#------- host SFS pass -------#
 @inline function _sfs_apply_op(J5, J6, J7, J8, J9, J10, J11, J12, J13,
         v1, v2, v3, transposed::Bool)
     if transposed
@@ -235,7 +233,7 @@ function _host_sfs_zeta_pairs!(om::AbstractMatrix{TF}, q, tg, source_bodies,
     return om
 end
 
-#------- analytic core-scaling derivative for the dynamic SFS procedure (2026-09-21) -------#
+#------- analytic core-scaling derivative for the dynamic SFS procedure -------#
 #
 # The dynamic procedure's coefficient is C = <Γ⋅L>/<Γ⋅m> with L = (Γ⋅∇)∂U/∂σ and
 # m = σ³/ζ(0) ∂E/∂σ: the derivatives of the resolved stretching and of the
@@ -406,14 +404,7 @@ function _scatter_dsfs_host!(buf::AbstractMatrix, dt, de, perm, body_system,
     return buf
 end
 
-"""
-    _run_host_radix_sfs!(state)
-
-Host mirror of the device SFS pass (task 048): TG precompute + ζ pair sweep
-over the full direct list. Requires a state built with `sfs=true` (13-row
-output). Call after `run_host_radix_lifecycle!` (U/J complete), before
-`finalize_radix_sfs_output!`.
-"""
+# Form E from the completed J, Ω, and Q accumulators.
 function _host_sfs_form_e!(tg, om, q, output::AbstractMatrix,
         transposed::Bool, n::Int)
     @inbounds for i in 1:n
@@ -442,5 +433,3 @@ function _scatter_sfs_host!(buf::AbstractMatrix, e, perm, body_system,
     end
     return buf
 end
-
-
