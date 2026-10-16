@@ -13,9 +13,7 @@
                                  f_i  = sum_k Gold_k N(x_i - x_k; s_i^2 + so_k^2),
 
     N the normalized 3D Gaussian (FLOWVPM's gaussianerf zeta), the overlaps cut
-    at r^2 <= gram_cut^2 (s_i^2 + s_j^2). Study and parameters: research-notes
-    flowunsteady-update/details/2026-10-14_rbf-reset-fix_1.md and
-    2026-10-15_cs-galerkin_1.md.
+    at r^2 <= gram_cut^2 (s_i^2 + s_j^2).
 
     Two parts: the selection (`_gal_plan`: thinning, halo, edge points; indices
     only, no derivative) and the linear solve on that fixed geometry
