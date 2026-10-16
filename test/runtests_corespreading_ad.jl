@@ -205,3 +205,64 @@ end
         end
     end
 end
+
+# The same field through FLOWVPM.checkpointed_gradient!: 4 steps, a checkpoint every
+# 2, resets in steps 2 and 4, so the particle count differs between checkpoints
+# (48 -> 155 -> 308). Checked against Enzyme over all steps at once and against FD
+# (exact-solve oracle, positions and strengths).
+@testset "Core spreading: checkpointed_gradient! across resets (np changes between checkpoints)" begin
+    N = CSSTEP_N; nsteps = 4; dt = 0.1
+    function cs_build(x, exact)
+        gr = exact ? FLOWVPM.GalerkinReset(; block_cell=1e3, block_cap=10^6, tol=1e-10, itmax=50, gram_mem=0) :
+                     FLOWVPM.GalerkinReset(; tol=1e-10, itmax=2000, gram_mem=0)
+        pf = FLOWVPM.ParticleField(8N, Float64; viscous=FLOWVPM.CoreSpreading(0.05, CSAD_SGM0; beta=1.008, galerkin=gr),
+                                   UJ=FLOWVPM.UJ_direct, formulation=FLOWVPM.formulation_rVPM, kernel=FLOWVPM.kernel_gaussianerf,
+                                   integration=FLOWVPM.rungekutta3, relaxation=FLOWVPM.Relaxation(FLOWVPM.relax_pedrizzetti, 1, 0.3),
+                                   fmm=FLOWVPM.FMM(autotune_reg_error=false))
+        for j in 1:N
+            FLOWVPM.add_particle(pf, (x[3j-2], x[3j-1], x[3j]), (x[3N+3j-2], x[3N+3j-1], x[3N+3j]), x[6N+j])
+        end
+        return pf
+    end
+    function cs_obj(pf)
+        P = pf.particles; s = 0.0
+        for j in 1:FLOWVPM.get_np(pf)
+            a = csstep_a(P[1, j], P[2, j], P[3, j])
+            s += a[1] * P[4, j] + a[2] * P[5, j] + a[3] * P[6, j] + a[4] * P[7, j]
+        end
+        return s
+    end
+    cs_step(pf, dt) = FLOWVPM.nextstep(pf, dt; relax=true)
+    cs_run(pf) = (for _ in 1:nsteps; cs_step(pf, dt); end; cs_obj(pf))
+    rng = Random.MersenneTwister(5)
+    X0 = Float64[]
+    for i in 1:4, j in 1:4, k in 1:3, c in (i, j, k)
+        push!(X0, 10 + 0.6c + 0.1 * (rand(rng) - 0.5))
+    end
+    X0[4:6] .= X0[1:3] .+ (0.05, 0.05, 0.3)
+    x0 = vcat(X0, 0.1 .* randn(rng, 3N), CSAD_SGM0 .* (1.0 .+ 0.05 .* rand(rng, N)))
+    pf = cs_build(x0, false); dpf = Enzyme.make_zero(pf)
+    J = FLOWVPM.checkpointed_gradient!(dpf, cs_obj, pf, dt, nsteps; every=2, step=cs_step)
+    @test FLOWVPM.get_np(pf) > 2N                          # resets inside the run
+    @test J == cs_run(cs_build(x0, false))
+    pf2 = cs_build(x0, false); dpf2 = Enzyme.make_zero(pf2)
+    Enzyme.autodiff(Enzyme.Reverse, Enzyme.Const(cs_run), Enzyme.Active, Enzyme.Duplicated(pf2, dpf2))
+    rows = vcat(FLOWVPM.X_INDEX, FLOWVPM.GAMMA_INDEX, FLOWVPM.SIGMA_INDEX)
+    G = dpf.particles[rows, 1:N]
+    @test isapprox(G, dpf2.particles[rows, 1:N]; rtol=1e-10)
+    dx = vcat(vec(G[1:3, :]), vec(G[4:6, :]), vec(G[7, :]))
+    F(x) = (p = cs_build(x, true); (cs_run(p), FLOWVPM.get_np(p)))
+    np0 = F(x0)[2]
+    for blk in (:X, :Gamma)
+        v = randn(rng, 7N)
+        blk == :X ? (v[3N+1:end] .= 0) : (v[1:3N] .= 0; v[6N+1:end] .= 0)
+        v ./= LinearAlgebra.norm(v)
+        gv = LinearAlgebra.dot(dx, v)
+        err = minimum((1e-4, 1e-5, 1e-6)) do h
+            (fp, n1) = F(x0 .+ h .* v); (fm, n2) = F(x0 .- h .* v)
+            n1 == n2 == np0 || return Inf
+            abs(gv - (fp - fm) / 2h) / LinearAlgebra.norm(dx .* (v .!= 0))
+        end
+        @test err <= 1e-6
+    end
+end
