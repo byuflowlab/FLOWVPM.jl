@@ -73,6 +73,29 @@ function UJ_direct(source::ParticleField, target::ParticleField)
 end
 
 
+# Host FMM evaluation of U and J (FLOWVPMEnzymeExt carries its reverse rule):
+# returns the tuned expansion order and leaf size, and the trees and direct list
+# the SFS passes reuse (integer data only).
+function _fmm_UJ!(pfield, vorticity, verbose)
+    fmm_options = pfield.fmm
+    optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = fmm.fmm!(pfield;
+                    expansion_order=fmm_options.p-1,
+                    leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
+                    multipole_acceptance=fmm_options.theta,
+                    error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
+                    tune=true,
+                    shrink=fmm_options.shrink_recenter,
+                    recenter=fmm_options.shrink_recenter,
+                    nearfield_device=false, # CPU-only branch: GPU fields dispatch to UJ_fmm_gpu! above; legacy nearfield_device forwarding silently dropped the nearfield
+                    scalar_potential=false,
+                    hessian=true,
+                    extra_outputs=vorticity ? 3 : 0,
+                    silence_warnings=!verbose)
+    # concrete types (fmm! is not inferred): integer data, so Enzyme treats the result as constant
+    return (optargs.expansion_order::Int, optargs.leaf_size_source[1]::Int, target_tree::fmm.Tree{eltype(pfield),1},
+            source_tree::fmm.Tree{eltype(pfield),1}, direct_list::Vector{SVector{2,Int32}})
+end
+
 """
   `UJ_fmm(pfield)`
 
@@ -125,25 +148,12 @@ function UJ_fmm(
     end
 
     # Calculate FMM of vector potential and, optionally, the induced vorticity.
-    args = fmm.fmm!(pfield;
-                    expansion_order=fmm_options.p-1,
-                    leaf_size_source=max(fmm_options.ncrit, fmm_options.min_ncrit),
-                    multipole_acceptance=fmm_options.theta,
-                    error_tolerance=fmm.PowerRelativeGradient{fmm_options.relative_tolerance, fmm_options.absolute_tolerance, true}(),
-                    tune=true,
-                    shrink=fmm_options.shrink_recenter,
-                    recenter=fmm_options.shrink_recenter,
-                    nearfield_device=false, # CPU-only branch: GPU fields dispatch to UJ_fmm_gpu! above; legacy nearfield_device forwarding silently dropped the nearfield
-                    scalar_potential=false,
-                    hessian=true,
-                    extra_outputs=vorticity ? 3 : 0,
-                    silence_warnings=!verbose)
-    optargs, cache, target_tree, source_tree, m2l_list, direct_list, _ = args
+    tuned_order, tuned_leaf_size, target_tree, source_tree, direct_list = _fmm_UJ!(pfield, vorticity, verbose)
 
     # autotune p and ncrit
     if autotune
-        new_p = fmm_options.autotune_p ? optargs.expansion_order+1 : fmm_options.p
-        new_ncrit = fmm_options.autotune_ncrit ? optargs.leaf_size_source[1] : fmm_options.ncrit
+        new_p = fmm_options.autotune_p ? tuned_order+1 : fmm_options.p
+        new_ncrit = fmm_options.autotune_ncrit ? tuned_leaf_size : fmm_options.ncrit
         pfield.fmm = FMM(new_p, new_ncrit, fmm_options.theta,
                         fmm_options.shrink_recenter,
                         fmm_options.relative_tolerance,

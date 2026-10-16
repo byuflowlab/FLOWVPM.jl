@@ -203,3 +203,40 @@ end
         @test minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - gv)/abs(gv), (1e-4, 1e-5, 1e-6)) < 1e-7
     end
 end
+
+# FLOWVPMEnzymeExt's FMM reverse rule (`_fmm_UJ!`: adjoint FMM calls) and the
+# Estr_fmm! rule, through one UJ_fmm step. Agreement is set by the FMM error
+# (here ~1e-5): against the UJ_direct gradient and against central FD of the FMM.
+function enz_fmm_step(x::AbstractVector{T}, w, UJ, SFS) where T
+    n = length(x) ÷ 7
+    pf = FLOWVPM.ParticleField(n, T; UJ, SFS, integration=FLOWVPM.euler,
+                               fmm=FLOWVPM.FMM(p=8, ncrit=20, autotune_p=false, autotune_ncrit=false, autotune_reg_error=false,
+                                               min_ncrit=1, relative_tolerance=1e-12, absolute_tolerance=1e-12))
+    for i in 1:n
+        FLOWVPM.add_particle(pf, (x[3i-2], x[3i-1], x[3i]), (x[3n+3i-2], x[3n+3i-1], x[3n+3i]), x[6n+i])
+    end
+    FLOWVPM.nextstep(pf, 0.01)
+    s = zero(T)
+    for i in 1:n, k in 1:7
+        s += w[7(i-1)+k] * pf.particles[k, i]
+    end
+    return s
+end
+
+@testset "Enzyme: UJ_fmm step through the FMM adjoint rule" begin
+    n = 1500
+    Random.seed!(4)
+    L = (n/500)^(1/3)
+    x = vcat(L .* rand(3n), 0.1 .* randn(3n) ./ L^2, 0.06 .+ 0.02 .* rand(n))
+    w = randn(7n)
+    sfs = FLOWVPM.ConstantSFS(FLOWVPM.Estr_fmm; Cs=1.0, clippings=(FLOWVPM.clipping_backscatter,))
+    grad(UJ, SFS) = (g = zero(x); Enzyme.autodiff(Enzyme.Reverse, enz_fmm_step, Enzyme.Active, Enzyme.Duplicated(x, g),
+                                                  Enzyme.Const(w), Enzyme.Const(UJ), Enzyme.Const(SFS)); g)
+    for SFS in (FLOWVPM.SFS_none, sfs)
+        g = grad(FLOWVPM.UJ_fmm, SFS)
+        @test LinearAlgebra.norm(g - grad(FLOWVPM.UJ_direct, SFS)) / LinearAlgebra.norm(g) < 1e-3
+        f = x -> enz_fmm_step(x, w, FLOWVPM.UJ_fmm, SFS)
+        v = randn(7n); v ./= LinearAlgebra.norm(v); gv = LinearAlgebra.dot(g, v)
+        @test minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - gv)/abs(gv), (1e-4, 1e-5, 1e-6)) < 1e-3
+    end
+end

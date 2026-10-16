@@ -180,57 +180,68 @@ end
 #   y_t = M(J_t)' w_t, h_s = M(J_s) Gamma_s, zbar = Gamma_s.y_t - h_s.w_t,
 #   Mbar summed = w_t (sum_s z Gamma_s)' at t and (sum_t z w_t) Gamma_s' at s.
 _M(J, transposed) = transposed ? J' : J
-function _estr_reverse!(dP, P, np, zeta, transposed)
+# `blocks`: (targets, sources) index sets whose every pair is in the sum; per
+# thread, both sides accumulate in a buffer (a source set can recur in blocks
+# on different threads)
+function _estr_reverse!(dP, P, zeta, transposed, blocks)
     X, Gm, S, J, SF, ST = vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX, vpm.J_INDEX, vpm.SFS_INDEX, vpm.STATIC_INDEX
+    np = size(P, 2)
     act = [!Bool(P[ST, i]) for i in 1:np]
     w = [act[t] ? _col3(dP, SF, t) : zero(SVector{3, eltype(P)}) for t in 1:np]
     y = [_M(_col9(P, J, t), transposed)'*w[t] for t in 1:np]
-    bufT = _chunked_pairs!(dP, np, 6) do bt, ss
-        for s in ss
-            act[s] || continue
-            xs = _col3(P, X, s); G = _col3(P, Gm, s); sgm = P[S, s]; Ms = _M(_col9(P, J, s), transposed)
-            h = Ms*G
-            dxs = zero(xs); dG = zero(G); dsg = zero(sgm); b = zero(G)
-            for t in 1:np
-                (t == s || iszero(w[t])) && continue
-                d = xs - _col3(P, X, t); r = sqrt(dot(d, d)); q = r/sgm
-                zq, dzq = _zeta_dzeta(zeta, q)
-                z = zq/sgm^3
-                zbar = dot(G, y[t]) - dot(h, w[t])
-                b += z*w[t]; dG += z*y[t]
-                bt[4, t] += z*G[1]; bt[5, t] += z*G[2]; bt[6, t] += z*G[3]
-                dsg -= zbar*(dzq*r/sgm + 3*zq)/sgm^4
-                if r > 0
-                    rb = zbar*dzq/(sgm^4*r)
-                    dxs += rb*d
-                    bt[1, t] -= rb*d[1]; bt[2, t] -= rb*d[2]; bt[3, t] -= rb*d[3]
+    nc = min(Threads.nthreads(), max(length(blocks), 1))
+    buf = zeros(eltype(P), 16, np, nc)
+    Threads.@threads :static for c in 1:nc
+        bt = view(buf, :, :, c)
+        for k in c:nc:length(blocks)
+            ts, ss = blocks[k]
+            for s in ss
+                act[s] || continue
+                xs = _col3(P, X, s); G = _col3(P, Gm, s); sgm = P[S, s]
+                h = _M(_col9(P, J, s), transposed)*G
+                dxs = zero(xs); dGy = zero(G); dsg = zero(sgm); b = zero(G)
+                for t in ts
+                    (t == s || iszero(w[t])) && continue
+                    d = xs - _col3(P, X, t); r = sqrt(dot(d, d)); q = r/sgm
+                    zq, dzq = _zeta_dzeta(zeta, q)
+                    z = zq/sgm^3
+                    zbar = dot(G, y[t]) - dot(h, w[t])
+                    b += z*w[t]; dGy += z*y[t]
+                    bt[4, t] += z*G[1]; bt[5, t] += z*G[2]; bt[6, t] += z*G[3]
+                    dsg -= zbar*(dzq*r/sgm + 3*zq)/sgm^4
+                    if r > 0
+                        rb = zbar*dzq/(sgm^4*r)
+                        dxs += rb*d
+                        bt[1, t] -= rb*d[1]; bt[2, t] -= rb*d[2]; bt[3, t] -= rb*d[3]
+                    end
                 end
-            end
-            dG -= Ms'*b
-            dJs = _M(b*G', transposed)
-            for a in 1:3
-                dP[X[a], s] += dxs[a]; dP[Gm[a], s] += dG[a]
-            end
-            dP[S, s] += dsg
-            for k in 1:9
-                dP[J[k], s] -= dJs[k]
+                for a in 1:3
+                    bt[6 + a, s] += dxs[a]; bt[9 + a, s] += dGy[a]; bt[13 + a, s] += b[a]
+                end
+                bt[13, s] += dsg
             end
         end
     end
-    for t in 1:np
-        dJt = _M(w[t]*SVector(bufT[4, t], bufT[5, t], bufT[6, t])', transposed)
-        for a in 1:3
-            dP[X[a], t] += bufT[a, t]
+    tot = dropdims(sum(buf; dims=3); dims=3)
+    for k in 1:np
+        a = SVector(tot[4, k], tot[5, k], tot[6, k]); b = SVector(tot[14, k], tot[15, k], tot[16, k])
+        G = _col3(P, Gm, k); Mk = _M(_col9(P, J, k), transposed)
+        dG = SVector(tot[10, k], tot[11, k], tot[12, k]) - Mk'*b
+        dJ = _M(w[k]*a', transposed) - _M(b*G', transposed)
+        for i in 1:3
+            dP[X[i], k] += tot[i, k] + tot[6 + i, k]; dP[Gm[i], k] += dG[i]
         end
-        for k in 1:9
-            dP[J[k], t] += dJt[k]
+        dP[S, k] += tot[13, k]
+        for i in 1:9
+            dP[J[i], k] += dJ[i]
         end
     end
     return nothing
 end
+_estr_direct_blocks(np) = (nc = Threads.nthreads(); [(1:np, ((c - 1)*np ÷ nc + 1):(c*np ÷ nc)) for c in 1:nc])
 
 for (f, rev!) in ((vpm._direct_UJ!, (dpf, P, pf) -> _direct_UJ_reverse!(dpf.particles, P, size(P, 2), pf.kernel.g_dgdr)),
-                  (vpm.Estr_direct!, (dpf, P, pf) -> _estr_reverse!(dpf.particles, P, size(P, 2), pf.kernel.zeta, pf.transposed)))
+                  (vpm.Estr_direct!, (dpf, P, pf) -> _estr_reverse!(dpf.particles, P, pf.kernel.zeta, pf.transposed, _estr_direct_blocks(size(P, 2)))))
     @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
                                                 pf::EnzymeCore.Annotation{<:_HostField}) where RT
         P = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]   # inputs, before later steps overwrite them
@@ -243,6 +254,182 @@ for (f, rev!) in ((vpm._direct_UJ!, (dpf, P, pf) -> _direct_UJ_reverse!(dpf.part
         pf isa EnzymeCore.Const || $rev!(pf.dval, P, pf.val)
         return (nothing,)
     end
+end
+
+# ------------------------------------------------------------------------------
+# FMM adjoint (host octree `fmm!`, via `_fmm_UJ!`): the reverse pass is two
+# real-valued FMM calls over the same particles with the primal's tree settings
+# (fixed expansion order, no error-driven order):
+#  1. sources at the primal targets i: vortex strength Ubar_i plus a vortex
+#     dipole of moment Jbar_i, i.e. vector potential Ubar_i G + sum_b
+#     d/dx_i,b (Jbar_i[:,b] G); at the primal sources j its velocity is
+#     Gammabar_j and its gradient H gives xbar_j = H' Gamma_j;
+#  2. the primal sources again, evaluated at the targets with the velocity
+#     gradient J and its derivative T: xbar_i = J' Ubar_i + Jbar_i : T.
+# Far field: singular kernel, as in the primal's far field. Near-field blocks
+# evaluate the exact regularized pair adjoint (`_uj_pair_adj`) instead, so
+# sigmabar comes from the near field only, as sigma enters the primal.
+# ------------------------------------------------------------------------------
+const fmm = vpm.fmm
+
+struct _AdjSrc{TF,G}          # call 1 sources: x_i, radius, [Ubar_i; Jbar_i]; P for Gamma_j, sigma_j
+    P::Matrix{TF}; W::Matrix{TF}; rad::Vector{TF}; gdg::G
+end
+struct _AdjTgt{TF}            # call 1 targets: x_j; accumulates into dP
+    P::Matrix{TF}; dP::Matrix{TF}
+end
+struct _PrimSrc{TF,G}         # call 2 sources: x_j, radius, Gamma_j, sigma_j; W for Ubar_i, Jbar_i
+    P::Matrix{TF}; W::Matrix{TF}; rad::Vector{TF}; gdg::G
+end
+struct _PrimTgt{TF}           # call 2 targets: x_i; accumulates into dP
+    P::Matrix{TF}; W::Matrix{TF}; dP::Matrix{TF}
+end
+const _AdjSys = Union{_AdjSrc, _AdjTgt, _PrimSrc, _PrimTgt}
+
+Base.eltype(s::_AdjSys) = eltype(s.P)
+fmm.get_n_bodies(s::_AdjSys) = size(s.P, 2)
+fmm.get_position(s::_AdjSys, i) = _col3(s.P, vpm.X_INDEX, i)
+# targets carry their own index (sorted with the positions)
+fmm.metadata_per_body(::Union{_AdjTgt, _PrimTgt}) = 1
+fmm.metadata_to_buffer!(buf, switch, ib, ::Union{_AdjTgt, _PrimTgt}, i) = (buf[fmm.metadata_index(switch, 1), ib] = i; nothing)
+_index(buf, switch, ib) = Int(buf[fmm.metadata_index(switch, 1), ib])
+fmm.has_vector_potential(::Union{_AdjSrc, _PrimSrc}) = true
+fmm.supports_third_derivative(::_PrimTgt, ::_PrimSrc) = true
+
+fmm.data_per_body(::_AdjSrc) = 16
+fmm.strength_dims(::_AdjSrc) = 12
+function fmm.source_system_to_buffer!(buf, ib, s::_AdjSrc, i)
+    for a in 1:3; buf[a, ib] = s.P[vpm.X_INDEX[a], i]; end
+    buf[4, ib] = s.rad[i]
+    for k in 1:12; buf[4 + k, ib] = s.W[k, i]; end
+end
+function fmm.body_to_multipole!(s::_AdjSrc, coeffs, buf, center, bodies_index, harmonics, p)
+    for ib in bodies_index
+        dx = _col3(buf, 1:3, ib) - center
+        fmm.body_to_multipole_point!(fmm.Point{fmm.Vortex}, coeffs, harmonics, dx, _col3(buf, 5:7, ib), p)
+        # dipole: d/d(dx_b) of the vortex P2M with strength Jbar[:,b], i.e. the
+        # derivative of the regular harmonics at -dx through the same conversion
+        ξr, ξi, ηr, ηi, z = fmm.xyz_to_ξηz(-dx)
+        fmm.calculate_q!(harmonics, ξr, ξi, ηr, ηi, z, p)
+        for b in 1:3
+            fmm.source_to_dipole!(harmonics, 2, 1, Float64(b == 1), Float64(b == 2), Float64(b == 3), p)
+            fmm.mirrored_source_to_vortex!(coeffs, harmonics, _col3(buf, (5 + 3b):(7 + 3b), ib), 2, -1.0, p)
+        end
+    end
+end
+function fmm.direct!(tbuf, tindex, switch, s::_AdjSrc, sbuf, sindex)
+    for is in sindex
+        xi = _col3(sbuf, 1:3, is); u = _col3(sbuf, 5:7, is); sJ = _col9(sbuf, 8:16, is)
+        for it in tindex
+            j = _index(tbuf, switch, it)
+            d = xi - _col3(tbuf, 1:3, it)
+            iszero(dot(d, d)) && continue
+            dbar, Gbar, sbar = _uj_pair_adj(d, _col3(s.P, vpm.GAMMA_INDEX, j), s.P[vpm.SIGMA_INDEX, j], u, sJ, s.gdg)
+            fmm.set_gradient!(tbuf, switch, it, Gbar)
+            for a in 1:3; fmm.set_extra_output!(tbuf, switch, it, a, -dbar[a]); end
+            fmm.set_extra_output!(tbuf, switch, it, 4, sbar)
+        end
+    end
+end
+function fmm.buffer_to_target_system!(t::_AdjTgt, j, switch, buf, ib)
+    Gbar = fmm.get_gradient(buf, switch, ib); H = fmm.get_hessian(buf, switch, ib)
+    xbar = H'*_col3(t.P, vpm.GAMMA_INDEX, j)
+    for a in 1:3
+        t.dP[vpm.GAMMA_INDEX[a], j] += Gbar[a]
+        t.dP[vpm.X_INDEX[a], j] += xbar[a] + fmm.get_extra_output(buf, switch, ib, a)
+    end
+    t.dP[vpm.SIGMA_INDEX, j] += fmm.get_extra_output(buf, switch, ib, 4)
+end
+
+fmm.data_per_body(::_PrimSrc) = 8
+fmm.strength_dims(::_PrimSrc) = 3
+function fmm.source_system_to_buffer!(buf, ib, s::_PrimSrc, i)
+    for a in 1:3
+        buf[a, ib] = s.P[vpm.X_INDEX[a], i]; buf[4 + a, ib] = s.P[vpm.GAMMA_INDEX[a], i]
+    end
+    buf[4, ib] = s.rad[i]; buf[8, ib] = s.P[vpm.SIGMA_INDEX, i]
+end
+fmm.body_to_multipole!(s::_PrimSrc, args...) = fmm.body_to_multipole!(fmm.Point{fmm.Vortex}, s, args...)
+function fmm.direct!(tbuf, tindex, switch, s::_PrimSrc, sbuf, sindex)
+    for is in sindex
+        xj = _col3(sbuf, 1:3, is); G = _col3(sbuf, 5:7, is); sgm = sbuf[8, is]
+        for it in tindex
+            i = _index(tbuf, switch, it)
+            d = _col3(tbuf, 1:3, it) - xj
+            iszero(dot(d, d)) && continue
+            dbar, _, _ = _uj_pair_adj(d, G, sgm, _col3(s.W, 1:3, i), _col9(s.W, 4:12, i), s.gdg)
+            for a in 1:3; fmm.set_extra_output!(tbuf, switch, it, a, dbar[a]); end
+        end
+    end
+end
+function fmm.buffer_to_target_system!(t::_PrimTgt, i, switch, buf, ib)
+    H = fmm.get_hessian(buf, switch, ib); T = fmm.get_third_derivative(buf, switch, ib)
+    u = _col3(t.W, 1:3, i); sJ = _col9(t.W, 4:12, i)
+    xbar = H'*u
+    for k in 1:3
+        acc = xbar[k] + fmm.get_extra_output(buf, switch, ib, k)
+        for b in 1:3, a in 1:3
+            acc += sJ[a, b]*T[a, b, k]
+        end
+        t.dP[vpm.X_INDEX[k], i] += acc
+    end
+end
+
+function _fmm_UJ_reverse!(dP, P, rad, o::vpm.FMM, gdg)
+    W = dP[vcat(vpm.U_INDEX, vpm.J_INDEX), 1:size(P, 2)]       # Ubar, Jbar (pass through unchanged)
+    kw = (; expansion_order=o.p - 1, leaf_size=max(o.ncrit, o.min_ncrit), multipole_acceptance=o.theta,
+          shrink=o.shrink_recenter, recenter=o.shrink_recenter, error_tolerance=nothing, nearfield_device=false,
+          scalar_potential=false, silence_warnings=true)
+    fmm.fmm!(_AdjTgt(P, dP), _AdjSrc(P, W, rad, gdg); kw..., gradient=true, hessian=true, extra_outputs=4)
+    fmm.fmm!(_PrimTgt(P, W, dP), _PrimSrc(P, W, rad, gdg); kw..., gradient=false, hessian=true,
+             third_derivative=true, extra_outputs=3)
+    return nothing
+end
+
+# the trees and lists `_fmm_UJ!` returns for the SFS passes: index data only
+EnzymeRules.inactive_type(::Type{<:fmm.Tree}) = true
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._fmm_UJ!)}, ::Type{RT},
+                                      pf::EnzymeCore.Annotation{<:_HostField}, vorticity, verbose) where RT
+    tape = nothing
+    if !(pf isa EnzymeCore.Const)
+        vorticity.val && error("FLOWVPMEnzymeExt: UJ_fmm(...; vorticity=true) has no reverse rule")
+        p = pf.val; np = p.np
+        buf = zeros(eltype(p), fmm.data_per_body(p), 1)
+        rad = [(fmm.source_system_to_buffer!(buf, 1, p, i); buf[4, 1]) for i in 1:np]
+        tape = (p.particles[:, 1:np], rad, p.fmm)
+    end
+    ret = func.val(pf.val, vorticity.val, verbose.val)
+    return EnzymeRules.AugmentedReturn(EnzymeRules.needs_primal(config) ? ret : nothing, nothing, tape)
+end
+
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._fmm_UJ!)}, ::Type{RT}, tape,
+                             pf::EnzymeCore.Annotation{<:_HostField}, vorticity, verbose) where RT
+    EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeExt: batched reverse not supported")
+    pf isa EnzymeCore.Const || _fmm_UJ_reverse!(pf.dval.particles, tape..., pf.val.kernel.g_dgdr)
+    return (nothing, nothing, nothing)
+end
+
+# Estr over the FMM's direct list (UJ_fmm's SFS pass): the Estr reverse over its leaf pairs
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.Estr_fmm!)}, ::Type{RT},
+                                      tpf::EnzymeCore.Annotation{<:_HostField}, spf::EnzymeCore.Annotation{<:_HostField},
+                                      ttree, stree, dlist) where RT
+    tape = nothing
+    if !(tpf isa EnzymeCore.Const && spf isa EnzymeCore.Const)
+        tpf.val === spf.val || error("FLOWVPMEnzymeExt: Estr_fmm! reverse needs one field as target and source")
+        tt, st = ttree.val, stree.val
+        idx(tree, ib) = tree.sort_index_list[1][tree.branches[ib].bodies_index[1]]
+        tape = (tpf.val.particles[:, 1:tpf.val.np], [(idx(tt, T), idx(st, S)) for (T, S) in dlist.val])
+    end
+    func.val(tpf.val, spf.val, ttree.val, stree.val, dlist.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, tape)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.Estr_fmm!)}, ::Type{RT}, tape,
+                             tpf::EnzymeCore.Annotation{<:_HostField}, spf::EnzymeCore.Annotation{<:_HostField},
+                             ttree, stree, dlist) where RT
+    EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeExt: batched reverse not supported")
+    tape === nothing || _estr_reverse!(tpf.dval.particles, tape[1], tpf.val.kernel.zeta, tpf.val.transposed, tape[2])
+    return (nothing, nothing, nothing, nothing, nothing)
 end
 
 
