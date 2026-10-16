@@ -9,14 +9,13 @@
 =###############################################################################
 
 const nfields = 46
-const useGPU_default = 0
 
 ################################################################################
 # FMM STRUCT
 ################################################################################
 """
     `FMM(; p::Int=4, ncrit::Int=10, theta::Real=0.5, shrink_recenter::Bool=true,
-          relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-6,
+          relative_tolerance::Real=1e-3, absolute_tolerance::Real=1e-3,
           autotune_p::Bool=true, autotune_ncrit::Bool=true,
           autotune_reg_error::Bool=true, default_rho_over_sigma::Real=1.0,
           min_ncrit::Int=50)`
@@ -123,7 +122,7 @@ end
 SplittingWorkspace{R}() where {R} = SplittingWorkspace{R}(Int[], R[], Int[])
 
 ################################################################################
-# FILAMENT EDGE GRAPH (hybrid filament-edge refinement, Phase 2)
+# FILAMENT EDGE GRAPH
 ################################################################################
 # Bounded directed edge graph: each particle has ≤2 upstream and ≤2 downstream
 # active edges. Adjacency-only — no separate edge list. An edge from src→dst
@@ -173,7 +172,7 @@ end
     return 0
 end
 
-# Scratch buffers for Phase 3 inference/validation. Cell-list buffers mirror
+# Scratch buffers for inference and validation. Cell-list buffers mirror
 # `MergingWorkspace` so `_build_cell_list!` (FLOWVPM_merging.jl) can be reused.
 # Resized on demand.
 mutable struct FilamentEdgeWorkspace{R}
@@ -221,7 +220,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     particles::AT                               # Array of particles
     formulation::F                              # VPM formulation
     viscous::V                                  # Viscous scheme
-    scratch::AT                                 # Reusable scratch space for vectorized intermediate computations (see SCRATCH_INDEX)
+    scratch::AT                                 # Reusable scratch space for vectorized intermediate computations
 
     # Internal properties
     np::Int                                     # Number of particles in the field
@@ -239,7 +238,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
-    useGPU::Int                                 # run on GPU if >0, CPU if 0
+    useGPU::Int                                 # Legacy compatibility flag; array storage selects CPU or GPU execution
     merging_workspace::MergingWorkspace         # Scratch buffers for merge_particles!
     splitting_state::SplittingState{R}          # Per-particle state for split_particles!
     splitting_workspace::SplittingWorkspace{R}  # Scratch buffers for split_particles!
@@ -268,14 +267,13 @@ is created with the default values for the other parameters.
 - `t::Real=0`: Current simulation time (stored as Float64).
 - `transposed::Bool=true`: If true, the transposed scheme of the stretching term is used (recommended for stability).
 - `fmm::FMM`: Fast multipole method tuning and auto-tuning settings.
-- `M::Array{R, 1}=zeros(R, 4)`: Auxilliary memory for computations. Should not be modified for most purposes.
 - `SFS::SubFilterScale=NoSFS{FLOAT_TYPE}()`: Subfilter-scale turbulence model.
 - `kernel::Kernel=Kernel(zeta_gauserf, g_gauserf, dgdr_gauserf, g_dgdr_gauserf)`: Regularization scheme. Default is Gaussian smoothing of the vorticity field.
 - `UJ=UJ_fmm`: Method used to compute the \$N\$-body problem. Default uses the fast multipole method to achieve \$O(N)\$ complexity.
 - `Uinf::Function=(t) -> [0.0,0.0,0.0]`: Uniform freestream velocity function Uinf(t).
-- `relaxation::Relaxation=Relaxation(relax_pedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
+- `relaxation::Relaxation=Relaxation(relax_correctedpedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
 - `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
-- `useGPU::Int`: Run on GPU if >0, CPU if 0. Default is 0. (Experimental and does not accelerate SFS calculations)
+- `useGPU::Int=0`: Legacy compatibility flag. The `arraytype` storage selects CPU or GPU execution.
 - `arraytype::Type{<:AbstractMatrix}=Matrix`: Array type backing `pfield.particles`. Default is `Matrix`
     (CPU). Pass `CuArray` (CUDA.jl) to allocate the particle field on GPU.
 """
@@ -313,7 +311,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_correctedpedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
-        useGPU=useGPU_default,
+        useGPU=0,
         arraytype=Matrix
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
@@ -369,8 +367,6 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     if get_np(pfield) >= pfield.maxparticles
         error("PARTICLE OVERFLOW. Max number of particles $(pfield.maxparticles)"*
                                                             " has been reached")
-    # elseif circulation<=0
-    #     error("Got invalid circulation less or equal to zero! ($(circulation))")
     end
 
     # Fetch the index of the next empty particle in the field
@@ -380,7 +376,7 @@ function add_particle(pfield::ParticleField, X, Gamma, sigma;
     pfield.np += 1
 
     # a reused slot keeps the removed particle's U, J, M and SFS rows (removal
-    # clears only some of them): start every new particle from zeros (2026-09-26)
+    # clears only some of them): start every new particle from zeros
     fill!(view(pfield.particles, :, i_next), zero(eltype(pfield.particles)))
     if pfield.particles isa Array
         # Populate the empty particle
@@ -563,8 +559,6 @@ const U_PREV_INDEX = 44
 # with `x .= f(x, ...)` (reading and writing the same row) is well-defined,
 # same as the standard `x .= x .+ 1` pattern.
 const N_SCRATCH = 11
-const SCRATCH_INDEX = 1:N_SCRATCH
-
 "Get functions for particles"
 # This is (and should be) the only place that explicitly
 # maps the indices of each particle's fields
@@ -580,9 +574,6 @@ get_PSE(P) = view(P, PSE_INDEX)
 get_M(P) = view(P, M_INDEX)
 get_C(P) = view(P, C_INDEX)
 get_SFS(P) = view(P, SFS_INDEX)
-get_static(P) = view(P, STATIC_INDEX)
-get_U_prev(P) = view(P, U_PREV_INDEX)
-
 is_static(P) = Bool(P[43])
 
 # This extra function computes the vorticity using the cross-product
@@ -611,23 +602,6 @@ get_M(pfield::ParticleField, i::Int) = view(pfield.particles, M_INDEX, i)
 get_C(pfield::ParticleField, i::Int) = view(pfield.particles, C_INDEX, i)
 get_SFS(pfield::ParticleField, i::Int) = view(pfield.particles, SFS_INDEX, i)
 get_static(pfield::ParticleField, i::Int) = Bool(pfield.particles[43, i])
-get_U_prev(pfield::ParticleField, i::Int) = view(pfield.particles, U_PREV_INDEX, i)
-
-"Set functions for particles"
-function set_X(P, val) P[X_INDEX] .= val end
-function set_Gamma(P, val) P[GAMMA_INDEX] .= val end
-function set_sigma(P, val) P[SIGMA_INDEX] = val end
-function set_vol(P, val) P[VOL_INDEX] = val end
-function set_circulation(P, val) P[CIRCULATION_INDEX] = val end
-function set_U(P, val) P[U_INDEX] .= val end
-function set_vorticity(P, val) P[VORTICITY_INDEX] .= val end
-function set_J(P, val) P[J_INDEX] .= val end
-function set_M(P, val) P[M_INDEX] .= val end
-function set_C(P, val) P[C_INDEX] .= val end
-function set_static(P, val) P[STATIC_INDEX] = val end
-function set_PSE(P, val) P[PSE_INDEX] .= val end
-function set_SFS(P, val) P[SFS_INDEX] .= val end
-function set_U_prev(P, val) P[U_PREV_INDEX] = val end
 
 
 "Set functions for particles in ParticleField"
@@ -671,7 +645,7 @@ julia> # Add particles
 
 julia> # Iterate over particles
        for P in FLOWVPM.get_particleiterator(pfield)
-           println(P.var[1:3])
+           println(FLOWVPM.get_X(P))
        end
 [1.0, 10.0, 100.0]
 [2.0, 20.0, 200.0]
@@ -750,8 +724,8 @@ function remove_particle(pfield::ParticleField, i::Int; move::Bool=true)
     # Phase A: drop slot i's incident edges. Each remove_edge! clears the
     # matching slot on the other endpoint via a size-2 mirror scan, so this
     # is bounded local work (≤4 edges total).
-    # remove_edge! compacts slot 2 into slot 1, so drain slot 1 until empty (a
-    # loop over k = 1:2 skipped the moved edge and left it dangling, 2026-09-26)
+    # remove_edge! compacts slot 2 into slot 1, so drain slot 1 until empty; a
+    # fixed two-iteration loop could skip the moved edge and leave it dangling
     @inbounds while (d = g.down_neighbor[1, i]) != 0
         remove_edge!(g, i, d) || break
     end
@@ -935,7 +909,7 @@ end
     `_update_U_prev_broadcast!(pfield)`
 
 GPU-safe equivalent of `nextstep`'s U_prev bookkeeping loop, used when
-`pfield.particles` is not a plain `Array` (task 049). The loop version's
+`pfield.particles` is not a plain `Array`. The loop version's
 per-particle `get_U`/`set_U_prev` is disallowed scalar indexing on a
 `CuArray`; a single fused broadcast writes `|U|` into `U_PREV_INDEX` for the
 live prefix instead.
@@ -968,14 +942,6 @@ function _reset_particles_broadcast!(pfield::ParticleField)
     view(pfield.particles, J_INDEX, 1:np) .*= is_static
     view(pfield.particles, PSE_INDEX, 1:np) .*= is_static
     return nothing
-end
-
-function _reset_particle(particle)
-    zeroVal = zero(eltype(particle))
-    set_U(particle, zeroVal)
-    set_vorticity(particle, zeroVal)
-    set_J(particle, zeroVal)
-    set_PSE(particle, zeroVal)
 end
 
 function _reset_particle(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
@@ -1018,10 +984,6 @@ end
 
 function _reset_particle_sfs(pfield::ParticleField, i::Int; zeroVal=zero(eltype(pfield.particles)))
     pfield.particles[SFS_INDEX, i] .= zeroVal
-end
-
-function _reset_particle_sfs(particle)
-    set_SFS(particle, zero(eltype(particle)))
 end
 
 ##### END OF PARTICLE FIELD#####################################################
