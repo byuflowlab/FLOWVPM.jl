@@ -1,7 +1,7 @@
 #=##############################################################################
 # DESCRIPTION
     GPU/broadcast implementations of the pseudo3level dynamic-SFS procedures
-    for CuArray-backed particle fields.
+    for GPU-array-backed particle fields.
 
     `dynamicprocedure_pseudo3level_beforeUJ` / `_afterUJ` are per-particle
     host loops (scalar indexing) interleaved with a `pfield.UJ(...)` N-body

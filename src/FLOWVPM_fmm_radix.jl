@@ -692,7 +692,7 @@ end
 # 3 x np E_str buffer in global particle order; ACCUMULATE into SFS_INDEX
 # (rows 40:42), mirroring the `Estr_direct`/`Estr_fmm!` += convention (the
 # caller resets SFS rows). This host-Matrix method serves the transfer-based
-# host path; the CuArray method lives in ext/FLOWVPMGPUExt.jl.
+# host path; the GPU-array method lives in ext/FLOWVPMGPUExt.jl.
 ################################################################################
 
 else # !_FMM_HAS_RADIX ---------------------------------------------------------
