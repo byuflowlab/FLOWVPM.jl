@@ -189,6 +189,47 @@ functions of the positions, cores and strengths involved; which particles are
 selected, thinned or added is discrete and carries no derivative. Use a tight `tol`
 (e.g. `1e-10`) and a larger `itmax` for differentiable runs.
 
+## Derivatives
+
+Enzyme reverse mode (default settings, `using Enzyme`) differentiates CPU time steps on
+the `UJ_direct` path: both formulations, the kernels, every relaxation scheme, the SFS
+models, Euler and RK3, core spreading with the Galerkin reset, and the threaded branches
+(fields above `FLOWVPM.MIN_MT_NP` particles with Julia started with `-t 2` or more). The
+gradient is checked against finite differences in `test/runtests_enzyme.jl`. With
+threads, the reverse pass accumulates in a different order from run to run (relative
+differences around `1e-13`). The FMM path (`UJ_fmm`) is not differentiable yet.
+
+**Many steps.** Differentiating a loop of steps in one call keeps every step's tape in
+memory: about 32 MB per RK3 step at 500 particles (it grows linearly with the steps and
+with the particle count). [`checkpointed_gradient!`](@ref FLOWVPM.checkpointed_gradient!)
+bounds it by storing the state every `every` steps and recomputing one segment at a time
+in reverse:
+
+```julia
+using Enzyme
+pf = ParticleField(...)                         # initial state (UJ = UJ_direct)
+dpf = Enzyme.make_zero(pf)                      # shadow: receives the gradient
+objective(pf) = ...                             # scalar of the final state
+J = FLOWVPM.checkpointed_gradient!(dpf, objective, pf, dt, 200;
+                                   step = (pf, dt) -> nextstep(pf, dt; relax = true))
+dpf.particles[:, 1:np0]                         # ∂J/∂(initial particles)
+```
+
+The cost is one extra forward run. The peak memory is `every` steps of tape plus
+`nsteps/every` stored states. Measured at 500 particles (RK3 with relaxation): 200 steps
+peak at about 1.0 GB over the baseline with the default `every = isqrt(nsteps)`, and at
+0.1 GB with `every = 1` (slower: one garbage collection per segment). One plain reverse
+call over 50 steps already takes 2.6 GB. A stored state (`46 x np` numbers) is about
+1/200 of one step's tape, so a small `every` is cheap in memory. The particle count may
+change between checkpoints (core-spreading resets): use an objective that does not depend
+on the particles' count or order.
+
+**Design variables.** Anything stored in the field is differentiable through the shadow.
+For example, a freestream held in an `AmbientHolder` built with its ambient
+(`Uinf = AmbientHolder(UniformAmbient(u))`, where `u` is a callable struct with the
+parameters as fields) gets its gradient in `dpf.Uinf.ambient`. An empty
+`AmbientHolder()` is untyped, and Enzyme cannot take a shadow through it.
+
 ## Code Integration
 For examples of integrating FLOWVPM into other codes please see [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and
 [VortexLattice](https://github.com/byuflowlab/VortexLattice)

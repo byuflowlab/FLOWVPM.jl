@@ -83,4 +83,48 @@ function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._gal_solv
     return ntuple(_ -> nothing, 7)
 end
 
+
+# Many steps with bounded memory (`FLOWVPM.checkpointed_gradient!`): periodic
+# checkpoints of the state between steps, one segment under Enzyme at a time.
+_ckpt_steps!(pf, step, dt, k) = (for _ in 1:k; step(pf, dt); end; nothing)
+_ckpt_tsgm(v::vpm.CoreSpreading) = v.t_sgm
+_ckpt_tsgm(v) = nothing
+_ckpt_save(pf) = (P = pf.particles[:, 1:pf.np], np = pf.np, nt = pf.nt, t = pf.t, tsgm = _ckpt_tsgm(pf.viscous),
+                  H = pf.track_H_chi ? pf.splitting_state.H_chi[1:pf.np] : nothing)
+function _ckpt_restore!(pf, s)
+    pf.particles[:, 1:s.np] .= s.P
+    pf.np = s.np; pf.nt = s.nt; pf.t = s.t
+    s.tsgm === nothing || (pf.viscous.t_sgm = s.tsgm)
+    s.H === nothing || (pf.splitting_state.H_chi[1:s.np] .= s.H)
+    return pf
+end
+_ckpt_same(a, b) = a.np == b.np && a.nt == b.nt && a.t == b.t && isequal(a.tsgm, b.tsgm) && isequal(a.H, b.H) && isequal(a.P, b.P)
+
+function vpm.checkpointed_gradient!(dpf, objective, pf, dt, nsteps::Integer; every::Integer = max(1, isqrt(nsteps)),
+                                    step = vpm.nextstep)
+    pf.particles isa Array || throw(ArgumentError("checkpointed_gradient!: host fields only"))
+    size(dpf.particles) == size(pf.particles) || throw(DimensionMismatch("dpfield does not match pfield"))
+    nseg = cld(nsteps, every)
+    len(j) = min(every, nsteps - (j - 1) * every)
+    snaps = Vector{Any}(undef, nseg + 1)
+    snaps[1] = _ckpt_save(pf)
+    for j in 1:nseg
+        _ckpt_steps!(pf, step, dt, len(j))
+        snaps[j + 1] = _ckpt_save(pf)
+    end
+    J = EnzymeCore.autodiff(EnzymeCore.ReverseWithPrimal, EnzymeCore.Const(objective), EnzymeCore.Active,
+                            EnzymeCore.Duplicated(pf, dpf))[2]
+    for j in nseg:-1:1
+        _ckpt_restore!(pf, snaps[j])
+        EnzymeCore.autodiff(EnzymeCore.Reverse, EnzymeCore.Const(_ckpt_steps!), EnzymeCore.Const,
+                            EnzymeCore.Duplicated(pf, dpf), EnzymeCore.Const(step), EnzymeCore.Const(dt),
+                            EnzymeCore.Const(len(j)))
+        _ckpt_same(_ckpt_save(pf), snaps[j + 1]) ||
+            error("checkpointed_gradient!: segment $j recomputed differently from the forward run (state kept outside the checkpoint?)")
+        GC.gc()                # the segment's tape is garbage now: keep the peak at one segment
+    end
+    _ckpt_restore!(pf, snaps[end])
+    return J
+end
+
 end

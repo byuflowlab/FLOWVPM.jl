@@ -885,6 +885,33 @@ function nextstep(pfield::ParticleField, dt::Real; update_U_prev=true, optargs..
     pfield.nt += 1
 end
 
+"""
+    checkpointed_gradient!(dpfield, objective, pfield, dt, nsteps; every = isqrt(nsteps), step = nextstep)
+
+Reverse-mode gradient (Enzyme) of `objective(pfield)` after `nsteps` calls of
+`step(pfield, dt)`, with periodic checkpointing: the forward run stores the field's
+state every `every` steps, and the reverse pass recomputes one segment of `every`
+steps at a time under Enzyme and chains the adjoints. The peak memory is about
+`every` steps of Enzyme tape plus `nsteps/every` stored states, at the cost of one
+extra forward run. A stored state (`46 x np` numbers) is about 1/200 of a step's tape,
+so an `every` below the default lowers the peak further (one garbage collection per
+segment). Requires `using Enzyme`; host fields.
+
+- `dpfield`: the shadow, e.g. `Enzyme.make_zero(pfield)`. Adjoints are added to it:
+  on return `dpfield.particles[:, 1:np]` holds ∂objective/∂(initial particles) (`np`
+  the initial count), and the shadows of the field's parameters (e.g. a
+  `UniformAmbient`'s velocity in an [`AmbientHolder`](@ref)) hold their gradients.
+- `objective(pfield)`: scalar; with a particle count that changes (core-spreading
+  resets), use one that does not depend on the count or order.
+- `step(pfield, dt)`: one step, e.g. `(pf, dt) -> nextstep(pf, dt; relax = true)`.
+
+Returns the objective; `pfield` is left at the final state. The state between
+segments is the particle matrix (columns `1:np`), `np`, `nt`, `t`, the core-spreading
+timer and the split exposure; a step that keeps other state across calls is caught
+(error) by a bit-for-bit comparison of each recomputed segment with the forward run.
+"""
+function checkpointed_gradient! end
+
 
 ##### INTERNAL FUNCTIONS #######################################################
 function _reset_particles(pfield::ParticleField)
