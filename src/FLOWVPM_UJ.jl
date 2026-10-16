@@ -118,7 +118,6 @@ function UJ_fmm(
         optargs..., # e.g. the integrators' `relaxation`, which the particle-only evaluation ignores
     )
 
-    # reset # TODO should this really have an elseif in between?
     if reset
         _reset_particles(pfield)
     end
@@ -165,11 +164,6 @@ function UJ_fmm(
                         fmm_options.min_ncrit)
     end
 
-    # This should be concurrent_direct=(pfield.useGPU > 0)
-    # But until multithread_direct!() works for the target_indices argument,
-    # we'll leave it true
-
-    # now calculate SFS contribution
     # NOTE: this must be performed after velocity gradients are calculated, and
     #       therefore cannot be included in the direct function of the FMM
     sfs && Estr_fmm!(pfield, pfield, target_tree, source_tree, direct_list)
@@ -178,4 +172,3 @@ function UJ_fmm(
 
     return nothing
 end
-
