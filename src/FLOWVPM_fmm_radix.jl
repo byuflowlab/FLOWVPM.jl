@@ -1,15 +1,15 @@
 #=##############################################################################
 # DESCRIPTION
     Coupling of ParticleField to FastMultipole's device-resident radix FMM
-    lifecycle (FastMultipole `matrix-ops` interface, FLOWVPM task 034).
+    lifecycle.
 
-    A `CuArray`-backed ParticleField drives the resident GPU lifecycle
+    A device-backed ParticleField drives the resident GPU lifecycle
     device-to-device: one `RadixFMMCache` is built lazily at first use, sized
     to `pfield.maxparticles`, and reused across every UJ evaluation (all RK3
     substeps and time steps) with zero per-step body host/device transfer
-    (the task 023 counter contract: `body_uploads == 0`,
-    `expansion_host_copies == 0`). A `Matrix`-backed ParticleField can use the
-    same machinery through FastMultipole's transfer-based host-resident path
+    (`body_uploads == 0`, `expansion_host_copies == 0`). A `Matrix`-backed
+    ParticleField can use the same machinery through FastMultipole's
+    transfer-based host-resident path
     (used by the CPU-side correctness tests); the production CPU path remains
     the legacy octree `fmm.fmm!` call in `UJ_fmm`, unchanged.
 
@@ -21,8 +21,8 @@
   * gpu-full branch, task 034 (2026-08-06)
 =###############################################################################
 
-# The device-resident radix interface shipped with FastMultipole task 032
-# (branch matrix-ops). Registry releases without it simply skip this coupling.
+# FastMultipole versions without the device-resident radix interface skip this
+# coupling.
 const _FMM_HAS_RADIX = isdefined(fmm, :RadixFMMCache) &&
                        isdefined(fmm, :RegularizedVortex) &&
                        isdefined(fmm, :DeviceResident)
@@ -55,9 +55,8 @@ fmm.residency(pfield::ParticleField) =
 # sigma in packed extra-state row 8 (the same row the legacy
 # `source_system_to_buffer!` writes). Row 4 stays the inflated
 # rho_sigma*sigma MAC radius, distinct from sigma by convention.
-# The kernel strategy is selectable through `RadixFMMSettings.direct_kernel`
-# (task 035 tuning surface); the shipped default is `PartitionedVortex` at
-# `rho_t = 4.789` (048 production selection, 2026-08-22).
+# The kernel strategy is selectable through `RadixFMMSettings.direct_kernel`;
+# the default is `PartitionedVortex` at `rho_t = 4.789`.
 function fmm.direct_kernel(pfield::ParticleField)
     is_gaussianerf(pfield.kernel) || error(
         "the radix/GPU FMM path supports only the `gaussianerf` kernel " *
@@ -67,15 +66,11 @@ function fmm.direct_kernel(pfield::ParticleField)
     return _radix_direct_kernel(settings)
 end
 
-# Coupling default smoothing cutoff for the partitioned kernel (task 048
-# production selection, user-approved 2026-08-22): the conservative
-# Jacobian-per-pair cutoff. Together with expansion_order = 6 and derived
-# near-shell geometry it passes the strict 5e-4 F64 delivered-E_str gate on
-# the p018 210k production field (e_sfs 1.46e-4, +3% U/J cost vs the P4
-# baseline; H200 job 13303399 sweep, `fm048_sweep_13303399.csv`). Supersedes
-# the 035-cycle-3 velocity-RMS cutoff 3.668 (superseded value validated
-# under the sum gate < 1e-3 at cube/wake n = 1e5/1e6). Applies only to
-# :partitioned; :regularized/:twopass keep their constructor defaults.
+# Conservative Jacobian-per-pair smoothing cutoff for the partitioned kernel.
+# Together with expansion_order = 6 and derived near-shell geometry it passes
+# the strict 5e-4 F64 delivered-E_str gate on the 210k production field.
+# Applies only to :partitioned; :regularized/:twopass keep their constructor
+# defaults.
 const _PARTITIONED_RHO_T_DEFAULT = 4.789
 
 "Resolve the FastMultipole nearfield direct-kernel functor from settings."
@@ -102,7 +97,7 @@ function _radix_direct_kernel(settings)
         "or :twopass; got $(repr(sym))")
 end
 
-"Resolve the (m2l_strategy, operator) pair from settings (task 035)."
+"Resolve the (m2l_strategy, operator) pair from settings."
 function _radix_m2l_strategy(settings)
     sym = settings.m2l_strategy
     sym === :concat &&
@@ -125,35 +120,28 @@ end
 Per-`ParticleField` overrides for the radix FMM coupling. All fields default
 to automatic derivation:
 
-- `expansion_order`: defaults to `4` (literature `P = 5`), the task-035
-  cycle-3 measured winner: paired with the smaller `rho_t = 3.668` direct
-  shell it is both faster (1.06-1.69x across cube/wake at n = 1e5/1e6) and
-  more accurate than the previous literature-P4 defaults. Pass
-  `expansion_order = nothing` to derive `pfield.fmm.p - 1` (literature
-  `P = p`) as before.
+- `expansion_order`: defaults to `6`. Pass `expansion_order = nothing` to
+  derive `pfield.fmm.p - 1` (literature `P = p`).
 - `ell`: radix tree depth; defaults to the deepest depth passing the
   margin-guarded near-set inequality
   `g_min(q)*h_leaf >= accuracy_margin*rho_t*sigma_max` for some supported
   leaf `q >= near_radius2`, capped by an occupancy heuristic of `~n^(1/3)`
-  cells per side (task 035 cycle 1 joint (ell, q) rule). Passing `ell`
-  explicitly uses `near_radius2` as the leaf radius verbatim.
-- `near_radius2`: leaf direct-stencil ball radius squared (floor for the
-  auto rule; 6 is the smallest shell measured gate-passing at the
-  literature-P5 / `rho_t = 3.668` defaults — task 035 cycle 3. At the old
-  literature-P4 / `rho_t = 4.252` settings the validated floor was 16;
-  restore it when overriding those fields).
+  cells per side. Passing `ell` explicitly uses `near_radius2` as the leaf
+  radius verbatim.
+- `near_radius2`: leaf direct-stencil ball radius squared (floor for the auto
+  rule; defaults to 6). Passing `ell` explicitly uses it verbatim.
 - `window_classes`: M2L window classes; `nothing` = 256 on device, framework
   default on host.
 - `padding`: per-face padding fraction applied to derived domain bounds
   (construction and automatic `recenter!`).
 - `bounds`: explicit `(x_min::SVector{3}, box_size)` domain box, where
-  `box_size` may be a scalar (cubic) or a 3-vector (rectangular, FastMultipole
-  task 037) and passes through to the cache as-is. When set, the box is
+  `box_size` may be a scalar (cubic) or a 3-vector (rectangular) and passes
+  through to the cache as-is. When set, the box is
   treated as user-owned: out-of-box particles error instead of triggering an
   automatic recenter.
 - `rectangular`: when `true`, derived bounds keep per-axis tight extents
-  (padded per face) instead of cubing the domain (FastMultipole task 037
-  rectangular radix grid). Cells stay physically cubic — the leaf width and
+  (padded per face) instead of cubing the domain. Cells stay physically cubic
+  — the leaf width and
   the auto-geometry rule are unchanged (`ell` and `q` still derive from the
   maximum extent via sigma-adequacy) — and the coarse tree levels above the
   shortest axis's saturation are trimmed, removing launch floor on elongated
@@ -161,35 +149,27 @@ to automatic derivation:
   preserved exactly. Ignored when explicit `bounds` are set (the user-owned
   box's shape is final).
 - `precision`: lifecycle float type; defaults to `eltype(pfield)`.
-- `direct_kernel`: nearfield strategy `:partitioned` (default since task 035
-  cycle 1; `PartitionedVortex`, FastMultipole's user-approved 032a default
-  for sigma-carrying vortex systems), `:regularized` (the
+- `direct_kernel`: nearfield strategy `:partitioned` (default;
+  `PartitionedVortex`), `:regularized` (the
   regularized-everywhere `RegularizedVortex`), or `:twopass`
   (`TwoPassVortex`).
 - `rho_t`: override the nearfield kernel's smoothing-cutoff radius. For
   `:partitioned` the coupling default is `4.789` (conservative Jacobian
-  per-pair cutoff; task 048 production selection, 2026-08-22 — see
-  `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and `:twopass` default to
+  per-pair cutoff; see `_PARTITIONED_RHO_T_DEFAULT`); `:regularized` and
+  `:twopass` default to
   their shipped constructor values.
-- `m2l_strategy`: `:concat` (default since 2026-09-23, `ConcatenatedFixedZM2L`:
-  on the H200 at 800k particles the 5MW M2L stage took 7.9 s vs 19.6 s for
-  `:dense` over 72 steps, job 13869555, and locally at 22k concat was 2.7x
-  faster; identical CP), `:dense` (`DenseTranslationM2L`, the task-035 default
-  whose sweep had measured concat 1.6-2.8x slower at matched geometry — no
-  longer true on the KA lifecycle), or `:precomputed_y`
+- `m2l_strategy`: `:concat` (default; `ConcatenatedFixedZM2L`), `:dense`
+  (`DenseTranslationM2L`), or `:precomputed_y`
   (`PrecomputedFactoredYM2L`).
 - `level_radii2`: per-M2L-level near radii (levels `2:ell`, coarse to fine,
   non-increasing, ending at the leaf radius); `nothing` = uniform.
 - `accuracy_margin`: multiplier on the kernel's `rho_t` in the auto-geometry
-  rule (task 035 cycle 1). The bare adequacy gate
+  rule. The bare adequacy gate
   (`g_min*h_leaf > rho_t*sigma_max`) is insufficient for the 1e-3 velocity
-  tolerance at the margin — the 035 sweep measured `x = g_min*h/sigma_max`
+  tolerance at the margin — measurements found `x = g_min*h/sigma_max`
   of `4.26` failing (1.17e-3) and `4.92` passing (9.3e-4) at n=1e5 — so
-  auto-depth selection requires `x >= accuracy_margin*rho_t`. The default
-  `1.03` is the center of the interval `[1.0, 1.061]` for which the rule
-  reproduces every measured cycle-3A P5 winner (cube `(4,12)`/`(5,12)`,
-  wake `(5,6)`/`(6,6)` at n = 1e5/1e6) at `rho_t = 3.668`; at the cycle-1
-  defaults (`rho_t = 4.252`, floor 16) the validated margin was `1.15`.
+  auto-depth selection requires `x >= accuracy_margin*rho_t`. The default is
+  `1.03`.
 """
 Base.@kwdef struct RadixFMMSettings
     expansion_order::Union{Nothing,Int} = 6
@@ -217,10 +197,9 @@ Base.@kwdef struct RadixFMMSettings
     # grows faster than `np` does (the box grows too as a wake convects), so a
     # long epoch is expensive: on the NREL 5MW production run one epoch ran
     # 779 steps from 215k to 687k particles with the step going 1.8 s -> 89.3 s.
-    # 1.5 since 2026-09-21: with the oversize masking the sigma-triggered
-    # rebuilds no longer fire, so the growth check is the only trigger, and the
-    # box of a convecting wake grows ~1.8x between doublings. A check costs
-    # 0.02 s; it rebuilds only when (ell, q) would change.
+    # With oversize masking, the growth check may be the only rebuild trigger,
+    # and the box of a convecting wake grows between particle-count doublings.
+    # The check rebuilds only when (ell, q) would change.
     rebuild_growth::Float64 = 1.5
     # Cores the grid cannot admit: FastMultipole's device cache takes them out of the
     # leaf cells itself and inserts them at a coarser level (one direct list, nothing
@@ -317,7 +296,7 @@ function _validate_radix_fmm_settings(pfield::ParticleField,
     ell_axes, _, _ = fmm._resolve_radix_ell_axes(bounds[2], ell, TF)
     R, L_allnear = fmm._radix_root_level(ell_axes, ell, q)
     first_m2l = R == L_allnear ? R + 1 : R
-    # Zero-M2L degenerate geometry runs pure direct (task 052c) — legal
+    # Zero-M2L degenerate geometry runs pure direct — legal
     # without a schedule, but an explicit level_radii2 cannot anchor to zero
     # active levels (we are in the level_radii2 !== nothing branch here).
     first_m2l <= ell || throw(ArgumentError(
@@ -367,11 +346,12 @@ and invalidate any existing cache so the next evaluation rebuilds with the new
 settings. GPU mechanism tunables (FastMultipole's radix settings, e.g.
 `NEARFIELD_GH_MODE`) may be passed as `gpu=(; NEARFIELD_GH_MODE=:shipped)`;
 they are validated and atomically applied by `FastMultipole.set_radix_settings!` before the
-cache invalidation so construction-locked settings take effect on the rebuild. Not exported; internal tuning surface (task 035 owns performance).
+cache invalidation so construction-locked settings take effect on the rebuild.
+Not exported; internal tuning surface.
 """
 function radix_fmm_settings!(pfield::ParticleField; gpu::NamedTuple=NamedTuple(), kwargs...)
-    # task 047: GPU mechanism tunables flow through FastMultipole's validated
-    # settings surface, applied BEFORE the cache is cleared so the rebuild
+    # GPU mechanism tunables flow through FastMultipole's validated settings
+    # surface, applied BEFORE the cache is cleared so the rebuild
     # snapshots the new values (construction-locked settings must be set
     # pre-construction; late flips error loudly at the next device step).
     # Ordering contract: construct and semantically validate the complete local
@@ -489,12 +469,6 @@ _radix_row_extrema(pfield::ParticleField, row::Int) =
     fmm._device_row_extrema(pfield.particles, row, pfield.np)
 
 _radix_sigma_max(pfield::ParticleField) = _radix_row_extrema(pfield, SIGMA_INDEX)[2]
-
-
-
-
-
-
 ################################################################################
 # Cache construction and evaluation
 ################################################################################
@@ -557,9 +531,6 @@ function _build_radix_fmm_cache(pfield::ParticleField{R},
         device, options=opts)
 end
 
-
-
-
 """
     _radix_fmm_coupling!(pfield) -> (; cache, settings, np_checked, sigma_limit)
 
@@ -582,7 +553,6 @@ end
 function _radix_fmm_coupling!(pfield::ParticleField)
     st = get(_radix_fmm_couplings, pfield, nothing)
     if st !== nothing && _radix_geometry_outgrown!(pfield, st)
-        get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix coupling dropped for rebuild at np=$(pfield.np)"); flush(stdout))
         delete!(_radix_fmm_couplings, pfield)
         st = nothing
         # the old cache's device arrays are freed only by their finalizers;
@@ -678,8 +648,6 @@ function _radix_fmm_evaluate!(pfield::ParticleField; sfs::Bool=false,
         # a second failure (e.g. adequacy gate on the grown box) propagates
         bounds = fmm.radix_recenter_bounds(_radix_geometry_policy(st.settings),
             fmm.radix_geometry_source(pfield), st.cache.ell)
-        get(ENV, "FLOWVPM_RADIX_VERBOSE", "0") == "1" && (println("radix recenter at np=$(pfield.np): ",
-            sprint(showerror, err; context=:limit => true)[1:min(end, 120)]); flush(stdout))
         fmm.recenter!(st.cache, pfield; bounds)
         fmm.fmm!(targets, sources, st.cache;
             scalar_potential=false, gradient=true, hessian, nearfield_pass,
@@ -693,12 +661,12 @@ end
     UJ_fmm_gpu!(pfield; reset=true, reset_sfs=false, sfs=false, rbf=false,
                 verbose=false, extra_targets=(), extra_sources=())
 
-GPU/radix counterpart of `UJ_fmm` for a `CuArray`-backed `ParticleField`
+GPU/radix counterpart of `UJ_fmm` for a device-backed `ParticleField`
 (also runnable on a `Matrix`-backed field through FastMultipole's
 transfer-based host path, used by the CPU-side tests). Computes U and J via
 the resident radix FMM (device-to-device for a GPU field: no per-step body
 transfers) and accumulates into `U_INDEX`/`J_INDEX`. With `sfs=true` the
-lifecycle's SFS pass (task 048) additionally ACCUMULATES the vortex-stretching
+lifecycle's SFS pass additionally ACCUMULATES the vortex-stretching
 term `E_str` into `SFS_INDEX` (rows 40:42) — the caller owns the reset
 (`UJ_fmm` resets SFS rows before dispatching here, matching the CPU
 `Estr_fmm!` convention). Unsupported configurations (`rbf`) fail loudly
@@ -720,7 +688,7 @@ function UJ_fmm_gpu!(pfield::ParticleField;
 end
 
 ################################################################################
-# SFS delivery hook (task 048): FastMultipole hands back a framework-owned
+# SFS delivery hook: FastMultipole hands back a framework-owned
 # 3 x np E_str buffer in global particle order; ACCUMULATE into SFS_INDEX
 # (rows 40:42), mirroring the `Estr_direct`/`Estr_fmm!` += convention (the
 # caller resets SFS rows). This host-Matrix method serves the transfer-based
@@ -731,7 +699,7 @@ else # !_FMM_HAS_RADIX ---------------------------------------------------------
 
 function UJ_fmm_gpu!(pfield; optargs...)
     error("GPU FMM requires a FastMultipole version providing the " *
-        "device-resident radix interface (RadixFMMCache; branch matrix-ops). " *
+        "device-resident radix interface (RadixFMMCache). " *
         "The installed FastMultipole does not. CPU (Matrix-backed) particle " *
         "fields are unaffected.")
 end
