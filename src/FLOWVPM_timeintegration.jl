@@ -21,8 +21,8 @@ _no_custom_UJ(custom_UJ) = throw(ArgumentError("`custom_UJ` is no longer used: "
     _reset_M_storage!(pfield)
 
 Zero the per-particle `M` storage rows (the RK3 low-storage state) of every
-non-static particle. CPU (`Array`-backed particles): the original scalar loop,
-unchanged. GPU (any other backing store): scalar indexing is disallowed on a
+non-static particle. CPU (`Array`-backed particles) uses a scalar loop. GPU
+(any other backing store) cannot scalar-index a
 `CuArray`, so the (0/1) static-mask broadcast is used instead — same pattern
 as `_reset_particles_broadcast!`.
 """
@@ -60,7 +60,6 @@ const _RK3_STAGE_C = (0.0, 1/3, 3/4)
 function euler(pfield::ParticleField, dt; relax::Bool=false, custom_UJ=nothing)
 
     # Evaluate UJ, SFS, and C
-    # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
     _no_custom_UJ(custom_UJ)
     pfield.SFS(pfield, BeforeUJ())
     pfield.UJ(pfield; reset_sfs=isSFSenabled(pfield.SFS), reset=true, sfs=isSFSenabled(pfield.SFS))
@@ -86,10 +85,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 
     zeta0::R = pfield.kernel.zeta(0)
 
-    # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
-    # GPU (CuArray, or any other non-Array backing store): broadcast-based implementation,
-    # which works unchanged for CuArray but allocates and is not competitive on CPU (see
-    # logs/2026-07-21-gpu-full.md for the benchmark that motivated this split).
+    # Broadcasting supports device storage but allocates and regresses CPU performance.
     if pfield.particles isa Array
         _euler_cpu_classic!(pfield, dt, Uinf, zeta0)
     else
@@ -120,7 +116,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
 
 end
 
-"CPU path for `_euler` (ClassicVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
+"CPU path for `_euler` (ClassicVPM): zero-allocation per-particle scalar loop."
 function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
     Threads.@threads for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -139,8 +135,7 @@ function _euler_cpu_classic!(pfield::ParticleField{R}, dt, Uinf, zeta0) where R
         ## Vortex stretching contributions
         J = get_J(p)
         G = get_Gamma(p)
-        # all three components from the pre-step Gamma (updating G[1] first fed
-        # the new value into G[2] and G[3]: an O(dt^2) error, 2026-09-26)
+        # Preserve all three pre-step components before updating Gamma in place.
         G1, G2, G3 = G[1], G[2], G[3]
         if pfield.transposed
             # Transposed scheme (Γ⋅∇')U
@@ -185,8 +180,7 @@ function _euler_broadcast_classic!(pfield::ParticleField, dt, Uinf, zeta0)
     SFS_all = view(pfield.particles, SFS_INDEX, :)  # (3, np)
     sigma3 = pfield.particles[SIGMA_INDEX, :] .^ 3  # (np,)
 
-    # all three components from the pre-step Gamma (a sequential read-after-write
-    # fed the new G[1] into G[2] and G[3]: an O(dt^2) error, 2026-09-26)
+    # Strength component views used by the in-place updates below.
     G1 = G[1, :]; G2 = G[2, :]; G3 = G[3, :]
     if pfield.transposed
         # Transposed scheme (Γ⋅∇')U
@@ -228,10 +222,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
     zeta0::R = pfield.kernel.zeta(0)
 
-    # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
-    # GPU (CuArray, or any other non-Array backing store): broadcast-based implementation,
-    # which works unchanged for CuArray but allocates and is not competitive on CPU (see
-    # logs/2026-07-21-gpu-full.md for the benchmark that motivated this split).
+    # Broadcasting supports device storage but allocates and regresses CPU performance.
     if pfield.particles isa Array
         _euler_cpu_reformulated!(pfield, dt, Uinf, f, g, zeta0)
     else
@@ -262,7 +253,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
 
 end
 
-"CPU path for `_euler` (ReformulatedVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
+"CPU path for `_euler` (ReformulatedVPM): zero-allocation per-particle scalar loop."
 function _euler_cpu_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R2, g::R2, zeta0) where {R, R2}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -361,7 +352,6 @@ function _euler_broadcast_reformulated!(pfield::ParticleField{R}, dt, Uinf, f::R
         ((f + g) / (1 + 3*f) .* S_dot_G .- f / (1 + 3*f) .* C_eps_dot_G) ./ Gnorm2, zero(R))
 
     # Update vectorial circulation: ΔΓ = Δt*(S - 3ZΓ - Cϵ)
-    # Sequential read-after-write: G[1] updated first, then used in G[2], G[3]
     G[1, :] .+= dt .* active .* (MM1 .- 3 .* MM4 .* G[1, :] .- C_all[1, :] .* SFS_all[1, :] .* sigma3 ./ zeta0)
     G[2, :] .+= dt .* active .* (MM2 .- 3 .* MM4 .* G[2, :] .- C_all[1, :] .* SFS_all[2, :] .* sigma3 ./ zeta0)
     G[3, :] .+= dt .* active .* (MM3 .- 3 .* MM4 .* G[3, :] .- C_all[1, :] .* SFS_all[3, :] .* sigma3 ./ zeta0)
@@ -382,9 +372,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
 
     _no_custom_UJ(custom_UJ)
 
-    # the classic updaters share the reformulated signature and ignore its two
-    # coefficients; they were never bound here, so a classic RK3 step threw
-    # UndefVarError (2026-09-26)
+    # The classic updaters share the reformulated signature and ignore these coefficients.
     f = zero(R); g = zero(R)
 
     # Storage terms: qU <=> p.M[:, 1], qstr <=> p.M[:, 2], qsmg2 <=> get_M(p)[7]
@@ -401,7 +389,6 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
     for (k, (a,b)) in enumerate(((0.0, 1/3), (-5/9, 15/16), (-153/128, 8/15)))
 
         # Evaluate UJ, SFS, and C
-        # NOTE: UJ evaluation is NO LONGER performed inside the SFS scheme
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
         pfield.UJ(pfield; reset_sfs=true, reset=true, sfs=isSFSenabled(pfield.SFS))
         pfield.SFS(pfield, AfterUJ(); a=a, b=b)
@@ -424,12 +411,8 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         # Resets U and J from previous step
         _reset_particles(pfield)
 
-        # Calculates interactions between particles: U and J
-        # NOTE: Technically we have to calculate J at the final location,
-        #       but in MyVPM I just used the J calculated in the last RK step
-        #       and it worked just fine. So maybe I perhaps I can save computation
-        #       by not calculating UJ again.
-        # The same evaluation as the stages (a driver's pfield.UJ may add
+        # Recalculate J at the final location with the same evaluation as the
+        # stages (a driver's pfield.UJ may add
         # sources the particles do not carry, e.g. bound and trailing filaments)
         pfield.UJ(pfield; reset_sfs=false, reset=true, sfs=false, relaxation=true)
 
@@ -437,13 +420,13 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
             if pfield.np > MIN_MT_NP
                 Threads.@threads for i in 1:pfield.np
                     if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                        pfield.relaxation(pfield, i)
                     end
                 end
             else
                 for i in 1:pfield.np
                     if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                        pfield.relaxation(pfield, i)
                     end
                 end
             end
@@ -459,10 +442,7 @@ end
 
 
 function update_particle_states(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
-    # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
-    # GPU (CuArray, or any other non-Array backing store): broadcast-based implementation,
-    # which works unchanged for CuArray but allocates and is not competitive on CPU (see
-    # logs/2026-07-21-gpu-full.md for the benchmark that motivated this split).
+    # Broadcasting supports device storage but allocates and regresses CPU performance.
     if pfield.particles isa Array
         update_particle_states_cpu_classic!(pfield,a,b,dt,Uinf,f,g,zeta0)
     else
@@ -471,7 +451,7 @@ function update_particle_states(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:
     return nothing
 end
 
-"CPU path for RK3's `update_particle_states` (ClassicVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
+"CPU path for RK3's `update_particle_states` (ClassicVPM): zero-allocation per-particle scalar loop."
 function update_particle_states_cpu_classic!(pfield::ParticleField{R, <:ClassicVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -602,16 +582,16 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
     #                      qsmg <=> get_M(p)[8], Z <=> MM4, S <=> MM[1:3]
 
     # Calculate freestream
-    Uinf = SVector{3,R}(pfield.Uinf(pfield.t)) # now infers its type from pfield. although tbh this isn't correct; a functor for U would be a cleaner implementation.
+    Uinf = SVector{3,R}(pfield.Uinf(pfield.t))
 
-    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g # formulation floating-point type may end up as Float64 even if AD is used. (double check this)
-    zeta0::Float64 = pfield.kernel.zeta(0.0) # zeta0 should have the same type as 0.0, which is Float64.
+    f::R2, g::R2 = pfield.formulation.f, pfield.formulation.g
+    zeta0::Float64 = pfield.kernel.zeta(0.0)
 
     # Reset storage memory to zero
     _reset_M_storage!(pfield)
 
     # Runge-Kutta inner steps
-    for (k, (a,b)) in enumerate((((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15)))) # doing type conversions on fixed floating-point numbers is redundant.
+    for (k, (a,b)) in enumerate((((0.0, 1/3)), ((-5/9, 15/16)), ((-153/128, 8/15))))
 
         # Evaluate UJ, SFS, and C
         pfield.SFS(pfield, BeforeUJ(); a=a, b=b)
@@ -628,7 +608,6 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         viscousdiffusion(pfield, dt; aux1=a, aux2=b, integration=rungekutta3)
     end
 
-    # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?
     # Relaxation: Align vectorial circulation to local vorticity
     if relax
 
@@ -644,13 +623,13 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
             if pfield.np > MIN_MT_NP
                 Threads.@threads for i in 1:pfield.np
                     if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                        pfield.relaxation(pfield, i)
                     end
                 end
             else
                 for i in 1:pfield.np
                     if pfield.particles[STATIC_INDEX,i] == 0
-                        pfield.relaxation(pfield, i) # this is necessary to reset the particle's M storage memory
+                        pfield.relaxation(pfield, i)
                     end
                 end
             end
@@ -665,10 +644,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
 end
 
 function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
-    # CPU (Array-backed particles): original zero-allocation scalar loop, unchanged.
-    # GPU (CuArray, or any other non-Array backing store): broadcast-based implementation,
-    # which works unchanged for CuArray but allocates and is not competitive on CPU (see
-    # logs/2026-07-21-gpu-full.md for the benchmark that motivated this split).
+    # Broadcasting supports device storage but allocates and regresses CPU performance.
     if pfield.particles isa Array
         update_particle_states_cpu_reformulated!(pfield,a,b,dt,Uinf,f,g,zeta0)
     else
@@ -677,7 +653,7 @@ function update_particle_states(pfield::ParticleField{R, <:ReformulatedVPM{R2}, 
     return nothing
 end
 
-"CPU path for RK3's `update_particle_states` (ReformulatedVPM): original per-particle scalar loop, unchanged from pre-Phase-1 FLOWVPM."
+"CPU path for RK3's `update_particle_states` (ReformulatedVPM): zero-allocation per-particle scalar loop."
 function update_particle_states_cpu_reformulated!(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubFilterScale, <:Any, <:Any, <:Any, <:Any, <:Any},a,b,dt::R3,Uinf,f,g,zeta0) where {R, R2, V, R3}
     for i in 1:pfield.np
         p = get_particle(pfield, i)
@@ -801,8 +777,7 @@ function update_particle_states_broadcast_reformulated!(pfield::ParticleField{R,
     # NOTE: the Gnorm2>0 test and the division by Gnorm2 must be ONE fused broadcast
     # statement, not two -- Gnorm2 and MM4 are the same row, so a second statement
     # reading `Gnorm2` after MM4's first assignment would read the already-overwritten
-    # MM4 value instead of the original squared-norm (this was a real bug, caught by
-    # a direct loop-vs-broadcast numerical diff, not by `] test`).
+    # MM4 value instead of the original squared norm.
     MM4 .= ifelse.(Gnorm2 .> zero(R), ((f+g)/(1+3*f) .* S_dot_G .- f/(1+3*f) .* Ceps_dot_G) ./ Gnorm2, zero(R))
 
     # Store qstr_i (M4_new/M5_new/M6_new reuse MM1/MM2/MM3's rows -- each MMk is read
