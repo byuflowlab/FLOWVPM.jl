@@ -80,6 +80,115 @@ Settings for the fast multipole solver. Defaults autotune the FMM so that the ab
 ### `useGPU::Int`
 Determines whether or not to use GPU acceleration with `CUDA.jl` to solve the n-body problem. Still experimental and does not work on SFS calculation, only works on NVIDIA GPUs. To allow GPU usage set to values greater than 0. (default is 0).
 
+## Core Spreading and the Galerkin Reset
+
+[`CoreSpreading`](@ref FLOWVPM.CoreSpreading) diffuses vorticity by growing every
+core, ``\sigma^2 \mathrel{+}= 2\nu\,\Delta t``. Once the cores have grown by `beta`
+they are shrunk back to `sgm0` by a Galerkin reset, which can also be called on its
+own to shrink any set of large cores in an ordinary (inviscid or LES) run.
+
+**How the reset works.** It finds new strengths whose combined field best matches the
+old field everywhere (an ``L_2`` projection onto Gaussians, not a point-by-point
+interpolation, which is numerically singular for overlapping cores):
+
+- the reset particles go to `sgm0`;
+- their neighbours keep their own cores and take strength increments (the *halo*),
+  so the old cores' tails are not lost;
+- new `sgm0` points are added only where the old tails reach past the last particle
+  (*edge points*), and reset particles crowded closer than `thin` are merged first;
+- the resulting symmetric positive-definite system is solved by a block-Jacobi
+  preconditioned conjugate gradient that stops on the field error. It runs matrix
+  free on the GPU; on the CPU it stores the overlap pairs up to a memory cap
+  (`gram_mem`, 1 GiB) and evaluates the rest on the fly.
+
+The particle count and order change at every reset (edge points in, thinned particles
+out): give the field `maxparticles` headroom, and do not hold particle indices across
+a reset.
+
+### Using it with core spreading
+
+```julia
+import FLOWVPM as vpm
+
+# defaults: reset when the cores have grown by beta = 1.25
+viscous = vpm.CoreSpreading(nu, sgm0)
+
+# custom reset parameters (see the table below)
+reset   = vpm.GalerkinReset(; tol = 1e-3, gram_mem = 4 * 2^30)
+viscous = vpm.CoreSpreading(nu, sgm0; beta = 1.5, galerkin = reset, verbose = true)
+
+pfield = vpm.ParticleField(maxparticles; viscous, kernel = vpm.gaussianerf)
+```
+
+`CoreSpreading` options: `beta` (default `1.25`, growth ``\sigma/\sigma_0`` that
+triggers a reset), `growth_beta` (default `0`, off: also reset when the largest core of
+the field reaches `growth_beta * sgm0`), `iterror` (default `false`: an unconverged
+solve warns; `true` throws), `verbose` (one summary line per reset), and `galerkin`
+(the [`GalerkinReset`](@ref FLOWVPM.GalerkinReset) parameters). Gaussian
+(`gaussianerf`) kernel only.
+
+### Shrinking large cores in any run
+
+[`galerkin_shrink!`](@ref FLOWVPM.galerkin_shrink!) works on any field, with no
+viscous scheme, on the CPU or the GPU:
+
+```julia
+reset = vpm.GalerkinReset()          # keep one: its workspace is reused across calls
+sig   = Array(view(pfield.particles, vpm.SIGMA_INDEX, 1:vpm.get_np(pfield)))
+idx   = findall(>(1.5 * sgm0), sig)  # cores above 1.5 sgm0
+info  = vpm.galerkin_shrink!(pfield, idx, sgm0; galerkin = reset)
+# info: counts (K reset, H halo, E edge points, D thinned), iterations, field error,
+#       memory and timing of each phase
+```
+
+In FLOWUnsteadyCore, the `simulate!` options `core_reset` and `core_reset_every`
+call it every step or every N steps.
+
+### Reset parameters (`GalerkinReset`)
+
+Lengths are in units of `sgm0`.
+
+| keyword | default | meaning | when to change |
+|---|---|---|---|
+| `tol` | `5e-3` | stop once 10 iterations lower the squared relative field error by less than `tol^2` | tighter (e.g. `1e-10`) for derivatives |
+| `itmax` | `300` | iteration cap | raise with a tight `tol` |
+| `halo_tail`, `halo_min` | `2.0`, `1.0` | neighbours within `max(halo_min, halo_tail * s_k)` of reset particle k take increments (``s_k^2 = \sigma_k^2 - \sigma_0^2``) | rarely |
+| `halo_tol` | `3e-3` | keep only neighbours where the old tail is at least this fraction of its peak (`0`: all) | `0` for best accuracy at higher cost |
+| `edge_offsets`, `edge_spacing`, `edge_tol` | `[1.0, 2.0]`, `0.7`, `1e-2` | edge points at ``x_k \pm a\,e_j`` where no particle lies within `edge_spacing` and the old field is above `edge_tol` of its peak (empty offsets: none) | fewer or none to limit particle growth |
+| `prune_tol` | `1e-2` | drop edge points weaker than this fraction of the strongest reset particle | raise to add fewer particles |
+| `thin` | `0.5` | merge reset particles closer than this before the solve (`0`: off) | rarely |
+| `damping` | `1e-2` | ``\mu`` in ``(M + \mu\,\mathrm{diag}\,M)\,c = f`` | rarely |
+| `gram_cut` | `5.0` | overlap cutoff in combined core widths (4 is not positive definite on real wakes) | keep 4.5-5 |
+| `block_cell`, `block_cap` | `3.0`, `512` | block-Jacobi blocks (`block_cap = 0`: plain CG) | rarely |
+| `gram_mem` | `2^30` (1 GiB) | CPU memory for stored overlap pairs; the rest is evaluated on the fly | raise for speed if memory allows |
+
+### Accuracy and cost
+
+On the NREL 5MW wake (checkpoint step 2880) and Lamb-Oseen diffusion tests:
+
+- off-particle vorticity error 0.25-0.5 % on the wake (the previous collocation reset:
+  2.8-4.6 %), 0.05-0.13 % on Lamb-Oseen; circulation changes 0.5-0.8 % per reset;
+  strengths do not grow;
+- a single, unresolved row of particles loses more (about 7 % of its circulation): its
+  lateral tails have no particles to go to;
+- cost per reset: 0.2-0.35 s for a handful of cores in isolation, 0.6-5 s for one
+  revolution's worth, about 3 s for ten thousand cores (Apple M1 Pro, CPU with 4 threads
+  or Metal). Every reset also solves for the neighbours of the reset cores, so many
+  small resets cost much more than one large one: in a 6-revolution HVAB hover run,
+  resetting once per revolution took 0.8 % of the run time with loads within 0.04 % of
+  a run without resets, while resetting every step took about 20 % (run 23 % slower).
+  **Reset once per revolution** (FLOWUnsteadyCore: `core_reset_every` = steps per
+  revolution).
+
+### Derivatives
+
+Reverse-mode AD (Enzyme) through a reset is supported on CPU fields: the linear solve
+carries an implicit rule (one adjoint solve with the same preconditioned CG), so the
+iterations are never differentiated. The derivative covers the new strengths as
+functions of the positions, cores and strengths involved; which particles are
+selected, thinned or added is discrete and carries no derivative. Use a tight `tol`
+(e.g. `1e-10`) and a larger `itmax` for differentiable runs.
+
 ## Code Integration
 For examples of integrating FLOWVPM into other codes please see [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) and
 [VortexLattice](https://github.com/byuflowlab/VortexLattice)

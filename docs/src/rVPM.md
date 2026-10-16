@@ -364,8 +364,7 @@ In the default settings of FLOWUnsteady, vortex stretching is resolved with the 
 The time integration of the governing equations is done through a low-storage third-order Runge-Kutta scheme.
 A Gaussian kernel is used as the LES filter ``\zeta_\sigma`` (or VPM radial basis function).
 Like the classic VPM, the reformulated VPM is spatially second-order accurate in the convective term when a Gaussian basis is used.
-Viscous diffusion is solved through the core spreading method coupled with the radial basis function interpolation approach for spatial adaptation developed by Barba.[^8]
-This viscous scheme has second-order spatial convergence, while showing linear convergence when coupled with spatial adaptation.
+Viscous diffusion is solved through the core spreading method. Overgrown cores are reset by a Galerkin (``L_2``) projection of the old vorticity field onto cores of the original size, in which the neighbouring particles carry the old cores' tails (see [Core Spreading and the Galerkin Reset](@ref)); this replaces the radial basis function interpolation of Barba,[^8] which is numerically singular for heavily overlapping particles.
 The fast multipole method (FMM) is used for the computation of the regularized Biot-Savart law, approximating the velocity field and vortex stretching through spherical harmonics with computational complexity ``\mathcal{O}(N)``, where ``N`` is the number of particles.
 The FMM computation of vortex stretching is performed analytically under the Lamb-Helmholtz decomposition[^9] as implemented in the open-source, parallelized code [FastMultipole](https://flow.byu.edu/FastMultipole.jl/dev/).
 [FLOWVPM](https://github.com/byuflowlab/FLOWVPM.jl) and [FLOWUnsteady](https://github.com/byuflowlab/FLOWUnsteady) are implemented in [the Julia language](https://julialang.org), which is a modern, high-level, dynamic programming language for high-performance computing.
