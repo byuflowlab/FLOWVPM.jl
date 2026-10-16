@@ -144,6 +144,39 @@ end
     end
 end
 
+# The analytic two-level SFS derivatives (`dsigma_direct!` rule) after the direct
+# sum, objective on M[1:6] (both schemes, one static particle), against central FD.
+function enz_dsigma(x::AbstractVector{T}, w, transposed) where T
+    n = length(x) ÷ 7
+    pf = FLOWVPM.ParticleField(n, T; transposed, UJ=FLOWVPM.UJ_direct, fmm=FLOWVPM.FMM(autotune_reg_error=false))
+    for i in 1:n
+        FLOWVPM.add_particle(pf, (x[3i-2], x[3i-1], x[3i]), (x[3n+3i-2], x[3n+3i-1], x[3n+3i]), x[6n+i]; static=(i == 2))
+    end
+    FLOWVPM.UJ_direct(pf)
+    FLOWVPM.dsigma_direct!(pf)
+    s = zero(T)
+    for i in 1:n, k in 1:6
+        s += w[6*(i-1)+k] * pf.particles[FLOWVPM.M_INDEX[k], i]
+    end
+    return s
+end
+
+@testset "Enzyme: dsigma_direct! reverse rule (two-level analytic SFS)" begin
+    n = 30
+    Random.seed!(5)
+    x = vcat(rand(3n), 0.1 .* randn(3n), 0.15 .+ 0.02 .* rand(n))
+    w = randn(6n)
+    for transposed in (true, false)
+        g = zero(x)
+        Enzyme.autodiff(Enzyme.Reverse, enz_dsigma, Enzyme.Active, Enzyme.Duplicated(x, g), Enzyme.Const(w), Enzyme.Const(transposed))
+        f = x -> enz_dsigma(x, w, transposed)
+        for k in 1:2
+            v = randn(7n); v ./= LinearAlgebra.norm(v)
+            @test enz_fd_err(f, x, v, LinearAlgebra.dot(g, v); hs=(1e-4, 1e-5, 1e-6), scale=LinearAlgebra.norm(g)) < 1e-7
+        end
+    end
+end
+
 # FLOWVPMEnzymeExt's FMM reverse rule (`_fmm_UJ!`: adjoint FMM calls) and the
 # Estr_fmm! rule, through one UJ_fmm step, against central FD of the FMM
 # (agreement set by the FMM error, here ~1e-5).

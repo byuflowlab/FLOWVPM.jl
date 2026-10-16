@@ -107,6 +107,7 @@ _zeta_dzeta(f::typeof(vpm.zeta_gauserf), q) = (z = f(q); (z, -q*z))
 _zeta_dzeta(f::typeof(vpm.zeta_gaus), q) = (z = f(q); (z, -3*q*q*z))
 _zeta_dzeta(f::typeof(vpm.zeta_wnklmns), q) = (z = f(q); (z, -7*q*z/(q*q + 1)))
 _zeta_dzeta(f::typeof(vpm.zeta_sing), q) = (f(q), zero(q))
+_zd(zeta) = q -> _zeta_dzeta(zeta, q)
 
 const _KnownKernel = vpm.Kernel{<:Union{typeof.((vpm.zeta_gauserf, vpm.zeta_gaus, vpm.zeta_wnklmns, vpm.zeta_sing))...},
                                 <:Any, <:Any,
@@ -182,13 +183,15 @@ end
 _M(J, transposed) = transposed ? J' : J
 # `blocks`: (targets, sources) index sets whose every pair is in the sum; per
 # thread, both sides accumulate in a buffer (a source set can recur in blocks
-# on different threads)
-function _estr_reverse!(dP, P, zeta, transposed, blocks)
-    X, Gm, S, J, SF, ST = vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX, vpm.J_INDEX, vpm.SFS_INDEX, vpm.STATIC_INDEX
+# on different threads). `zd(q)` = (zeta, dzeta/dq); w = SFSbar (zero at static
+# targets); the 9 x np gradients `Jm` (default: the J rows) get cotangents in `dJm`.
+_estr_w(dP, P, rows) = [Bool(P[vpm.STATIC_INDEX, t]) ? zero(SVector{3, eltype(P)}) : _col3(dP, rows, t) for t in axes(P, 2)]
+function _estr_reverse!(dP, P, zd, transposed, blocks, w = _estr_w(dP, P, vpm.SFS_INDEX),
+                        Jm = view(P, vpm.J_INDEX, :), dJm = view(dP, vpm.J_INDEX, :))
+    X, Gm, S, ST = vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX, vpm.STATIC_INDEX
     np = size(P, 2)
     act = [!Bool(P[ST, i]) for i in 1:np]
-    w = [act[t] ? _col3(dP, SF, t) : zero(SVector{3, eltype(P)}) for t in 1:np]
-    y = [_M(_col9(P, J, t), transposed)'*w[t] for t in 1:np]
+    y = [_M(_col9(Jm, 1:9, t), transposed)'*w[t] for t in 1:np]
     nc = min(Threads.nthreads(), max(length(blocks), 1))
     buf = zeros(eltype(P), 16, np, nc)
     Threads.@threads :static for c in 1:nc
@@ -198,12 +201,12 @@ function _estr_reverse!(dP, P, zeta, transposed, blocks)
             for s in ss
                 act[s] || continue
                 xs = _col3(P, X, s); G = _col3(P, Gm, s); sgm = P[S, s]
-                h = _M(_col9(P, J, s), transposed)*G
+                h = _M(_col9(Jm, 1:9, s), transposed)*G
                 dxs = zero(xs); dGy = zero(G); dsg = zero(sgm); b = zero(G)
                 for t in ts
                     (t == s || iszero(w[t])) && continue
                     d = xs - _col3(P, X, t); r = sqrt(dot(d, d)); q = r/sgm
-                    zq, dzq = _zeta_dzeta(zeta, q)
+                    zq, dzq = zd(q)
                     z = zq/sgm^3
                     zbar = dot(G, y[t]) - dot(h, w[t])
                     b += z*w[t]; dGy += z*y[t]
@@ -225,7 +228,7 @@ function _estr_reverse!(dP, P, zeta, transposed, blocks)
     tot = dropdims(sum(buf; dims=3); dims=3)
     for k in 1:np
         a = SVector(tot[4, k], tot[5, k], tot[6, k]); b = SVector(tot[14, k], tot[15, k], tot[16, k])
-        G = _col3(P, Gm, k); Mk = _M(_col9(P, J, k), transposed)
+        G = _col3(P, Gm, k); Mk = _M(_col9(Jm, 1:9, k), transposed)
         dG = SVector(tot[10, k], tot[11, k], tot[12, k]) - Mk'*b
         dJ = _M(w[k]*a', transposed) - _M(b*G', transposed)
         for i in 1:3
@@ -233,7 +236,7 @@ function _estr_reverse!(dP, P, zeta, transposed, blocks)
         end
         dP[S, k] += tot[13, k]
         for i in 1:9
-            dP[J[i], k] += dJ[i]
+            dJm[i, k] += dJ[i]
         end
     end
     return nothing
@@ -241,7 +244,7 @@ end
 _estr_direct_blocks(np) = (nc = Threads.nthreads(); [(1:np, ((c - 1)*np ÷ nc + 1):(c*np ÷ nc)) for c in 1:nc])
 
 for (f, rev!) in ((vpm._direct_UJ!, (dpf, P, pf) -> _direct_UJ_reverse!(dpf.particles, P, size(P, 2), pf.kernel.g_dgdr)),
-                  (vpm.Estr_direct!, (dpf, P, pf) -> _estr_reverse!(dpf.particles, P, pf.kernel.zeta, pf.transposed, _estr_direct_blocks(size(P, 2)))))
+                  (vpm.Estr_direct!, (dpf, P, pf) -> _estr_reverse!(dpf.particles, P, _zd(pf.kernel.zeta), pf.transposed, _estr_direct_blocks(size(P, 2)))))
     @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
                                                 pf::EnzymeCore.Annotation{<:_HostField}) where RT
         P = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]   # inputs, before later steps overwrite them
@@ -254,6 +257,91 @@ for (f, rev!) in ((vpm._direct_UJ!, (dpf, P, pf) -> _direct_UJ_reverse!(dpf.part
         pf isa EnzymeCore.Const || $rev!(pf.dval, P, pf.val)
         return (nothing,)
     end
+end
+
+# ------------------------------------------------------------------------------
+# Two-level dynamic SFS, analytic core-scaling derivatives (`dsigma_direct!`,
+# gaussianerf). With q = r/sigma_j and G = q g'(q) = sqrt(2/pi) q^3 e^{-q^2/2},
+# the pair's dJ/dalpha has the J pair's form with (A, B) -> (Ah, Bh):
+#   dJ_i = sum_j Ah c d' + Bh E(Gamma_j),  Ah = q^2 G/r^2,  Bh = k G/r^3;
+#   M[1:3]_i = op(dJ_i) Gamma_i;  M[4:6]_i = the Estr sum with zeta -> zeta (q^2 - 3)
+#   on J plus the Estr sum with zeta on dJ (both written, not accumulated).
+# Reverse: the two Estr reverses, then op' for M[1:3], then one pair loop for dJ.
+# ------------------------------------------------------------------------------
+_zd_dsigma(q) = (z = vpm.zeta_gauserf(q); (z*(q*q - 3), z*q*(5 - q*q)))
+
+# reverse of one dJ pair: (dbar, Gammabar, sigmabar) from dJbar = s
+@inline function _dsigma_pair_adj(d, G, sgm, s)
+    k = vpm.const4
+    r2 = dot(d, d); r = sqrt(r2); r3 = r2*r; is2 = 1/(sgm*sgm)
+    e = sqrt(2/pi)*exp(-r2*is2/2)/(sgm*sgm*sgm)
+    Ah = e*r3*is2; Bh = k*e
+    c = (-k/r3) * cross(d, G)
+    sd = s*d
+    tau = SVector(s[2,3] - s[3,2], s[3,1] - s[1,3], s[1,2] - s[2,1])
+    Q = dot(c, sd); T = dot(tau, G)
+    v = Ah*sd
+    dbar = (-k/r3)*cross(G, v) - (3*dot(v, c)/r2)*d + Ah*(s'*c) + ((Q*Ah*(3/r - r*is2) - T*Bh*r*is2)/r)*d
+    Gbar = (-k/r3)*cross(v, d) + Bh*tau
+    sbar = (Q*Ah*(r2*is2 - 5) + T*Bh*(r2*is2 - 3))/sgm
+    return dbar, Gbar, sbar
+end
+
+function _dsigma_reverse!(dP, P, dJ, transposed)
+    X, Gm, S, M = vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX, vpm.M_INDEX
+    np = size(P, 2)
+    act = [!Bool(P[vpm.STATIC_INDEX, i]) for i in 1:np]
+    wL = _estr_w(dP, P, M[1:3]); wE = _estr_w(dP, P, M[4:6])
+    for i in 1:np, a in 1:6
+        act[i] && (dP[M[a], i] = 0)        # overwritten outputs
+    end
+    ddJ = zeros(eltype(P), 9, np)
+    blocks = _estr_direct_blocks(np)
+    _estr_reverse!(dP, P, _zd_dsigma, transposed, blocks, wE)
+    _estr_reverse!(dP, P, _zd(vpm.zeta_gauserf), transposed, blocks, wE, dJ, ddJ)
+    for i in 1:np
+        act[i] || continue
+        G = _col3(P, Gm, i); dG = _M(_col9(dJ, 1:9, i), transposed)'*wL[i]; dD = _M(wL[i]*G', transposed)
+        for a in 1:3; dP[Gm[a], i] += dG[a]; end
+        for a in 1:9; ddJ[a, i] += dD[a]; end
+    end
+    dXt = _chunked_pairs!(dP, np, 3) do bt, js
+        for j in js
+            sgm = P[S, j]
+            sgm > 0 || continue
+            xj = _col3(P, X, j); G = _col3(P, Gm, j)
+            dxj = zero(xj); dG = zero(G); ds = zero(sgm)
+            for i in 1:np
+                (act[i] && i != j) || continue
+                d = _col3(P, X, i) - xj
+                iszero(dot(d, d)) && continue
+                dbar, Gbar, sbar = _dsigma_pair_adj(d, G, sgm, _col9(ddJ, 1:9, i))
+                bt[1, i] += dbar[1]; bt[2, i] += dbar[2]; bt[3, i] += dbar[3]
+                dxj -= dbar; dG += Gbar; ds += sbar
+            end
+            for a in 1:3
+                dP[X[a], j] += dxj[a]; dP[Gm[a], j] += dG[a]
+            end
+            dP[S, j] += ds
+        end
+    end
+    for i in 1:np, a in 1:3
+        dP[X[a], i] += dXt[a, i]
+    end
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.dsigma_direct!)}, ::Type{RT},
+                                      pf::EnzymeCore.Annotation{<:_HostField}) where RT
+    pf isa EnzymeCore.Const && return EnzymeRules.AugmentedReturn(func.val(pf.val), nothing, nothing)
+    P = pf.val.particles[:, 1:pf.val.np]
+    return EnzymeRules.AugmentedReturn(nothing, nothing, (P, vpm._dsigma_direct!(pf.val)))
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.dsigma_direct!)}, ::Type{RT}, tape,
+                             pf::EnzymeCore.Annotation{<:_HostField}) where RT
+    EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeExt: batched reverse not supported")
+    tape === nothing || _dsigma_reverse!(pf.dval.particles, tape[1], tape[2], pf.val.transposed)
+    return (nothing,)
 end
 
 # ------------------------------------------------------------------------------
@@ -428,7 +516,7 @@ function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.Estr_fmm!
                              tpf::EnzymeCore.Annotation{<:_HostField}, spf::EnzymeCore.Annotation{<:_HostField},
                              ttree, stree, dlist) where RT
     EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeExt: batched reverse not supported")
-    tape === nothing || _estr_reverse!(tpf.dval.particles, tape[1], tpf.val.kernel.zeta, tpf.val.transposed, tape[2])
+    tape === nothing || _estr_reverse!(tpf.dval.particles, tape[1], _zd(tpf.val.kernel.zeta), tpf.val.transposed, tape[2])
     return (nothing, nothing, nothing, nothing, nothing)
 end
 
