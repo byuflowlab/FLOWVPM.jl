@@ -82,10 +82,10 @@ function previous_influence(system::ParticleField, i)
     return prev_potential, sqrt(gx*gx + gy*gy + gz*gz)
 end
 
-# `get_previous_influence` exists on registry FastMultipole 2.0-2.2 (legacy
-# dynamic-P error estimation); the unified branch uses buffer metadata rows
-# (`previous_*_metadata_index`) instead, so guard the legacy overload to stay
-# loadable against both (the radix/GPU path never used this hook).
+# `get_previous_influence` exists on FastMultipole 2.0-2.2 for dynamic-P error
+# estimation. Newer versions use buffer metadata rows
+# (`previous_*_metadata_index`), so guard the overload to stay loadable against
+# both (the radix/GPU path never uses this hook).
 if isdefined(fmm, :get_previous_influence)
     fmm.get_previous_influence(system::ParticleField, i) = previous_influence(system, i)
 end

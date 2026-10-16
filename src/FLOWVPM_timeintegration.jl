@@ -195,7 +195,7 @@ function _euler_broadcast_classic!(pfield::ParticleField, dt, Uinf, zeta0)
     end
 
     # Subfilter-scale contributions: -Cϵ where ϵ=(Eadv + Estr)/zeta_sgmp(0)
-    # Note: C is stored as 3 components; use first component per original code
+    # C is stored as 3 components; use the first component.
     # C_all[1,:] and sigma3 are (np,) -- transpose to (1,np) row vectors so they
     # broadcast against SFS_all's (3,np) shape along the particle axis, not the component axis
     G .-= dt .* active' .* (C_all[1, :]' .* SFS_all .* sigma3' ./ zeta0)

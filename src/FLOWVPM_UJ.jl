@@ -86,7 +86,7 @@ function _fmm_UJ!(pfield, vorticity, verbose)
                     tune=true,
                     shrink=fmm_options.shrink_recenter,
                     recenter=fmm_options.shrink_recenter,
-                    nearfield_device=false, # CPU-only branch: GPU fields dispatch to UJ_fmm_gpu! above; legacy nearfield_device forwarding silently dropped the nearfield
+                    nearfield_device=false, # GPU fields dispatch to UJ_fmm_gpu!; this octree path is CPU-only
                     scalar_potential=false,
                     hessian=true,
                     extra_outputs=vorticity ? 3 : 0,
@@ -132,12 +132,8 @@ function UJ_fmm(
 
     if !(pfield.particles isa Array)
         # GPU-backed particle field: device-resident radix FMM lifecycle
-        # (see src/FLOWVPM_fmm_radix.jl). This replaces the former
-        # `nearfield_device=true` legacy-path forwarding, whose generic
-        # FastMultipole fallback silently DROPPED the nearfield contribution
-        # (no override existed) — the legacy octree path below is now
-        # CPU-only by construction and any unsupported GPU configuration
-        # fails loudly inside UJ_fmm_gpu!.
+        # (see src/FLOWVPM_fmm_radix.jl). Unsupported configurations fail
+        # loudly inside UJ_fmm_gpu!.
         # reset already performed above; sfs guarded inside UJ_fmm_gpu!
         UJ_fmm_gpu!(pfield; reset=false, reset_sfs=false, sfs=sfs, rbf=false,
                     verbose=verbose)
