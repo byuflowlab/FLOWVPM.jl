@@ -120,9 +120,8 @@ first. The O(N²) direct-sum kernels (`gpu_direct!`/`gpu_zeta_direct!`/
 `ext/FLOWVPMCUDAExt.jl`, a CUDA package extension (loaded only when `CUDA`
 is also `using`d — `CUDA` is a `[weakdeps]` entry, not a hard dependency, so
 CPU-only downstream users/installs never pull in the ~40-package CUDA
-stack). `pfield.useGPU` is a separate, largely vestigial `Int` field — the
-real CPU/GPU switch everywhere in this codebase is `pfield.particles isa
-Array`, not `useGPU`.
+stack). The CPU/GPU switch everywhere in this codebase is `pfield.particles isa
+Array` (the old `useGPU` field was removed).
 
 **Validated on an H200 (2026-07-22):** `add_particle`, `UJ_direct`,
 `zeta_direct`, `Estr_direct!`, and the Phase 1 broadcast physics are all

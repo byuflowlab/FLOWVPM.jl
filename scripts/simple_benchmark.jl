@@ -61,7 +61,7 @@ function benchmark_fmm!(pfield::vpm.ParticleField; verbose::Bool=false, reset::B
         }(),
         tune=true,
         shrink_recenter=fmm_options.shrink_recenter,
-        nearfield_device=(pfield.useGPU > 0),
+        nearfield_device=!(pfield.particles isa Array),
         scalar_potential=false,
         hessian=true,
         silence_warnings=!verbose,

@@ -77,9 +77,6 @@ Under [`rungekutta3`](@ref FLOWVPM.rungekutta3) the relaxation evaluates U and J
 ### `fmm::FMM`
 Settings for the fast multipole solver. Defaults autotune the FMM so that the absolute and relative tolerance of the velocity calculations are within 1e-3. See the the [`FMM`](@ref FLOWVPM.FMM) API for detailed settings
 
-### `useGPU::Int`
-Determines whether or not to use GPU acceleration with `CUDA.jl` to solve the n-body problem. Still experimental and does not work on SFS calculation, only works on NVIDIA GPUs. To allow GPU usage set to values greater than 0. (default is 0).
-
 ## Core Spreading and the Galerkin Reset
 
 [`CoreSpreading`](@ref FLOWVPM.CoreSpreading) diffuses vorticity by growing every
