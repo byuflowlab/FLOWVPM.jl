@@ -23,7 +23,10 @@ abstract type ViscousScheme{R} end
 
 """
 Implementation of viscous diffusion scheme that gets called in the inner loop
-of the time integration scheme at each time step.
+of the time integration scheme at each time step. The calling integrator passes
+itself as `integration` (`euler` or `rungekutta3`), so the scheme follows the
+integrator that runs, not the field's `integration` setting (a driver may step a
+field with either).
 """
 function viscousdiffusion(pfield, scheme::ViscousScheme, dt; optargs...)
     error("Viscous diffusion scheme has not been implemented yet!")
@@ -118,12 +121,12 @@ iscorespreading(scheme::ViscousScheme
 
 
 
-function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
+function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0, integration=pfield.integration)
 
     proceed = false
 
     # ------------------ EULER SCHEME ------------------------------------------
-    if pfield.integration == euler
+    if integration == euler
 
         # Core spreading
         if pfield.particles isa Array
@@ -137,7 +140,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
         proceed = true
 
     # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
-    elseif pfield.integration == rungekutta3
+    elseif integration == rungekutta3
 
         # Core spreading
         # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
@@ -158,7 +161,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0)
 
         # ------------------ DEFAULT -----------------------------------------------
     else
-        error("Time integration scheme $(pfield.integration) not"*
+        error("Time integration scheme $(integration) not"*
               " implemented in core spreading viscous scheme yet!")
     end
 
@@ -257,7 +260,7 @@ Creates a particle strength exchange viscous scheme with the given parameters.
 ParticleStrengthExchange(nu, args...; optargs...
                         ) = ParticleStrengthExchange{FLOAT_TYPE}(FLOAT_TYPE(nu), args...; optargs...)
 
-function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0)
+function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, aux2=0, integration=pfield.integration)
 
     if pfield.UJ != UJ_fmm
         # NOTE: PSE has only been implemented with FMM so far
@@ -276,7 +279,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
     end
 
     # ------------------ EULER SCHEME ------------------------------------------
-    if pfield.integration == euler
+    if integration == euler
 
         # Update Gamma
         if pfield.particles isa Array
@@ -290,7 +293,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
         end
 
         # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
-    elseif pfield.integration == rungekutta3
+    elseif integration == rungekutta3
 
         # Update Gamma
         if pfield.particles isa Array
@@ -306,7 +309,7 @@ function viscousdiffusion(pfield, scheme::ParticleStrengthExchange, dt; aux1=0, 
 
         # ------------------ DEFAULT -----------------------------------------------
     else
-        error("Time integration scheme $(pfield.integration) not"*
+        error("Time integration scheme $(integration) not"*
               " implemented in PSE viscous scheme yet!")
     end
 

@@ -116,7 +116,7 @@ function _euler(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilterScal
     end
 
     # Update the particle field: viscous diffusion
-    viscousdiffusion(pfield, dt)
+    viscousdiffusion(pfield, dt; integration=euler)
 
 end
 
@@ -258,7 +258,7 @@ function _euler(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <:SubF
     end
 
     # Update the particle field: viscous diffusion
-    viscousdiffusion(pfield, dt)
+    viscousdiffusion(pfield, dt; integration=euler)
 
 end
 
@@ -413,7 +413,7 @@ function rungekutta3(pfield::ParticleField{R, <:ClassicVPM, V, <:Any, <:SubFilte
         update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)
 
         # Update the particle field: viscous diffusion
-        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
+        viscousdiffusion(pfield, dt; aux1=a, aux2=b, integration=rungekutta3)
 
     end
 
@@ -625,7 +625,7 @@ function rungekutta3(pfield::ParticleField{R, <:ReformulatedVPM{R2}, V, <:Any, <
         update_particle_states(pfield,a,b,dt,Uinf,f, g, zeta0)
 
         # Update the particle field: viscous diffusion
-        viscousdiffusion(pfield, dt; aux1=a, aux2=b)
+        viscousdiffusion(pfield, dt; aux1=a, aux2=b, integration=rungekutta3)
     end
 
     # something here breaks ForwardDiff # will need to re-enable and make sure this works now. @eric I removed the comments- want to test this?

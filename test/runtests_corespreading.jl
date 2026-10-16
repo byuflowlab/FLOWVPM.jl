@@ -78,6 +78,23 @@ end
     @test all(S[St .== 0] .≈ sqrt(CS_SGM0^2 + 0.25))
 end
 
+@testset "CoreSpreading: the integrator that runs picks the growth" begin
+    # euler and rungekutta3 each grow the cores by sigma^2 += 2 nu dt per step, also
+    # on a field whose `integration` names the other one (a driver may step a field
+    # with either; Euler on an RK3-flagged field grew nothing before)
+    X0, G0 = cs_tube(; h=1.0)
+    for (flag, step!) in ((FLOWVPM.rungekutta3, FLOWVPM.euler), (FLOWVPM.euler, FLOWVPM.rungekutta3))
+        pf = FLOWVPM.ParticleField(size(X0, 2), Float64; viscous=FLOWVPM.CoreSpreading(0.5, CS_SGM0; beta=10.0), integration=flag, UJ=FLOWVPM.UJ_direct,
+                                   formulation=FLOWVPM.formulation_classic)
+        blk = zeros(FLOWVPM.nfields, size(X0, 2))
+        blk[1:3, :] .= X0; blk[4:6, :] .= G0; blk[7, :] .= CS_SGM0; blk[FLOWVPM.CIRCULATION_INDEX, :] .= 1
+        FLOWVPM.add_particles!(pf, blk)
+        for _ in 1:2; step!(pf, 0.1); end
+        @test all(cs_state(pf)[3] .≈ sqrt(CS_SGM0^2 + 2 * 2 * 0.5 * 0.1))
+        @test pf.viscous.t_sgm ≈ 0.2
+    end
+end
+
 # The device path (ext/FLOWVPMGPUExt.jl) against the host Float64 run, with a device
 # backend loaded via the FLOWVPM_CS_DEVICE env (Metal or CUDA)
 if haskey(ENV, "FLOWVPM_CS_DEVICE")
