@@ -9,8 +9,6 @@
 
 # TODO
 * [ ] Review time integration routines and SFS models to conform to new GE derivation.
-* [ ] Remember to multiply SFS by p.sigma[1]^3/zeta0
-* [ ] Save and read C for restart.
 * [ ] Remove circulation property.
 * [ ] Optimize creating of hdf5s to speed up simulations.
 """
@@ -24,16 +22,10 @@ import Printf
 import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
-import Base: getindex, setindex! # for compatibility with FastMultipole
 using StaticArrays
 using LinearAlgebra: eigen, Symmetric, dot, LAPACK, copytri!
-# using CUDA
-# using CUDA: i32
-using Primes
 
 # ------------ FLOW CODES ------------------------------------------------------
-# import FLOWExaFMM
-# const fmm = FLOWExaFMM
 import FastMultipole
 
 #------------- exports --------------------------------------------------------
@@ -43,7 +35,7 @@ export ParticleField,
        ClassicVPM, ReformulatedVPM,
        NoSFS, ConstantSFS, DynamicSFS,
        U_INDEX, J_INDEX,
-       SIGMA_INDEX, GAMMA_INDEX, X_INDEX, GAMMA_INDEX,
+       SIGMA_INDEX, GAMMA_INDEX, X_INDEX,
        add_particle, remove_particle, merge_particles!, run_vpm!,
        split_particles!, SplitOptions, SplitDirection,
        STRENGTH, STREAMLINE, STRAIN1,
@@ -67,9 +59,8 @@ const MIN_MT_NP = 1000
 const module_path = splitdir(@__FILE__)[1]      # Path to this module
 const examples_path  = joinpath(module_path, "..", "examples") # Path to examples
 const utilities_path = joinpath(examples_path, "utilities") # Path to utilities
-const utilities = joinpath(examples_path, "utilities", "utilities.jl") # Utilities
 
-# Determine the floating point precision of ExaFMM
+# Floating-point precision for the default solver settings
 const FLOAT_TYPE = Float64
 
 # miscellaneous constants
@@ -302,16 +293,12 @@ const SFS_default = SFS_none
 
 const standard_SFSs = (
                         :SFS_none, :SFS_Cs_nobackscatter,
-                        # :SFS_Cd_twolevel_nobackscatter,
-                        # :SFS_Cd_threelevel_nobackscatter
                         )
 
 # ------------ Other default functions
 const nofreestream(t) = SVector{3,Float64}(0,0,0)
 const Uinf_default = nofreestream
-# const runtime_default(pfield, t, dt) = false
 const monitor_enstrophy = monitor_enstrophy_Gammaomega
-# const runtime_default = monitor_enstrophy
 const runtime_default(pfield, t, dt; vprintln=nothing) = false
 const static_particles_default(pfield, t, dt) = nothing
 
@@ -334,10 +321,6 @@ end
 
 
 # ------------ INTERNAL DATA STRUCTURES ----------------------------------------
-
-# Field inside the Particle type where the SFS contribution is stored (make sure
-# this is consistent with ExaFMM and functions under FLOWVPM_subfilterscale.jl)
-# const _SFS = :S
 
 # ----- Instructions on how to save and print solver settings ------------------
 # Settings that are functions
