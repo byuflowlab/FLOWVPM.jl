@@ -1,7 +1,5 @@
 # Single precision constants
 const erxs = 8.45062911510467529297f-01
-const efxs = 1.28379167095512586316f-01
-const efx8s = 1.02703333676410069053f+00
 const pp0s = 1.28379167095512558561f-01
 const pp1s = -3.25042107247001499370f-01
 const pp2s = -2.84817495755985104766f-02
@@ -61,8 +59,6 @@ const sb7s = -2.24409524465858183362f+01
 
 # Double precision constants
 const erx = 8.45062911510467529297e-01
-const efx = 1.28379167095512586316e-01
-const efx8 = 1.02703333676410069053e+00
 const pp0 = 1.28379167095512558561e-01
 const pp1 = -3.25042107247001499370e-01
 const pp2 = -2.84817495755985104766e-02
@@ -193,12 +189,3 @@ end
 custom_erf(x::Float64) = custom_erf64(x)
 custom_erf(x::Float32) = custom_erf32(x)
 custom_erf(x::Real) = erf(x)  # other Real types (e.g. ForwardDiff.Dual): SpecialFunctions
-
-# For ForwardDiff compatibility
-# using ForwardDiff
-# custom_erf(x::ForwardDiff.Dual{<:Any, Float64, <:Any}) = custom_erf64(x)
-# custom_erf(x::ForwardDiff.Dual{<:Any, Float32, <:Any}) = custom_erf32(x)
-
-# # NVIDIA CUDA variants of erf()
-# @inline Cuerf(x::Float64) = ccall("extern __nv_erf", llvmcall, Cdouble, (Cdouble,), x)
-# @inline Cuerf(x::Float32) = ccall("extern __nv_erff", llvmcall, Cfloat, (Cfloat,), x)
