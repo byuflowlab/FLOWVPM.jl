@@ -382,10 +382,20 @@ end
 
 
 # A dropped radix coupling (FLOWVPM.clear_radix_fmm_cache!): free every device
-# array reachable from it, except the ones the field itself holds
+# array reachable from it, except the ones the field itself holds, and its plan's
+# M2L tables, which FastMultipole's KA extension caches by the identity of one of
+# the plan's arrays (strongly, up to 8 plans: ~22 MB a plan on the HVAB case, one
+# new plan per reset)
 function FLOWVPM._radix_free!(st, pfield, ::AnyGPUMatrix)
     keep = _gpu_arrays!(IdDict{Any,Nothing}(), IdDict{Any,Nothing}(), pfield)
+    ext = Base.get_extension(FLOWVPM.fmm, :FastMultipoleKAExt)
+    tabs = ext !== nothing && isdefined(ext, :_KA_M2L_TABLES) ? ext._KA_M2L_TABLES : nothing
     for a in keys(_gpu_arrays!(IdDict{Any,Nothing}(), IdDict{Any,Nothing}(), st))
+        if tabs isa AbstractDict && haskey(tabs, a)
+            for b in keys(_gpu_arrays!(IdDict{Any,Nothing}(), IdDict{Any,Nothing}(), pop!(tabs, a)))
+                haskey(keep, b) || finalize(b)
+            end
+        end
         haskey(keep, a) || finalize(a)      # as FLOWVPM._gal_free1!
     end
     return nothing
