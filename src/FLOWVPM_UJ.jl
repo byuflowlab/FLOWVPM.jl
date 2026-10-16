@@ -110,8 +110,6 @@ function UJ_fmm(
         verbose::Bool=false,
         vorticity::Bool=false,
         sfs::Bool=false,
-        sfs_type::Int=-1, # unused
-        transposed_sfs::Bool=true, # unused
         reset::Bool=true,
         reset_sfs::Bool=false,
         autotune::Bool=true,
