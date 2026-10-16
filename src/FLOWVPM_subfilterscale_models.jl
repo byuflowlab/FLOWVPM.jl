@@ -253,17 +253,24 @@ current velocity gradient in `J_INDEX`; gaussianerf kernel only. Sources of
 ∂J include the static particles; the ζ sums follow the radix SFS sweep
 (non-static sources, self pair skipped).
 """
-function dsigma_direct!(pfield::ParticleField{R}) where R
+dsigma_direct!(pfield::ParticleField) = (_dsigma_direct!(pfield); nothing)
+# ... returning ∂J (FLOWVPMEnzymeExt's reverse rule keeps it)
+function _dsigma_direct!(pfield)
     pfield.particles isa Array || error("dsigma_direct! is a host (Array) reference")
     pfield.kernel.zeta === zeta_gauserf || error("dsigma_direct!: gaussianerf kernel only")
+    dJ = _dsigma_dJ(pfield)
+    _dsigma_LE!(pfield, dJ)
+    _sfs_dsigma_delivered!(pfield, true)
+    return dJ
+end
+
+# ∂J/∂α (9 x np; zero at static targets)
+function _dsigma_dJ(pfield::ParticleField{R}) where R
     np = pfield.np
     P = pfield.particles
-    transposed = pfield.transposed
     A = R(sqrt(2 / pi))
-    K1 = R((2pi)^(-1.5))
     dJ = zeros(R, 9, np)
-    x0 = first(X_INDEX); g0 = first(GAMMA_INDEX); j0 = first(J_INDEX); m0 = first(M_INDEX)
-    # ∂J/∂α
+    x0 = first(X_INDEX); g0 = first(GAMMA_INDEX)
     Threads.@threads for i in 1:np
         P[STATIC_INDEX, i] != 0 && continue
         xi, yi, zi = P[x0, i], P[x0 + 1, i], P[x0 + 2, i]
@@ -280,12 +287,22 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
             G = A * rho2 * sqrt(rho2) * exp(-rho2 / 2)
             h = fmm._vortex_pair_ugh(dx, dy, dz, r2, invr, P[g0, j], P[g0 + 1, j],
                 P[g0 + 2, j], -G, rho2 * G)
-            acc = ntuple(k -> acc[k] + h[4 + k], 9)
+            acc = acc .+ ntuple(k -> h[4 + k], Val(9))   # (a closure over `acc` would box it)
         end
         for k in 1:9
             dJ[k, i] = acc[k]
         end
     end
+    return dJ
+end
+
+# L = op(∂J)Γ into M[1:3], ∂E into M[4:6] (non-static particles)
+function _dsigma_LE!(pfield::ParticleField{R}, dJ) where R
+    np = pfield.np
+    P = pfield.particles
+    transposed = pfield.transposed
+    K1 = R((2pi)^(-1.5))
+    x0 = first(X_INDEX); g0 = first(GAMMA_INDEX); j0 = first(J_INDEX); m0 = first(M_INDEX)
     # L = op(∂J)Γ, then ∂E = Σ_j [∂ζ op(J_i − J_j)Γ_j + ζ op(∂J_i − ∂J_j)Γ_j]
     Threads.@threads for i in 1:np
         P[STATIC_INDEX, i] != 0 && continue
@@ -313,7 +330,6 @@ function dsigma_direct!(pfield::ParticleField{R}) where R
         P[m0, i] = L[1]; P[m0 + 1, i] = L[2]; P[m0 + 2, i] = L[3]
         P[m0 + 3, i] = e1; P[m0 + 4, i] = e2; P[m0 + 5, i] = e3
     end
-    _sfs_dsigma_delivered!(pfield, true)
     return nothing
 end
 
