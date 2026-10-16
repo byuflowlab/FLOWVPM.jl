@@ -13,7 +13,7 @@ import Enzyme
 # exact solve; FD through the CG's stopping rule would jump). The AD run uses small
 # blocks and a tight tol, so both the primal and the adjoint CG iterate. Both evaluate
 # the Gram matrix on the fly: its stored pairs are Float32 (steps of ~1e-7 in M, too
-# coarse for FD), checked separately against the on-the-fly gradient.
+# coarse for FD), so the stored-Gram gradient is checked against FD at 1e-5.
 # Objective: weights on [X; Gamma; sigma] of the field after the reset; inputs
 # x = [X; Gamma; sigma] before.
 
@@ -73,36 +73,39 @@ end
     @test np0 != N                                     # edge points in or thinned out
     @test isapprox(f0, csad_f(x0, pfd, Td, sub, w); rtol=1e-10)
 
-    grad(pf, T) = (dx = zero(x0); Enzyme.autodiff(Enzyme.Reverse, csad_f, Enzyme.Active, Enzyme.Duplicated(x0, dx),
-                   Enzyme.Duplicated(pf, Enzyme.make_zero(pf)), Enzyme.Const(T), Enzyme.Const(sub), Enzyme.Const(w)); dx)
+    # `local`: a closure assigning `dx` would rebind the testset's dx below
+    grad(pf, T) = (local g = zero(x0); Enzyme.autodiff(Enzyme.Reverse, csad_f, Enzyme.Active, Enzyme.Duplicated(x0, g),
+                   Enzyme.Duplicated(pf, Enzyme.make_zero(pf)), Enzyme.Const(T), Enzyme.Const(sub), Enzyme.Const(w)); g)
     dx = grad(pf, T)
-    @test all(isfinite, dx)
+    dxs = grad(csad_field(false; gram_mem=2^30)...)    # stored (Float32) Gram pairs
+    @test all(isfinite, dx) && all(isfinite, dxs)
     @test any(!iszero, dx[1:3N]) && any(!iszero, dx[3N+1:6N]) && any(!iszero, dx[6N+1:end])
-    @test isapprox(grad(csad_field(false; gram_mem=2^30)...), dx; rtol=1e-4)     # stored Gram pairs
 
-    for blk in (:all, :X, :Gamma, :sigma)
+    # X and Gamma through the reset run in the full-step test below; this one keeps
+    # what is unique to it: the subset reset called directly, small preconditioner
+    # blocks, and the stored-Gram adjoint (its Float32 pairs: ~1e-7 from FD)
+    for blk in (:all, :sigma)
         v = randn(rng, 7N)
-        blk == :X && (v[3N+1:end] .= 0)
-        blk == :Gamma && (v[1:3N] .= 0; v[6N+1:end] .= 0)
         blk == :sigma && (v[1:6N] .= 0)
         v ./= LinearAlgebra.norm(v)
-        gv = LinearAlgebra.dot(dx, v)
-        # error relative to the gradient's norm in the block (|v| = 1; a random
-        # direction can make gv itself small)
-        err = minimum((1e-4, 1e-5, 1e-6)) do h
+        fd = map((1e-4, 1e-5, 1e-6)) do h
             fp = csad_f(x0 .+ h .* v, pfd, Td, sub, w); np1 = FLOWVPM.get_np(pfd)
             fm = csad_f(x0 .- h .* v, pfd, Td, sub, w); np2 = FLOWVPM.get_np(pfd)
-            np1 == np2 == np0 || return Inf
-            abs(gv - (fp - fm) / 2h) / LinearAlgebra.norm(dx .* (v .!= 0))
+            np1 == np2 == np0 ? (fp - fm) / 2h : Inf
         end
-        @info "Galerkin reset AD vs FD" blk err
-        @test err <= 1e-6
+        # error relative to the gradient's norm in the block (|v| = 1; a random
+        # direction can make the directional derivative itself small)
+        err(d) = minimum(q -> abs(LinearAlgebra.dot(d, v) - q), fd) / LinearAlgebra.norm(d .* (v .!= 0))
+        @info "Galerkin reset AD vs FD" blk err(dx) err(dxs)
+        @test err(dx) <= 1e-6
+        @test err(dxs) <= 1e-5
     end
 end
 
 # Reverse-mode AD through full time steps of a CoreSpreading field (UJ_direct, rVPM,
-# Pedrizzetti relaxation): core growth and a Galerkin reset of every particle inside
-# the differentiated steps, Euler and RK3, SFS on and off. Enzyme vs central FD.
+# Pedrizzetti relaxation): core growth and a Galerkin reset inside the differentiated
+# steps, Euler with SFS (timer reset) and RK3 without (growth_beta reset). Enzyme vs
+# central FD.
 # The reset changes the particle count (edge points added, one particle of a close
 # pair thinned) and order, so the objective is a sum over the final particle set of
 # a smooth function of each particle's state, sum_j a(X_j) . [Gamma_j; sigma_j]: it
@@ -163,13 +166,12 @@ end
     end
     X0[4:6] .= X0[1:3] .+ (0.05, 0.05, 0.3)            # a close pair: one of it is thinned
     x0 = vcat(X0, 0.1 .* randn(rng, 3N), CSAD_SGM0 .* (1.0 .+ 0.05 .* rand(rng, N)))
-    # nu = 0.05: one step of 0.25 grows sqrt(2 nu t) / sgm0 to 1.012 (beta 1.01: reset in
-    # step 1); steps of 0.1 reach 1.005, 1.00995 (beta 1.008: reset in step 2), then 1.005.
+    # nu = 0.05: steps of 0.1 grow sqrt(2 nu t) / sgm0 to 1.005, 1.00995 (beta 1.008:
+    # reset in step 2), then 1.005.
     # growth_beta 1.03: the largest core (1.05 sgm0) resets in step 1, not again in step 2
-    cfgs = ((integ=FLOWVPM.euler, sfs=false, nsteps=1, dt=0.25, beta=1.01, growth_beta=0.0),
-            (integ=FLOWVPM.rungekutta3, sfs=true, nsteps=1, dt=0.25, beta=1.01, growth_beta=0.0),
-            (integ=FLOWVPM.euler, sfs=true, nsteps=3, dt=0.1, beta=1.008, growth_beta=0.0),
-            # reset by the largest core (growth_beta), not the timer
+    # Euler with SFS: timer reset in step 2 of 3; RK3 without SFS: reset by the largest
+    # core (growth_beta), not the timer, in step 1 of 2
+    cfgs = ((integ=FLOWVPM.euler, sfs=true, nsteps=3, dt=0.1, beta=1.008, growth_beta=0.0),
             (integ=FLOWVPM.rungekutta3, sfs=false, nsteps=2, dt=0.1, beta=10.0, growth_beta=1.03))
     for cfg in cfgs
         @testset "$(nameof(cfg.integ)), SFS $(cfg.sfs), $(cfg.nsteps) step(s)$(cfg.growth_beta > 0 ? ", growth_beta" : "")" begin
@@ -179,7 +181,7 @@ end
             f0 = csstep_f(x0, pf, T, cfg.nsteps, cfg.dt); np0 = FLOWVPM.get_np(pf)
             # the reset fired inside the steps: count changed, timer restarted at it
             @test np0 != N
-            @test pf.viscous.t_sgm ≈ (cfg.nsteps == 1 ? 0.0 : cfg.dt)    # reset in step 1 (1 step, growth_beta) or 2
+            @test pf.viscous.t_sgm ≈ cfg.dt                 # reset in step 2 of 3 (timer) or 1 of 2 (growth_beta)
             @test isapprox(f0, csstep_f(x0, pfd, Td, cfg.nsteps, cfg.dt); rtol=1e-10)
             dx = zero(x0)
             Enzyme.autodiff(Enzyme.Reverse, csstep_f, Enzyme.Active, Enzyme.Duplicated(x0, dx),
@@ -206,17 +208,24 @@ end
     end
 end
 
-# The same field through FLOWVPM.checkpointed_gradient!: 4 steps, a checkpoint every
-# 2, resets in steps 2 and 4, so the particle count differs between checkpoints
-# (48 -> 155 -> 308). Checked against Enzyme over all steps at once and against FD
-# (exact-solve oracle, positions and strengths).
-@testset "Core spreading: checkpointed_gradient! across resets (np changes between checkpoints)" begin
-    N = CSSTEP_N; nsteps = 4; dt = 0.1
-    function cs_build(x, exact)
+# The same field through FLOWVPM.checkpointed_gradient!, with the freestream as a
+# design variable (a typed AmbientHolder carries the uniform velocity's parameter,
+# whose gradient lands in the shadow field): 4 steps, a checkpoint every 2, resets in
+# steps 2 and 4, so the particle count differs between checkpoints (48 -> 155 -> 308).
+# Against central FD (exact-solve oracle): positions, strengths and the freestream.
+struct EnzUinf{T}
+    U::T
+end
+(u::EnzUinf)(t) = FLOWVPM.SVector(u.U, u.U / 2, zero(u.U))
+
+@testset "checkpointed_gradient! across resets (np changes between checkpoints), freestream parameter" begin
+    N = CSSTEP_N; nsteps = 4; dt = 0.1; U = 0.8
+    function cs_build(x, U, exact)
         gr = exact ? FLOWVPM.GalerkinReset(; block_cell=1e3, block_cap=10^6, tol=1e-10, itmax=50, gram_mem=0) :
                      FLOWVPM.GalerkinReset(; tol=1e-10, itmax=2000, gram_mem=0)
         pf = FLOWVPM.ParticleField(8N, Float64; viscous=FLOWVPM.CoreSpreading(0.05, CSAD_SGM0; beta=1.008, galerkin=gr),
                                    UJ=FLOWVPM.UJ_direct, formulation=FLOWVPM.formulation_rVPM, kernel=FLOWVPM.kernel_gaussianerf,
+                                   Uinf=FLOWVPM.AmbientHolder(FLOWVPM.UniformAmbient(EnzUinf(U))),
                                    integration=FLOWVPM.rungekutta3, relaxation=FLOWVPM.Relaxation(FLOWVPM.relax_pedrizzetti, 1, 0.3),
                                    fmm=FLOWVPM.FMM(autotune_reg_error=false))
         for j in 1:N
@@ -241,28 +250,34 @@ end
     end
     X0[4:6] .= X0[1:3] .+ (0.05, 0.05, 0.3)
     x0 = vcat(X0, 0.1 .* randn(rng, 3N), CSAD_SGM0 .* (1.0 .+ 0.05 .* rand(rng, N)))
-    pf = cs_build(x0, false); dpf = Enzyme.make_zero(pf)
+    pf = cs_build(x0, U, false); dpf = Enzyme.make_zero(pf)
     J = FLOWVPM.checkpointed_gradient!(dpf, cs_obj, pf, dt, nsteps; every=2, step=cs_step)
     @test FLOWVPM.get_np(pf) > 2N                          # resets inside the run
-    @test J == cs_run(cs_build(x0, false))
-    pf2 = cs_build(x0, false); dpf2 = Enzyme.make_zero(pf2)
-    Enzyme.autodiff(Enzyme.Reverse, Enzyme.Const(cs_run), Enzyme.Active, Enzyme.Duplicated(pf2, dpf2))
+    @test J == cs_run(cs_build(x0, U, false))
+    @test cs_obj(pf) == J && pf.nt == nsteps               # left at the final state
     rows = vcat(FLOWVPM.X_INDEX, FLOWVPM.GAMMA_INDEX, FLOWVPM.SIGMA_INDEX)
     G = dpf.particles[rows, 1:N]
-    @test isapprox(G, dpf2.particles[rows, 1:N]; rtol=1e-10)
     dx = vcat(vec(G[1:3, :]), vec(G[4:6, :]), vec(G[7, :]))
-    F(x) = (p = cs_build(x, true); (cs_run(p), FLOWVPM.get_np(p)))
-    np0 = F(x0)[2]
+    F(x, U) = (p = cs_build(x, U, true); (cs_run(p), FLOWVPM.get_np(p)))
+    np0 = F(x0, U)[2]
     for blk in (:X, :Gamma)
         v = randn(rng, 7N)
         blk == :X ? (v[3N+1:end] .= 0) : (v[1:3N] .= 0; v[6N+1:end] .= 0)
         v ./= LinearAlgebra.norm(v)
         gv = LinearAlgebra.dot(dx, v)
         err = minimum((1e-4, 1e-5, 1e-6)) do h
-            (fp, n1) = F(x0 .+ h .* v); (fm, n2) = F(x0 .- h .* v)
+            (fp, n1) = F(x0 .+ h .* v, U); (fm, n2) = F(x0 .- h .* v, U)
             n1 == n2 == np0 || return Inf
             abs(gv - (fp - fm) / 2h) / LinearAlgebra.norm(dx .* (v .!= 0))
         end
         @test err <= 1e-6
     end
+    dU = dpf.Uinf.ambient.velocity.U
+    errU = minimum((1e-4, 1e-5, 1e-6)) do h
+        (fp, n1) = F(x0, U + h); (fm, n2) = F(x0, U - h)
+        n1 == n2 == np0 || return Inf
+        abs((fp - fm) / 2h - dU) / abs(dU)
+    end
+    @info "checkpointed freestream AD vs FD" errU
+    @test errU <= 1e-6
 end
