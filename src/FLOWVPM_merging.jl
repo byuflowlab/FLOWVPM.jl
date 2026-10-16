@@ -380,7 +380,7 @@ function _merge_clusters_aggressive!(
     for i in 2:(np + 1)
         root_offset[i] += root_offset[i - 1]
     end
-    # Write cursor reuses root_count (decremented to base, then incremented per write)
+    # Build write cursors from the prefix offsets.
     counts = ws.counts  # reuse cell-list cursor buffer
     resize!(counts, np + 1)
     copyto!(counts, 1, root_offset, 1, np + 1)
@@ -508,13 +508,12 @@ function merge_particles!(
     end
     # the union is transitive: without a cap, close pairs chain a whole region
     # into one cluster (the same-cell-only search hid this by bounding a
-    # cluster to a cell). `max_cluster` members per cluster, 2026-09-26.
+    # cluster to a cell). `max_cluster` bounds the members per cluster.
     csize = fill(1, np)
 
     # Pairs within a cell and across its faces, edges and corners: each
     # unordered cell pair once (the 13 forward neighbours plus the cell
-    # itself). Same-cell-only search missed every pair straddling a cell
-    # boundary, whatever the cell size (2026-09-26).
+    # itself); same-cell-only search would miss pairs straddling a cell boundary.
     mask = (1 << CELL_COORD_BITS) - 1
     for c in 1:n_cells
         range_start = offsets[c] + 1
