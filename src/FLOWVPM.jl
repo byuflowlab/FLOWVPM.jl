@@ -27,7 +27,7 @@ import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
 # using ReverseDiff
 using StaticArrays
-using LinearAlgebra: eigen, Symmetric, cholesky, issuccess, dot
+using LinearAlgebra: eigen, Symmetric, dot, LAPACK, copytri!
 # using CUDA
 # using CUDA: i32
 using Primes

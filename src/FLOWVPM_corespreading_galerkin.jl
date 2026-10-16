@@ -36,9 +36,10 @@ struct _GalSet{TX,TV,TI,R}
     n::NTuple{3,Int32}; lo::NTuple{3,R}; h::R; vmax::R
 end
 
-# Cell size h, enlarged until the dense cell table has at most 2^26 cells
+# Cell size h, enlarged until the dense cell table has at most 2^26 cells (no
+# generator over h: it would box h and leave the set's type uninferred)
 function _gal_cellsize(ext, h)
-    while prod(floor(Int, ext[d] / h) + 1 for d in 1:3) > 2^26
+    while (floor(Int, ext[1] / h) + 1) * (floor(Int, ext[2] / h) + 1) * (floor(Int, ext[3] / h) + 1) > 2^26
         h *= 1.25
     end
     return h
@@ -307,13 +308,30 @@ function _gal_blocks(S::_GalSet, d::Vector{Float64}, cut2, h, cap, ::Type{TF}) w
         block_of[start[b]:start[b + 1] - 1] .= b
     end
     minv = Vector{TF}(undef, moff[end] - 1)
-    Threads.@threads for b in 1:nb
-        blk = blocks[b]
-        A = [(vv = S.v[a] + S.v[c]; r2 = (S.x[1, a] - S.x[1, c])^2 + (S.x[2, a] - S.x[2, c])^2 + (S.x[3, a] - S.x[3, c])^2;
-              (r2 <= cut2 * vv) * _GAL_C3 * exp(-0.5 * r2 / vv) / (vv * sqrt(vv)) + (a == c) * d[a]) for a in blk, c in blk]
-        F = cholesky(Symmetric(A); check = false)
-        Ai = issuccess(F) ? inv(F) : [a == c ? 1 / A[a, a] : 0.0 for a in axes(A, 1), c in axes(A, 2)]
-        copyto!(view(minv, moff[b]:(moff[b + 1] - 1)), vec(Ai))
+    # each block factored and inverted in place in a per-thread buffer (LAPACK
+    # potrf + potri, i.e. cholesky + inv); not positive: the diagonal's inverse
+    nt = Threads.nthreads(); nmax = maximum(length, blocks; init = 0)
+    W = [Matrix{Float64}(undef, nmax, nmax) for _ in 1:nt]
+    Threads.@threads :static for t in 1:nt
+        for b in t:nt:nb
+            blk = blocks[b]; n = length(blk); A = view(W[t], 1:n, 1:n)
+            for (j, c) in enumerate(blk), (i, a) in enumerate(blk)
+                vv = S.v[a] + S.v[c]; r2 = (S.x[1, a] - S.x[1, c])^2 + (S.x[2, a] - S.x[2, c])^2 + (S.x[3, a] - S.x[3, c])^2
+                A[i, j] = (r2 <= cut2 * vv) * _GAL_C3 * exp(-0.5 * r2 / vv) / (vv * sqrt(vv)) + (a == c) * d[a]
+            end
+            m0 = moff[b] - 1
+            if LAPACK.potrf!('U', A)[2] == 0
+                copytri!(LAPACK.potri!('U', A), 'U', true)
+                for j in 1:n, i in 1:n
+                    minv[m0 + i + (j - 1) * n] = A[i, j]
+                end
+            else                       # A is overwritten: the diagonal again
+                for j in 1:n, i in 1:n
+                    a = blk[i]; vv = 2S.v[a]
+                    minv[m0 + i + (j - 1) * n] = i == j ? 1 / (_GAL_C3 * exp(-0.5 * 0.0 / vv) / (vv * sqrt(vv)) + d[a]) : 0.0
+                end
+            end
+        end
     end
     return (; perm = Int32.(perm), start, block_of, moff, minv)
 end
@@ -729,6 +747,9 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
                            iterror::Bool = false)
     P = pfield.particles; np = get_np(pfield); R = eltype(P)
     t0 = time()
+    # the radix FMM geometry is re-derived for the new cores at the next evaluation;
+    # dropping the old cache first also frees its device memory for the reset
+    clear_radix_fmm_cache!(pfield)
 
     # positions, strengths and cores of the subset (the halo's come with the plan)
     Qs = _gal_gather(P, idx)
@@ -766,7 +787,6 @@ function _galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Float64, gr::Galerkin
         blk[CIRCULATION_INDEX, :] .= 1
         add_particles!(pfield, blk)
     end
-    clear_radix_fmm_cache!(pfield)
     t5 = time()
 
     K = length(idx); E = length(ekeep); D = length(pl.subd)
