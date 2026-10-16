@@ -25,7 +25,6 @@ import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
 import Base: getindex, setindex! # for compatibility with FastMultipole
-# using ReverseDiff
 using StaticArrays
 using LinearAlgebra: eigen, Symmetric, dot, LAPACK, copytri!
 # using CUDA
@@ -90,7 +89,7 @@ for header_name in ["kernel", "corespreading_galerkin", "viscous", "formulation"
                     "gpu_erf", "rectangular",
                     "UJ", "subfilterscale_models", "subfilterscale_gpu",
                     "timeintegration",
-                    "monitors", "utils"]# , "rrules"]
+                    "monitors", "utils"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
