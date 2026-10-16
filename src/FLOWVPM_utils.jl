@@ -35,9 +35,10 @@ Solves `nsteps` of the particle field with a time step of `dt`.
                             field. Creates the given path.
 * `run_name::String`    : Name of output files.
 * `nsteps_save::Int64`  : Saves vtks every this many time steps.
-* `prompt::Bool`        : If `save_path` already exist, it will prompt the
-                            user before overwritting the folder if true; it will
-                            directly overwrite it if false.
+* `prompt::Bool`        : If `save_path` already exists and this is true, asks
+                            before overwriting it in an interactive session and
+                            throws an error otherwise (never deletes silently);
+                            if false, overwrites it.
 * `verbose::Bool`       : Prints progress of the run to the terminal.
 * `verbose_nsteps::Bool`: Number of time steps between verbose.
 """
@@ -525,27 +526,23 @@ end
 """
   `create_path(save_path::String, prompt::Bool)`
 
-Create folder `save_path`. `prompt` prompts the user if true.
+Create folder `save_path`. If it already exists: with `prompt = false` it is
+removed and recreated (explicit overwrite); with `prompt = true` the user is asked
+in an interactive session, and anywhere else (scripts, batch jobs) an error is
+thrown instead of deleting it.
 """
 function create_path(save_path::String, prompt::Bool)
-  # Checks if folder already exists
     if isdir(save_path)
         if prompt
-            inp1 = ""
-            opts1 = ["y", "n"]
-            while false==(inp1 in opts1)
-                print("\n\nFolder $save_path already exists. Remove? (y/n) ")
-                inp1 = "y"
+            isinteractive() || error("Folder $save_path already exists; pass prompt = false to overwrite it")
+            print("\n\nFolder $save_path already exists. Remove? (y/n) ")
+            inp = ""
+            while !(inp in ("y", "n"))
+                inp = lowercase(strip(readline()))
             end
-            if inp1=="y"
-                rm(save_path, recursive=true, force=true)
-                println("\n")
-            else
-                return
-            end
-        else
-            rm(save_path, recursive=true, force=true)
+            inp == "y" || error("Folder $save_path already exists; not overwritten")
         end
+        rm(save_path, recursive=true, force=true)
     end
     mkdir(save_path)
 end

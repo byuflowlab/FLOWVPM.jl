@@ -55,3 +55,4 @@ include("runtests_unit_j_reference.jl")
 # lifecycle) self-gates on functional CUDA (or requires it under
 # FASTMULTIPOLE_REQUIRE_CUDA_TESTS=1).
 include("runtests_gpu_fmm.jl")
+include("runtests_create_path.jl")
