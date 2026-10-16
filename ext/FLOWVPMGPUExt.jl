@@ -16,8 +16,8 @@
     device matrix still matches, which the plain `AbstractGPUArray` bound does
     not), it covers CUDA, Metal, AMDGPU and oneAPI alike, and a host `Array` is
     NOT one of them. That last point is what keeps this safe: FastMultipole's
-    own host `source_to_buffer!(buffer::Matrix, system, sort_index)`
-    (compatibility.jl:581) and FLOWVPM's host SFS delivery take plain
+    own host `source_to_buffer!(buffer::Matrix, system, sort_index)` and
+    FLOWVPM's host SFS delivery take plain
     `Matrix`, whose intersection with `AnyGPUMatrix` is empty, so no ambiguity
     is possible and the host paths are untouched.
 
@@ -25,9 +25,7 @@
     vortex-stretching kernels live here too, written with KernelAbstractions
     `@kernel` and launched on `KA.get_backend(pfield.particles)`, so one
     extension serves CUDA, Metal and any other KA backend. They are brute-force
-    per-target loops (no shared-memory tiling); the former hand-written CUDA
-    extension's tiled kernels were removed together with FastMultipole's native
-    CUDA FMM lifecycle once the KA path reached parity (2026-09-02).
+    per-target loops with no shared-memory tiling.
 =###############################################################################
 module FLOWVPMGPUExt
 
@@ -40,9 +38,9 @@ const fmm = FLOWVPM.fmm
 
 if FLOWVPM._FMM_HAS_RADIX
 
-# `residency(pfield)` is already backend-agnostic (`particles isa Array`,
-# FLOWVPM_fmm_radix.jl:51), so any GPU-backed field takes the DeviceResident
-# path and FastMultipole then requires all four of these.
+# `residency(pfield)` is backend-agnostic (`particles isa Array`), so any
+# GPU-backed field takes the DeviceResident path and FastMultipole then requires
+# all four of these.
 const GPUField{R} = FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration,
     TRelaxation,AT} where {F,V,TUinf,S,Tkernel,TUJ,Tintegration,TRelaxation,
                            AT<:AbstractGPUArray{R}}
@@ -52,7 +50,7 @@ const GPUField{R} = FLOWVPM.ParticleField{R,F,V,TUinf,S,Tkernel,TUJ,Tintegration
 fmm.device_backend(pfield::GPUField) = KA.get_backend(pfield.particles)
 
 # Framework-owned persistent device source buffer, filled as a 9 x np view
-# (live prefix, identity sort index). Packed layout (integration-api-spec §3):
+# (live prefix, identity sort index). Packed layout:
 #   rows 1:3  position            (X_INDEX)
 #   row  4    MAC/error radius    rho_sigma * sigma
 #   rows 5:7  vector strength     (GAMMA_INDEX)
@@ -68,8 +66,8 @@ function fmm.source_to_buffer!(buf::AnyGPUMatrix, pfield::GPUField{R}, sort_inde
         "unexpected device source buffer shape $(size(buf)) for np=$np")
     P = pfield.particles
     rho_sigma = R(pfield.fmm.default_rho_over_sigma)
-    # One flat kernel, lane per particle. The previous five broadcasts over
-    # strided row views cost 0.6 ms/step on Metal for 450 kB (2026-09-01).
+    # One flat kernel, lane per particle. Five broadcasts over strided row views
+    # cost 0.6 ms/step on Metal for 450 kB.
     kernel = _source_to_buffer_kernel!(KA.get_backend(P), 256)
     kernel(buf, P, rho_sigma, first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX),
            FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX, np; ndrange=np)
@@ -176,8 +174,7 @@ function fmm.buffer_to_target!(pfield::GPUField, buf::AnyGPUMatrix,
     return pfield
 end
 
-
-#------- fused RK3 update and resets (2026-09-22) -------#
+#------- fused RK3 update and resets -------#
 #
 # `update_particle_states_broadcast_reformulated!` is 35 whole-field row-view
 # broadcasts per RK stage and `_reset_particles_broadcast!` four more per
@@ -319,7 +316,7 @@ end
         w1 = J6 - J8; w2 = J7 - J3; w3 = J2 - J4
         nrmw = sqrt(w1^2 + w2^2 + w3^2)
         nrmGamma = sqrt(G1^2 + G2^2 + G3^2)
-        # the corrected form divides by |Gamma| (the scalar host guards it; 2026-09-26)
+        # The corrected form divides by |Gamma|, so guard it as the host does.
         apply = CORRECTED ? (nrmw > zero(T)) & (nrmGamma > zero(T)) : nrmw > zero(T)
         safenrmw = ifelse(nrmw > zero(T), nrmw, one(T))
         omr = 1 - rlxf
@@ -380,7 +377,6 @@ function _cs_block_apply_device!(Z, R, blk)
     return Z
 end
 
-
 # A dropped radix coupling (FLOWVPM.clear_radix_fmm_cache!): free every device
 # array reachable from it, except the ones the field itself holds, and its plan's
 # M2L tables, which FastMultipole's KA extension caches by the identity of one of
@@ -424,7 +420,6 @@ function _gpu_arrays!(out::IdDict{Any,Nothing}, seen::IdDict{Any,Nothing}, x)
     end
     return out
 end
-
 
 end # FLOWVPM._FMM_HAS_RADIX
 
@@ -591,10 +586,8 @@ end
 # the cells within +-m (m the chunk's largest search radius in cells) _GAL_TILE at
 # a time in workgroup memory. A lane's box is inside the chunk's and every pair
 # beyond it fails the cut, so each target accepts the same pairs in the same order
-# as `_gal_row` (`ka_gal_pair_kernel!`): the same sums (bitwise on Metal). 5MW
-# step 2880, Metal F32, per product: K 25 0.37 -> 0.24 ms, K 1800 37 -> 30 ms, full
-# reset 20.5 -> 17.5 ms; 32 beat 16/64/128 lanes, two targets per lane and chunks
-# spanning a row of cells.
+# as `_gal_row` (`ka_gal_pair_kernel!`), producing the same sums bitwise on
+# Metal. Chunks span a row of cells.
 const _GAL_TILE = 32
 
 @kernel function ka_gal_gram_tiled_kernel!(out, @Const(sx), @Const(sv), @Const(c), @Const(cstart),
@@ -685,8 +678,6 @@ function FLOWVPM._gal_gram!(y::AnyGPUMatrix, ::Nothing, S, x, cut2)
         T(cut2), S.vmax, T, Val(_GAL_TILE); ndrange = _GAL_TILE * size(ch, 2))
     return y
 end
-
-
 
 #------- direct-sum kernels (KernelAbstractions, any GPU backend) -------#
 
@@ -977,17 +968,13 @@ function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
     return nothing
 end
 
-
-
-#------- fused dynamic-SFS pointwise passes (task: AL production profile) -------#
+#------- fused dynamic-SFS pointwise passes -------#
 #
 # `_pseudo3level_{before,after}UJ_broadcast!` (src/FLOWVPM_subfilterscale_gpu.jl)
 # are chains of ~20 whole-field broadcasts, each sweeping a `1 x np` row VIEW of
 # the particle matrix. Two costs compound: one kernel launch per broadcast (~60
 # per RK3 step) and, because the matrix is column-major, every one of those
-# sweeps strides by `nfields` and is fully uncoalesced. Profiling a production
-# ActuatorLines step (rVPM + RK3 + DynamicSFS + CoreSpreading) put the after-UJ
-# procedure at 67% of the step -- more than twice the whole FMM.
+# sweeps strides by `nfields` and is fully uncoalesced.
 #
 # These are the same arithmetic as one kernel with one thread per particle: a
 # thread reads its own column (contiguous) and keeps the chain in registers.
@@ -1171,8 +1158,7 @@ function __init__()
     RK3_FUSED[] = get(ENV, "FLOWVPM_RK3_FUSED", "1") == "1"
 end
 
-
-#------- SFS, core-scaling derivatives and ζ over the radix near field (moved from FastMultipole 2026-09-27) -------#
+#------- SFS, core-scaling derivatives and ζ over the radix near field -------#
 
 # T = op(J)Γ per source column j: a source copy (j > n_bodies) takes the gradient of
 # the body it copies (`source_slot`, FastMultipole's oversize split) and its own Γ
@@ -1311,7 +1297,6 @@ end
     end
 end
 
-
 #------- source-tiled SFS cell sweeps -------#
 #
 # The target-major SFS sums in the tiled shape of FastMultipole's nearfield: a
@@ -1319,7 +1304,7 @@ end
 # cell 32 bodies at a time in workgroup memory (position, 1/sigma, active flag,
 # strength and the per-source vectors the sum reads); every target still sums its
 # sources in pair-list order, so the results are bitwise those of the earlier
-# one-thread-per-target kernels. 5MW at 1.88M (GH200): 457 -> 405 ms per sfs call.
+# one-thread-per-target kernels.
 
 const _SFS_TILE = 32
 
@@ -1351,8 +1336,7 @@ end
 
 # Two targets per lane (chunks of 2WG, `_sfs_chunk_setup2`): each tile load serves
 # both. The source's active flag is folded into its 1/sigma (an inactive source
-# enters with 0, which the sweep skips), and the loop counters are Int32: 101 ->
-# 75 ms per sweep on the 1.88M 5MW wake (GH200), bitwise unchanged.
+# enters with 0, which the sweep skips), and the loop counters are Int32.
 @kernel function ka_sfs_zeta_tiled_kernel!(om, q, @Const(tg), @Const(source_bodies),
         @Const(cell_ranges), @Const(source_ranges), @Const(self_copy), @Const(direct_sources),
         @Const(offsets), @Const(chunk_offsets),
@@ -1578,7 +1562,7 @@ end
     end
 end
 
-#------- the SFS pass on the device (kernels above, verbatim from FastMultipole's KA extension) -------#
+#------- SFS pass on the device -------#
 
 const _SFS_WORKGROUP = 64
 
@@ -1717,6 +1701,5 @@ function FLOWVPM.zeta_fmm(pfield::GPUField)
     KA.synchronize(backend)
     return nothing
 end
-
 
 end # module
