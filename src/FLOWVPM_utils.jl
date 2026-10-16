@@ -82,7 +82,7 @@ function run_vpm!(pfield::ParticleField, dt::Real, nsteps::Int;
     end
 
     # Initialize verbose
-    (line1, line2, run_id, file_verbose,
+    (line1, _, run_id, _,
         vprintln, time_beg) = initialize_verbose(   verbose, save_path, run_name, pfield,
                                                     dt, nsteps_save,
                                                     runtime_function,
@@ -194,74 +194,21 @@ function save(
     h5["t"] = time
 
     # Writes fields
-    # NOTE: It is very inefficient to convert the data structure to a matrices
-    # like this. This could help to make it more efficient: https://stackoverflow.com/questions/58983994/save-array-of-arrays-hdf5-julia
-    # UPDATE 2021/11: I tried multiple ways of pre-allocating memory in the disk
-    #   through HDF5 and then dumping data into it from pfield through
-    #   iterators, but for some reason HDF5 always re-allocates memory
-    #   when trying to write anything but arrays.
-
-    # temp = zeros(1,np)
     h5["X"] = _tohost(self.particles[X_INDEX, 1:np])
-    # h5["X"] = view(self.particles, X_INDEX, 1:np)
     h5["Gamma"] = _tohost(self.particles[GAMMA_INDEX, 1:np])
-    # h5["Gamma"] = view(self.particles, GAMMA_INDEX, 1:np)
-    # temp[1,:] .= (view(self.particles, SIGMA_INDEX, 1:np))
     h5["sigma"] = _tohost(self.particles[SIGMA_INDEX, 1:np])
-    # h5["sigma"] = temp
-    # temp[1,:] .= (view(self.particles, CIRCULATION_INDEX, 1:np))
     h5["circulation"] = _tohost(self.particles[CIRCULATION_INDEX, 1:np])
-    # h5["circulation"] = temp
-    # temp[1,:] .= (view(self.particles, VOL_INDEX, 1:np))
     h5["vol"] = _tohost(self.particles[VOL_INDEX, 1:np])
-    # h5["vol"] = temp
-    # temp[1,:] .= (view(self.particles, STATIC_INDEX, 1:np))
     h5["static"] = _tohost(self.particles[STATIC_INDEX, 1:np])
-    # h5["static"] = temp
     h5["velocity"] = _tohost(self.particles[U_INDEX, 1:np])
-    # h5["velocity"] = view(self.particles, U_INDEX, 1:np)
     h5["velocity_gradient_x"] = _tohost(self.particles[J_INDEX[1:3], 1:np])
     h5["velocity_gradient_y"] = _tohost(self.particles[J_INDEX[4:6], 1:np])
     h5["velocity_gradient_z"] = _tohost(self.particles[J_INDEX[7:9], 1:np])
     h5["vorticity"] = _tohost(self.particles[VORTICITY_INDEX, 1:np])
-    # h5["velocity_gradient_x"] = view(self.particles, J_INDEX[1:3], 1:np)
-    # h5["velocity_gradient_y"] = view(self.particles, J_INDEX[4:6], 1:np)
-    # h5["velocity_gradient_z"] = view(self.particles, J_INDEX[7:9], 1:np)
-    # h5["vorticity"] = view(self.particles, VORTICITY_INDEX, 1:np)
 
     if isLES(self)
         h5["C"] = _tohost(self.particles[C_INDEX, 1:np])
-        # h5["C"] = view(self.particles, C_INDEX, 1:np)
     end
-
-    # # Connectivity information
-    # h5["connectivity"] = [i%3!=0 ? 1 : Int(i/3)-1 for i in 1:3*np]
-
-    # # Write fields
-    # dtype = HDF5.datatype(T)
-    #
-    # for (field, dim) in [("X", 3), ("Gamma", 3), ("sigma", 1)] # Iterate over fields
-    #
-    #     dims = dim==1 && false ? HDF5.dataspace(np) : HDF5.dataspace(dim, np)
-    #     chunk = dim==1 && false ? (np,) : (1, np)
-    #     dset = HDF5.d_create(h5, field, dtype, dims, "chunk", chunk)
-    #
-    #     for (pi, P) in enumerate(iterator(self; include_static=true))
-    #         dset[:, pi] .= getproperty(P, Symbol(field))
-    #     end
-    #
-    # end
-
-    # # Connectivity information
-    # dtype = HDF5.datatype(Int)
-    # dims = HDF5.dataspace(3*np, 1)
-    # chunk = (np, 1)
-    # dset = HDF5.d_create(h5, "connectivity", dtype, dims, "chunk", chunk)
-    # for i in 1:np
-    #     dset[3*(i-1)+1, 1] = 1
-    #     dset[3*(i-1)+2, 1] = 1
-    #     dset[3*(i-1)+3, 1] = i-1
-    # end
 
     close(h5)
 
@@ -357,14 +304,6 @@ function save(
                             h5fname, ":static</DataItem>\n")
               print(xmf, "\t\t\t\t</Attribute>\n")
 
-
-              # Attribute: index
-              # print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"i\" Type=\"Scalar\">\n")
-              #   print(xmf, "\t\t\t\t\t<DataItem DataType=\"Int\"",
-              #               " Dimensions=\"", np, "\" Format=\"HDF\" Precision=\"4\">",
-              #               h5fname, ":i</DataItem>\n")
-              # print(xmf, "\t\t\t\t</Attribute>\n")
-
               if isLES(self)
                   # Attribute: C
                   print(xmf, "\t\t\t\t<Attribute Center=\"Node\" Name=\"C\" Type=\"Vector\">\n")
@@ -398,7 +337,6 @@ function _get_settings(pfield::ParticleField)
                 settings[String(sym)] = _fun2key[fun]
             else
                 settings[String(sym)] = (_key_userfun, "$fun")
-                # settings[String(sym)] = _key_userfun
             end
 
         else
@@ -441,7 +379,7 @@ function read_settings(fname::String; path::String="")
     # Read settings as a dictionary with String keys
     settings_dict = BSON.load(joinpath(path, fname))
 
-    # Convert into dictionary with Symbol keys and get rid of user functions
+    # Convert to Symbol keys and resolve standard function names
     settings_args = Dict( (Symbol(key), typeof(val)==Symbol ? eval(val) : val)
                                                 for (key, val) in settings_dict)
 
@@ -597,7 +535,7 @@ function create_path(save_path::String, prompt::Bool)
             opts1 = ["y", "n"]
             while false==(inp1 in opts1)
                 print("\n\nFolder $save_path already exists. Remove? (y/n) ")
-                inp1 = "y"#readline()[1:end]
+                inp1 = "y"
             end
             if inp1=="y"
                 rm(save_path, recursive=true, force=true)
@@ -645,7 +583,6 @@ function initialize_verbose(verbose, save_path, run_name, pfield, dt,
     vprintln(line2, v_lvl)
     vprintln("", v_lvl)
     vprintln("SOLVER SETTINGS", v_lvl+1)
-    # vprintln(_get_settings_string(pfield; tab=v_lvl+2), v_lvl)
     vprintln(_get_settings_string(pfield; tab=v_lvl+2), 0)
     vprintln("SIMULATION SETTINGS", v_lvl+1)
     vprintln("dt:\t\t\t$(dt)", v_lvl+2)
