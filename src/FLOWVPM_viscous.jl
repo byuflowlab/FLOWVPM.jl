@@ -63,7 +63,7 @@ viscousdiffusion(pfield, scheme::Inviscid, dt; optargs...) = nothing
 
 
 ################################################################################
-# CORE SPEADING SCHEME TYPE
+# CORE SPREADING SCHEME TYPE
 ################################################################################
 mutable struct CoreSpreading{R,TG<:GalerkinReset{R}} <: ViscousScheme{R}
     nu::R                                 # Kinematic viscosity
@@ -142,9 +142,7 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0, int
     # ------------------ RUNGE-KUTTA SCHEME ------------------------------------
     elseif integration == rungekutta3
 
-        # Core spreading
-        # NOTE: Here we're solving dsigmadt as dsigma^2/dt = 2*nu.
-        # Should I be solving dsigmadt = nu/sigma instead?
+        # Integrating d(sigma^2)/dt = 2nu is equivalent to d(sigma)/dt = nu/sigma.
         if pfield.particles isa Array
             for p in iterator(pfield)
                 get_M(p)[7] = aux1*get_M(p)[7] + dt*2*scheme.nu
@@ -182,13 +180,10 @@ function viscousdiffusion(pfield, scheme::CoreSpreading, dt; aux1=0, aux2=0, int
         # (the time criterion) or, with `growth_beta` set, by the field's
         # actual largest core (the rVPM stretching grows cores too, and a
         # tail of runaway cores sizes the FMM grid; Alvarez 2022 §4.6 CS-RBF
-        # applied to the measured growth, 2026-09-21)
+        # applied to the measured growth)
         growth = scheme.growth_beta > 0 ? _corespreading_sigma_max(pfield) / scheme.sgm0 : zero(scheme.sgm0)
         growth_reset = scheme.growth_beta > 0 && growth >= scheme.growth_beta
         if beta_cur >= scheme.beta || growth_reset
-            growth_reset &&
-                println("  core reset: max sigma/sigma0 = $(round(growth; digits=2)) >= " *
-                        "$(scheme.growth_beta) at t = $(pfield.t), np = $(pfield.np)")
             _corespreading_reset!(pfield, scheme)
         end
 
@@ -435,9 +430,8 @@ function zeta_direct(pfield)
     end
 end
 
-# Integer loops with the (pfield, i) accessors, same order and arithmetic as
-# zeta_direct(sources, targets, zeta) (bit-identical): Enzyme cannot type the
-# filtered particle generator (EnzymeNoTypeError).
+# Integer loops with `(pfield, i)` accessors: Enzyme cannot type the filtered
+# particle generator (EnzymeNoTypeError).
 function zeta_direct_singlethreaded(pfield)
     np = pfield.np
     for i in 1:np
@@ -506,26 +500,6 @@ function zeta_direct_multithreaded(pfield)
         end
     end
     return nothing
-end
-
-function zeta_direct(sources, targets, zeta::Function)
-
-    for Pi in targets
-        for Pj in sources
-
-            dX1 = get_X(Pi)[1] - get_X(Pj)[1]
-            dX2 = get_X(Pi)[2] - get_X(Pj)[2]
-            dX3 = get_X(Pi)[3] - get_X(Pj)[3]
-            r = sqrt(dX1*dX1 + dX2*dX2 + dX3*dX3)
-
-            zeta_sgm = 1/get_sigma(Pj)[]^3*zeta(r/get_sigma(Pj)[])
-
-            get_vorticity(Pi)[1] += get_Gamma(Pj)[1]*zeta_sgm
-            get_vorticity(Pi)[2] += get_Gamma(Pj)[2]*zeta_sgm
-            get_vorticity(Pi)[3] += get_Gamma(Pj)[3]*zeta_sgm
-
-        end
-    end
 end
 
 """
