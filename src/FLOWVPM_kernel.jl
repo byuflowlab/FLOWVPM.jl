@@ -12,7 +12,7 @@
 # KERNELS
 ################################################################################
 """
-  `Kernel(zeta, g, dgdr, g_dgdr, EXAFMM_P2P, EXAFMM_L2P)`
+  `Kernel(zeta, g, dgdr, g_dgdr)`
 
 **Arguments**
 * `zeta::Function`        : Basis function zeta(r).
@@ -25,20 +25,6 @@ struct Kernel{Tz,Tg,Tdg,Tgdg}
     g::Tg                                 # Regularizing function g(r)
     dgdr::Tdg                             # Derivative of g(r)
     g_dgdr::Tgdg                          # Efficient evaluation of g and dgdr
-end
-
-# # Constant values
-# const const1 = 1/(2*pi)^1.5
-# const const2 = sqrt(2/pi)
-# const const3 = 3/(4*pi)
-# const const4 = 1/(4*pi)
-# const sqr2 = sqrt(2)
-
-# Newtonian velocity kernel
-# Knew(X) = -const4 * X / norm(X)^3
-@inline function Knew(X)
-    aux = -const4 / (X[1]^2 + X[2]^2 + X[3]^2)^1.5
-    return (aux*X[1], aux*X[2], aux*X[3])
 end
 
 # Singular kernel
@@ -76,7 +62,6 @@ end
 g_wnklmns(r) = r*r*r * (r*r + 2.5) / (r*r + 1)^2.5
 dgdr_wnklmns(r) = 7.5 * r*r / (r*r + 1)^3.5
 @inline function g_dgdr_wnklmns(r)
-  # aux0 = (r*r + 1)^2.5
   aux0 = r*r+1
   aux02 = aux0*aux0
   aux0 = aux02*aux02*aux0
