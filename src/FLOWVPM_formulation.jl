@@ -21,7 +21,7 @@ abstract type Formulation{R} end
 # CLASSIC VPM
 ################################################################################
 struct ClassicVPM{R} <: Formulation{R} end
-##### END OF CLASSIC VPM #######################################################
+##### END OF REFORMULATED VPM ##################################################
 
 
 
