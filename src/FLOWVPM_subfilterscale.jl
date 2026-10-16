@@ -254,7 +254,7 @@ function (SFS::DynamicSFS)(pfield, ::AfterUJ; a=1, b=1)
 
         # finish dynamic procedure
         # NOTE: the pseudo3level procedures carry their own GPU broadcast
-        # fork (FLOWVPM_subfilterscale_gpu.jl, task 052); the sensorfunction
+        # implementation (FLOWVPM_subfilterscale_gpu.jl); the sensorfunction
         # procedure remains CPU-only, same class as the zeta/RBF procedures
         # left CPU-only in FLOWVPM_viscous.jl.
         SFS.procedure_afterUJ(pfield, SFS, SFS.alpha, SFS.rlxf, SFS.minC, SFS.maxC)
