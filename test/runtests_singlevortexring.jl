@@ -69,7 +69,8 @@ for (description, integration, UJ, nc, formulation, viscous, SFS, test_error) in
             transposed    = true,
             integration   = integration,
             UJ            = UJ,
-            fmm           = vpm.FMM(; p=10, ncrit=10, theta=0.4, relative_tolerance=1e-6, absolute_tolerance=1e-6)
+            fmm           = vpm.FMM(; p=10, ncrit=10, theta=0.4, relative_tolerance=1e-6, absolute_tolerance=1e-6),
+            useGPU        = test_using_GPU[]
         )
 
 

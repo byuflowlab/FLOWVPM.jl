@@ -8,8 +8,8 @@ n = 2^12
 s_cpu = FLOWVPM.ParticleField(n)
 t_cpu = FLOWVPM.ParticleField(n)
 
-s_gpu = FLOWVPM.ParticleField(n)
-t_gpu = FLOWVPM.ParticleField(n)
+s_gpu = FLOWVPM.ParticleField(n; useGPU=true)
+t_gpu = FLOWVPM.ParticleField(n; useGPU=true)
 
 mat = zeros(43, n)
 mat[1:7, :] .= rand(7, n)

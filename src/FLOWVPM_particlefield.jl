@@ -238,6 +238,7 @@ mutable struct ParticleField{R, F<:Formulation, V<:ViscousScheme, TUinf, S<:SubF
     transposed::Bool                            # Transposed vortex stretch scheme
     relaxation::TRelaxation                              # Relaxation scheme
     fmm::FMM                                    # Fast-multipole settings
+    useGPU::Int                                 # Legacy compatibility flag; array storage selects CPU or GPU execution
     merging_workspace::MergingWorkspace         # Scratch buffers for merge_particles!
     splitting_state::SplittingState{R}          # Per-particle state for split_particles!
     splitting_workspace::SplittingWorkspace{R}  # Scratch buffers for split_particles!
@@ -272,6 +273,7 @@ is created with the default values for the other parameters.
 - `Uinf::Function=(t) -> [0.0,0.0,0.0]`: Uniform freestream velocity function Uinf(t).
 - `relaxation::Relaxation=Relaxation(relax_correctedpedrizzetti, 1, 0.3)`: Relaxation scheme to re-align the vorticity field to be divergence-free.
 - `integration::Tintegration=rungekutta3`: Time integration scheme. Default is a Runge-Kutta 3rd order, low-memory scheme.
+- `useGPU::Int=0`: Legacy compatibility flag. The `arraytype` storage selects CPU or GPU execution.
 - `arraytype::Type{<:AbstractMatrix}=Matrix`: Array type backing `pfield.particles`. Default is `Matrix`
     (CPU). Pass `CuArray` (CUDA.jl) to allocate the particle field on GPU.
 """
@@ -309,6 +311,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
         UJ::TUJ=UJ_fmm, Uinf::TUinf=Uinf_default,
         relaxation::TR=Relaxation(relax_correctedpedrizzetti, 1, 0.3), # default relaxation has no type input, which is a problem for AD.
         integration::Tintegration=rungekutta3,
+        useGPU=0,
         arraytype=Matrix
     ) where {F, V<:ViscousScheme, TUinf, S<:SubFilterScale, Tkernel<:Kernel, TUJ, Tintegration, TR}
 
@@ -324,7 +327,7 @@ function ParticleField(maxparticles::Int, R=FLOAT_TYPE;
     return ParticleField{R, typeof(formulation), typeof(viscous), TUinf, typeof(SFS), Tkernel, TUJ, Tintegration, typeof(relaxation), typeof(particles)}(maxparticles, particles,
                                             formulation, viscous, scratch, np, nt, t,
                                             kernel, UJ, Uinf, SFS, integration,
-                                            transposed, relaxation, fmm,
+                                            transposed, relaxation, fmm, useGPU,
                                             MergingWorkspace(),
                                             SplittingState{R}(maxparticles),
                                             SplittingWorkspace{R}(),
