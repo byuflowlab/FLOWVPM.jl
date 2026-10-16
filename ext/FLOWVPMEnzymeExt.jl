@@ -56,6 +56,9 @@ EnzymeRules.inactive(::typeof(vpm.clear_radix_fmm_cache!), args...) = nothing
 # (its adjoint is one solve with the same preconditioned CG, `_gal_solve_adjoint`)
 # instead of being differentiated iteration by iteration.
 EnzymeRules.inactive(::typeof(vpm._gal_plan), args...) = nothing
+# which particles to reset (index lists of the cores above a threshold / the largest)
+EnzymeRules.inactive(::typeof(vpm._radix_oversize_above), args...) = nothing
+EnzymeRules.inactive(::typeof(vpm._radix_oversize_top), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._gal_report), args...) = nothing
 EnzymeRules.inactive_type(::Type{<:vpm._GalSolve}) = true
 
