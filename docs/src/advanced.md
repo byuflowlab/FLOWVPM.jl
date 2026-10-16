@@ -150,12 +150,12 @@ Lengths are in units of `sgm0`.
 
 | keyword | default | meaning | when to change |
 |---|---|---|---|
-| `tol` | `5e-3` | stop once 10 iterations lower the squared relative field error by less than `tol^2` | tighter (e.g. `1e-10`) for derivatives |
-| `itmax` | `300` | iteration cap | raise with a tight `tol` |
+| `tol` | `1e-4` | stop once 10 iterations lower the squared relative field error by less than `tol^2`; derivatives through a reset are accurate to about `24 tol` (0.24 %) | `1e-5` (CPU Float64) for ~0.02 % derivatives; `5e-3` only for runs that are never differentiated (resets ~4x cheaper, same field accuracy) |
+| `itmax` | `1000` | iteration cap (a 1800-core 5MW reset needs ~470 at the default `tol`) | raise with a tighter `tol` |
 | `halo_tail`, `halo_min` | `2.0`, `1.0` | neighbours within `max(halo_min, halo_tail * s_k)` of reset particle k take increments (``s_k^2 = \sigma_k^2 - \sigma_0^2``) | rarely |
 | `halo_tol` | `3e-3` | keep only neighbours where the old tail is at least this fraction of its peak (`0`: all) | `0` for best accuracy at higher cost |
 | `edge_offsets`, `edge_spacing`, `edge_tol` | `[1.0, 2.0]`, `0.7`, `1e-2` | edge points at ``x_k \pm a\,e_j`` where no particle lies within `edge_spacing` and the old field is above `edge_tol` of its peak (empty offsets: none) | fewer or none to limit particle growth |
-| `prune_tol` | `1e-2` | drop edge points weaker than this fraction of the strongest reset particle | raise to add fewer particles |
+| `prune_tol` | `3e-3` | drop edge points weaker than this fraction of the strongest reset particle (their strength is lost) | raise to add fewer particles, at the cost of circulation (`1e-2`: 0.4 % per two resets of a Lamb-Oseen tube) |
 | `thin` | `0.5` | merge reset particles closer than this before the solve (`0`: off) | rarely |
 | `damping` | `1e-2` | ``\mu`` in ``(M + \mu\,\mathrm{diag}\,M)\,c = f`` | rarely |
 | `gram_cut` | `5.0` | overlap cutoff in combined core widths (4 is not positive definite on real wakes) | keep 4.5-5 |
@@ -171,12 +171,13 @@ On the NREL 5MW wake (checkpoint step 2880) and Lamb-Oseen diffusion tests:
   strengths do not grow;
 - a single, unresolved row of particles loses more (about 7 % of its circulation): its
   lateral tails have no particles to go to;
-- cost per reset: 0.2-0.35 s for a handful of cores in isolation, 0.6-5 s for one
-  revolution's worth, about 3 s for ten thousand cores (Apple M1 Pro, CPU with 4 threads
-  or Metal). Every reset also solves for the neighbours of the reset cores, so many
-  small resets cost much more than one large one: in a 6-revolution HVAB hover run,
-  resetting once per revolution took 0.8 % of the run time with loads within 0.04 % of
-  a run without resets, while resetting every step took about 20 % (run 23 % slower).
+- cost per reset at the default `tol`: about 15-19 s for one revolution's worth of a
+  5MW wake (1800 cores; Apple M1 Pro, Metal or CPU with 4 threads), about 4x the cost
+  at `tol = 5e-3`. Every reset also solves for the neighbours of the reset cores, so
+  many small resets cost much more than one large one: in a 6-revolution HVAB hover
+  run at `tol = 5e-3`, resetting once per revolution took 0.8 % of the run time (about
+  3 % at the default `tol`) with loads within 0.04 % of a run without resets, while
+  resetting every step took about 20 % (run 23 % slower).
   **Reset once per revolution** (FLOWUnsteadyCore: `core_reset_every` = steps per
   revolution).
 
@@ -186,8 +187,9 @@ Reverse-mode AD (Enzyme) through a reset is supported on CPU fields: the linear 
 carries an implicit rule (one adjoint solve with the same preconditioned CG), so the
 iterations are never differentiated. The derivative covers the new strengths as
 functions of the positions, cores and strengths involved; which particles are
-selected, thinned or added is discrete and carries no derivative. Use a tight `tol`
-(e.g. `1e-10`) and a larger `itmax` for differentiable runs.
+selected, thinned or added is discrete and carries no derivative. At the default `tol`
+(`1e-4`) the derivative through a reset is accurate to about 0.25 %; use `1e-5` on a
+CPU Float64 field for about 0.02 %.
 
 ## Derivatives
 

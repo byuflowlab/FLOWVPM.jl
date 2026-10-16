@@ -470,8 +470,10 @@ Parameters of the Galerkin core-size reset (`galerkin_shrink!`, the reset of
 - `edge_offsets = [1.0, 2.0]`, `edge_spacing = 0.7`, `edge_tol = 1e-2`: new `sgm0`
   points on the stencil x_k +- a e_j where no particle lies within `edge_spacing` and
   the old field there is at least `edge_tol` of its peak. Empty offsets: none.
-- `prune_tol = 1e-2`: after the solve, edge points weaker than this fraction of the
-  strongest reset particle are dropped.
+- `prune_tol = 3e-3`: after the solve, edge points weaker than this fraction of the
+  strongest reset particle are dropped (their strength is lost: at `tol = 1e-4`,
+  1e-2 lost 0.4 % of the circulation of a Lamb-Oseen tube over two resets, 3e-3
+  0.06 %, as without pruning, with 10 % fewer particles than no pruning).
 - `thin = 0.5`: reset particles closer than this to a stronger kept reset particle are
   removed before the solve (their field stays in the target). 0: off.
 - `damping = 1e-2`: mu in (M + mu diag M) c = f.
@@ -481,8 +483,12 @@ Parameters of the Galerkin core-size reset (`galerkin_shrink!`, the reset of
 - `block_cell = 3.0`, `block_cap = 512`: block-Jacobi preconditioner, blocks of the
   unknowns on a grid of this cell, split to at most `block_cap` (0: plain CG). Stores
   the block inverses, at most `block_cap` values per unknown.
-- `tol = 5e-3`, `itmax = 300`: the CG stops once 10 iterations lower the squared
-  relative L2 field error (damped) by less than `tol^2`, or at `itmax`.
+- `tol = 1e-4`, `itmax = 1000`: the CG stops once 10 iterations lower the squared
+  relative L2 field error (damped) by less than `tol^2`, or at `itmax`. The field is
+  already converged to its discretization error at 5e-3; the tighter default is for
+  derivatives through a reset, whose relative error is about 24 tol (0.24 % here;
+  at 5e-4 or looser the post-solve edge-point prune can also flip and spoil
+  whole-step gradients). 1e-5 gives ~0.02 % on host Float64 fields.
 - `gram_mem = 2^30`: host fields keep the Gram pairs (8 bytes each, each pair once) of
   as many rows as fit in this many bytes (1 GiB: 1.3e8 pairs) and evaluate the rest on
   the fly (plus 40 bytes per unknown and thread); device fields evaluate them all on
@@ -511,8 +517,8 @@ struct GalerkinReset{R}
     ws::_GalWork
 end
 GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, halo_tol=3e-3, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
-                   edge_tol=1e-2, prune_tol=1e-2, thin=0.5, damping=1e-2, gram_cut=5.0,
-                   block_cell=3.0, block_cap=512, itmax=300, tol=5e-3, gram_mem=2^30, ws=_GalWork()) where R =
+                   edge_tol=1e-2, prune_tol=3e-3, thin=0.5, damping=1e-2, gram_cut=5.0,
+                   block_cell=3.0, block_cap=512, itmax=1000, tol=1e-4, gram_mem=2^30, ws=_GalWork()) where R =
     GalerkinReset{R}(halo_tail, halo_min, halo_tol, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
                      thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem, ws)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
