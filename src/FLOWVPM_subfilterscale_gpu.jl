@@ -1,7 +1,7 @@
 #=##############################################################################
 # DESCRIPTION
-    Task 052 stage A: GPU/broadcast implementations of the pseudo3level
-    dynamic-SFS procedures for CuArray-backed particle fields.
+    GPU/broadcast implementations of the pseudo3level dynamic-SFS procedures
+    for CuArray-backed particle fields.
 
     `dynamicprocedure_pseudo3level_beforeUJ` / `_afterUJ` are per-particle
     host loops (scalar indexing) interleaved with a `pfield.UJ(...)` N-body
@@ -11,11 +11,6 @@
     whole-field masked broadcasts, replicating the host arithmetic exactly
     (same operation order, same clamping branches via `ifelse`), so a CPU and
     a GPU run of the same configuration follow the same SFS model math.
-
-    Deviations from the host loops (all diagnostic-only):
-      - the SFS_WATCH_* CSV diagnostics are not emitted on the device path;
-      - the NaN error does not print the offending particle's state (the
-        check itself is preserved as a device reduction over C1).
 
     Scratch usage: rows 1..7 of `pfield.scratch` (the same scratch matrix the
     relaxation broadcasts use; the procedures never run concurrently with
