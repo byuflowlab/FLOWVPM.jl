@@ -1,7 +1,6 @@
 ################################################################################
 # FMM COMPATIBILITY FUNCTION
 ################################################################################
-const const4 = 1/(4*pi)
 const const5 = sqrt(2)
 
 function upper_bound_abs(σ, ω, ε)
@@ -26,7 +25,6 @@ end
 function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rho_over_sigma)
     if autotune_reg_error
         if ω < 10*eps()
-            # ω = zero(ω)
             return zero(eltype(ω))
         end
         
@@ -47,45 +45,10 @@ function solve_ρ_over_σ(σ, ω, ε_rel, ε_abs, autotune_reg_error, default_rh
     return default_rho_over_sigma
 end
 
-# function solve_ρ_over_σ(σ, ω, ε)
-#     if ω < 10*eps()
-#         # ω = zero(ω)
-#         return zero(eltype(ω))
-#     end
-#     return Roots.find_zero((x) -> residual(x, σ, ω, ε), (0.0, upper_bound(σ, ω, ε)), Roots.Brent())
-# end
-
-# function solve_ρ_over_σ(σ, ω, ε::Nothing)
-#     return one(σ)
-# end
-
-# ------------------------------------------------------------------------------
-# Target-buffer layout shims. Registry FastMultipole 2.0.x uses a FIXED target
-# buffer layout (potential row 4, gradient 5:7, hessian 8:16, always present);
-# FastMultipole matrix-ops (>= 2.3) uses SWITCH-RELATIVE buffers (rows depend
-# on the DerivativesSwitch, e.g. scalar_potential=false shifts gradient to 4:6
-# and hessian to 7:15) with switch-aware accessors. Using the fixed accessors
-# against switch-relative buffers reads/writes off-by-one rows (and
-# set_hessian!'s fixed row 16 lands OUT OF a 15-row buffer, silently corrupting
-# the next column under @inbounds), so pick the accessor family at load time.
-# ------------------------------------------------------------------------------
-if isdefined(fmm, :gradient_range)   # matrix-ops: switch-relative buffers
-    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, switch, i)
-    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, switch, i)
-    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, switch, i, val)
-    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, switch, i, val)
-else                                  # registry 2.0.x: fixed 16-row layout
-    @inline _fmm_get_gradient(buf, switch, i) = fmm.get_gradient(buf, i)
-    @inline _fmm_get_hessian(buf, switch, i) = fmm.get_hessian(buf, i)
-    @inline _fmm_set_gradient!(buf, switch, i, val) = fmm.set_gradient!(buf, i, val)
-    @inline _fmm_set_hessian!(buf, switch, i, val) = fmm.set_hessian!(buf, i, val)
-end
-
 function fmm.source_system_to_buffer!(buffer, i_buffer, system::ParticleField, i_body)
     σ = system.particles[SIGMA_INDEX, i_body]
     Γx, Γy, Γz = view(system.particles, GAMMA_INDEX, i_body)
     Γ = sqrt(Γx*Γx + Γy*Γy + Γz*Γz)
-    # @show σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma
     ρ_σ = solve_ρ_over_σ(σ, Γ, system.fmm.relative_tolerance, system.fmm.absolute_tolerance, system.fmm.autotune_reg_error, system.fmm.default_rho_over_sigma)
     buffer[1:3, i_buffer] .= view(system.particles, X_INDEX, i_body)
     buffer[4, i_buffer] = ρ_σ * σ
@@ -227,10 +190,6 @@ function fmm.buffer_to_target_system!(target_system::ParticleField, i_target, de
     j = nothing
     if HS
         j = fmm.get_hessian(target_buffer, derivatives_switch, i_buffer)
-        if any(isnan, j)
-            println("[DEBUG b2t] NaN hessian in buffer for particle $i_target, buffer_idx=$i_buffer")
-            println("  buffer_size=$(size(target_buffer)), buffer_col=$(target_buffer[:, i_buffer])")
-        end
         for i = 1:9
             target_system.particles[J_INDEX[i], i_target] += j[i]
         end
