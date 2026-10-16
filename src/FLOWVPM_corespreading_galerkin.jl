@@ -634,11 +634,21 @@ variances `v`, target the old subset field (positions `Xo`, variances `vo`,
 strengths `Go`), warm start `x0`; returns the strengths `c` (3 x N, `Y`'s order).
 Differentiable (Enzyme rule in ext/FLOWVPMEnzymeExt.jl, host fields).
 """
-_gal_solve(Y, v, Xo, vo, Go, x0, sol::_GalSolve) = first(_gal_solve_sys(Y, v, Xo, vo, Go, x0, sol))
+function _gal_solve(Y, v, Xo, vo, Go, x0, sol::_GalSolve)
+    c = first(_gal_solve_sys(Y, v, Xo, vo, Go, x0, sol))
+    # `checkpointed_gradient!` records the forward run's solutions here and replays
+    # them when it re-runs a segment under Enzyme (ext/FLOWVPMEnzymeExt.jl)
+    rec = get(task_local_storage(), :FLOWVPM_gal_record, nothing)
+    rec === nothing || push!(rec, (; key = _gal_key(Y, v, Xo, vo, Go), c, sol.its, sol.conv, sol.err))
+    return c
+end
+_gal_key(Y, v, Xo, vo, Go) = hash((Y, v, Xo, vo, Go))
 
-# ... also returns the system and the solution in set order (for the adjoint)
+# ... also returns the system and the solution in set order (for the adjoint).
+# solve = false (host; replay of a recorded solution): x0 is the solution, no
+# right-hand side, no CG, sol's its/conv/err untouched
 function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float64}, vo::Vector{Float64},
-                        Go::Matrix{Float64}, x0::Matrix{Float64}, sol::_GalSolve)
+                        Go::Matrix{Float64}, x0::Matrix{Float64}, sol::_GalSolve; solve::Bool = true)
     gr = sol.gr; P = sol.proto; R = eltype(P)
     cut2 = Float64(gr.gram_cut)^2; N = size(Y, 2); K = size(Xo, 2)
     t0 = time()
@@ -648,11 +658,13 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     # the median one on the host (its rows search 2 vi)
     U, uperm = _gal_set(Y, v, sqrt(cut2 * 2 * (P isa Matrix ? sort(v)[cld(N, 2)] : maximum(v))) / 2)
     Ud = _gal_to(P, U)
-    f = _gal_to(P, zeros(3, N))
-    _gal_pairsum!(f, Ud.x, Ud.v, Od, God, cut2)
-    fo = _gal_to(P, zeros(3, K))
-    _gal_pairsum!(fo, Od.x, Od.v, Od, God, cut2)
-    oo = Float64(dot(God, fo))
+    if solve
+        f = _gal_to(P, zeros(3, N))
+        _gal_pairsum!(f, Ud.x, Ud.v, Od, God, cut2)
+        fo = _gal_to(P, zeros(3, K))
+        _gal_pairsum!(fo, Od.x, Od.v, Od, God, cut2)
+        oo = Float64(dot(God, fo))
+    end
     d = _gal_to(P, reshape(gr.damping * _GAL_C3 .* (2 .* U.v) .^ -1.5, 1, N))
     x = _gal_to(P, x0[:, uperm])
     t1 = time()
@@ -666,13 +678,15 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     blk = blk === nothing || P isa Matrix ? blk : map(a -> copyto!(similar(P, eltype(a), length(a)), a), blk)
     t3 = time()
 
-    r = similar(x); p = similar(x); Ap = similar(x); z = similar(x)
-    its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
-    err = _gal_ferr(x, r, f, d, oo)
+    if solve
+        r = similar(x); p = similar(x); Ap = similar(x); z = similar(x)
+        its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
+        sol.its = its; sol.conv = conv; sol.err = _gal_ferr(x, r, f, d, oo)
+    end
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
     t4 = time()
 
-    sol.its = its; sol.conv = conv; sol.err = err; sol.nnz = nnz; sol.mem = mem
+    sol.nnz = nnz; sol.mem = mem
     sol.t = (t1 - t0, t2 - t1, t3 - t2, t4 - t3)
     P isa Matrix && return c, (; U, uperm, O, operm, God, d, A, blk, cut2), x
     # device fields: the system is freed, not returned (the adjoint is host only)
@@ -689,7 +703,10 @@ function _gal_solve_adjoint(sys, x, cbar, sol::_GalSolve)
     gr = sol.gr; U = sys.U; O = sys.O; N = size(U.x, 2); K = size(O.x, 2)
     b = cbar[:, sys.uperm]
     lam = zeros(3, N); r = similar(lam); p = similar(lam); Ap = similar(lam); z = similar(lam)
-    _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, Float64(gr.tol), 0.0)
+    # tolerance 2 tol: the forward solve's error dominates the gradient's (measured,
+    # N 1559 reset: ~24 tol from the forward, ~2.3 tol from the adjoint, adding in
+    # quadrature), so 2 tol costs <2 % of the accuracy and saves ~15 % of the iterations
+    _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, 2 * Float64(gr.tol), 0.0)
     gY = zeros(3, N); gv = zeros(N); gXo = zeros(3, K); gvo = zeros(K); gGo = zeros(3, K)
     _gal_pair_adj!(gY, gv, gXo, gvo, gGo, U.x, U.v, lam, O, sys.God, sys.cut2, 1.0)    # lambda' f
     _gal_pair_adj!(gY, gv, gY, gv, nothing, U.x, U.v, lam, U, x, sys.cut2, -1.0)        # -lambda' M c
