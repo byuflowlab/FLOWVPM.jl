@@ -66,7 +66,16 @@ EnzymeRules.inactive_type(::Type{<:vpm._GalSolve}) = true
 
 function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._gal_solve)}, ::Type{RT},
                                       Y, v, Xo, vo, Go, x0, sol) where RT
-    c, sys, x = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, x0.val, sol.val)
+    rp = get(task_local_storage(), :FLOWVPM_gal_replay, nothing)
+    if rp === nothing
+        c, sys, x = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, x0.val, sol.val)
+    else                       # checkpointed_gradient! re-run: the forward run's solution, no CG
+        r = popfirst!(rp)
+        r.key == vpm._gal_key(Y.val, v.val, Xo.val, vo.val, Go.val) ||
+            error("checkpointed_gradient!: Galerkin reset inputs differ from the forward run")
+        c, sys, x = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, r.c, sol.val; solve = false)
+        sol.val.its = r.its; sol.val.conv = r.conv; sol.val.err = r.err
+    end
     A = sys.A                  # its stored pairs live in the GalerkinReset's workspace: keep a copy
     A isa vpm._GalOp && (sys = merge(sys, (; A = vpm._GalOp(A.R, A.rp, copy(A.col), copy(A.val), A.y, A.ib, A.rb))))
     dc = zero(c)
@@ -457,17 +466,21 @@ function vpm.checkpointed_gradient!(dpf, objective, pf, dt, nsteps::Integer; eve
     len(j) = min(every, nsteps - (j - 1) * every)
     snaps = Vector{Any}(undef, nseg + 1)
     snaps[1] = _ckpt_save(pf)
+    recs = [Any[] for _ in 1:nseg]     # each segment's Galerkin reset solutions, replayed below
     for j in 1:nseg
-        _ckpt_steps!(pf, step, dt, len(j))
+        task_local_storage(() -> _ckpt_steps!(pf, step, dt, len(j)), :FLOWVPM_gal_record, recs[j])
         snaps[j + 1] = _ckpt_save(pf)
     end
     J = EnzymeCore.autodiff(EnzymeCore.ReverseWithPrimal, EnzymeCore.Const(objective), EnzymeCore.Active,
                             EnzymeCore.Duplicated(pf, dpf))[2]
     for j in nseg:-1:1
         _ckpt_restore!(pf, snaps[j])
-        EnzymeCore.autodiff(EnzymeCore.Reverse, EnzymeCore.Const(_ckpt_steps!), EnzymeCore.Const,
-                            EnzymeCore.Duplicated(pf, dpf), EnzymeCore.Const(step), EnzymeCore.Const(dt),
-                            EnzymeCore.Const(len(j)))
+        task_local_storage(:FLOWVPM_gal_replay, recs[j]) do
+            EnzymeCore.autodiff(EnzymeCore.Reverse, EnzymeCore.Const(_ckpt_steps!), EnzymeCore.Const,
+                                EnzymeCore.Duplicated(pf, dpf), EnzymeCore.Const(step), EnzymeCore.Const(dt),
+                                EnzymeCore.Const(len(j)))
+        end
+        isempty(recs[j]) || error("checkpointed_gradient!: segment $j re-ran fewer Galerkin resets than the forward run")
         _ckpt_same(_ckpt_save(pf), snaps[j + 1]) ||
             error("checkpointed_gradient!: segment $j recomputed differently from the forward run (state kept outside the checkpoint?)")
         GC.gc()                # the segment's tape is garbage now: keep the peak at one segment
