@@ -47,17 +47,22 @@ end
 A slot for an ambient a driver sets at run time (`holder.ambient = ...`):
 a particle field's `Uinf` is a type parameter fixed at construction, the
 driver's freestream is not known until then. `nothing` is no ambient.
+Built with an ambient, the slot is typed by it (`AmbientHolder{typeof(ambient)}`:
+later assignments must have that type), so Enzyme can differentiate through it
+with the ambient's parameters as design variables; built empty, it is untyped
+(`AmbientHolder{Any}`) and takes any ambient.
 `gradient = false` skips the ambient gradient (a run without stretching).
 The ambient is evaluated at `pfield.t + t_offset`, for a driver whose clock
 does not start with the field's (`pfield.t` also feeds the SFS time scale, so it
 is not reset).
 """
-mutable struct AmbientHolder <: AbstractAmbient
-    ambient::Any
+mutable struct AmbientHolder{A} <: AbstractAmbient
+    ambient::A
     gradient::Bool
     t_offset::Float64
 end
-AmbientHolder(ambient = nothing; gradient = true, t_offset = 0.0) = AmbientHolder(ambient, gradient, t_offset)
+AmbientHolder(ambient = nothing; gradient = true, t_offset = 0.0) =
+    AmbientHolder{ambient === nothing ? Any : typeof(ambient)}(ambient, gradient, t_offset)
 
 # Where the classic code evaluates `pfield.Uinf(t)`: with an ambient, the uniform
 # term the update adds itself is zero (the ambient went in through add_ambient!).
