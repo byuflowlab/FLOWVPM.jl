@@ -321,6 +321,24 @@ else
     end
 end
 
+# a field that built a radix cache, dropped inside a function: nothing but the
+# coupling's per-field records (weak) may hold it
+@noinline function fmm034_built_field_ref()
+    pf = fmm034_build("wake", 1500)
+    vpm_fmm.UJ_fmm_gpu!(pf)
+    return WeakRef(pf), haskey(FLOWVPM._radix_built_q, pf)
+end
+
+@testset "radix FMM coupling: per-field records hold the field weakly" begin
+    ref, recorded = fmm034_built_field_ref()
+    @test recorded
+    # the evaluation's threaded loops leave the field on the worker threads' last
+    # tasks (Julia runtime, -t > 1); one empty threaded loop replaces those
+    Threads.@threads :static for _ in 1:Threads.nthreads(); end
+    GC.gc(true); GC.gc(true)
+    @test ref.value === nothing
+end
+
 @testset "radix FMM coupling: task-035 tuning settings (host path)" begin
     # The RadixFMMSettings tuning surface (task 035): nearfield-kernel and M2L
     # strategy selection must produce the same gate-passing answer as the

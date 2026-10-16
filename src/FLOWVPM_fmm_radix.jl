@@ -570,7 +570,7 @@ auto-derived geometry rebuilds when the live field outgrows it in either
 direction: particle count vs grid depth (`FastMultipole.radix_depth_outgrown!`)
 or `sigma_max` vs the adequacy limit (`FastMultipole.radix_sigma_outgrown!`).
 """
-const _radix_built_q = Dict{Any,Int}()      # stencil radius the last build chose, per field
+const _radix_built_q = WeakKeyDict{Any,Int}()   # stencil radius the last build chose, per field (weak, like the couplings)
 # the live field outgrew the cached geometry in either direction (FastMultipole's
 # rule): particle count/box vs depth and stencil, or largest core vs the adequacy limit
 function _radix_geometry_outgrown!(pfield::ParticleField, st)
