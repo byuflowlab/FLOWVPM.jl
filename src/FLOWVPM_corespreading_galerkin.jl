@@ -549,7 +549,11 @@ and strengths of the reset particles, the halo and the edge points' parents
 preconditioned CG). The selection (which particles are thinned, which form the
 halo, where edge points go, which are pruned) is piecewise constant and carries no
 derivative; so does the overlap cut. The rule differentiates the exact solution:
-tighten `tol` (e.g. 1e-10) and raise `itmax` for differentiable runs.
+tighten `tol` (e.g. 1e-10) and raise `itmax` for differentiable runs. Through
+`CoreSpreading` time steps (core growth + this reset, Euler or RK3, with or without
+SFS) the gradient is FD-checked end to end; since the particle count and order
+change, differentiate an objective that does not depend on them (e.g. a sum over
+the final particles of a function of each particle's state, or the field at probes).
 """
 galerkin_shrink!(pfield, idx::Vector{Int}, sgm0::Real; galerkin::GalerkinReset = GalerkinReset(),
                  iterror::Bool = false, verbose::Bool = false, v_lvl::Int = 0) =
