@@ -160,3 +160,46 @@ end
     dU = dpf.Uinf.ambient.velocity.U
     @test minimum(h -> abs((F(P0, U + h) - F(P0, U - h))/(2h) - dU)/abs(dU), (1e-4, 1e-5, 1e-6)) < 1e-6
 end
+
+# FLOWVPMEnzymeExt's reverse rules for the host direct sum (U, J) and Estr_direct
+# (SFS): against central FD and against Enzyme differentiating the same sums
+# without the rules (fmm.direct! and Estr_direct_singlethreaded called directly).
+# Every kernel, both stretching schemes, one static particle (Estr skips it).
+function enz_uj(x::AbstractVector{T}, w, kernel, transposed, rules::Bool) where T
+    n = length(x) ÷ 7
+    pf = FLOWVPM.ParticleField(n, T; kernel, transposed, UJ=FLOWVPM.UJ_direct, fmm=FLOWVPM.FMM(autotune_reg_error=false))
+    for i in 1:n
+        FLOWVPM.add_particle(pf, (x[3i-2], x[3i-1], x[3i]), (x[3n+3i-2], x[3n+3i-1], x[3n+3i]), x[6n+i]; static=(i == 2))
+    end
+    if rules
+        FLOWVPM.UJ_direct(pf; sfs=true)
+    else
+        FLOWVPM.fmm.direct!(pf; scalar_potential=false, hessian=true)
+        FLOWVPM.Estr_direct_singlethreaded(pf)
+    end
+    rows = vcat(collect(FLOWVPM.U_INDEX), collect(FLOWVPM.J_INDEX), collect(FLOWVPM.SFS_INDEX))
+    s = zero(T)
+    for i in 1:n, (k, row) in enumerate(rows)
+        s += w[15*(i-1)+k] * pf.particles[row, i]
+    end
+    return s
+end
+
+@testset "Enzyme: direct-sum U/J and Estr reverse rules" begin
+    n = 30
+    Random.seed!(3)
+    x = vcat(rand(3n), 0.1 .* randn(3n), 0.15 .+ 0.02 .* rand(n))
+    w = randn(15n)
+    for kernel in (FLOWVPM.kernel_gaussianerf, FLOWVPM.kernel_gaussian, FLOWVPM.kernel_winckelmans, FLOWVPM.kernel_singular),
+        transposed in (true, false)
+        g, g0 = zero(x), zero(x)
+        Enzyme.autodiff(Enzyme.Reverse, enz_uj, Enzyme.Active, Enzyme.Duplicated(x, g), Enzyme.Const(w),
+                        Enzyme.Const(kernel), Enzyme.Const(transposed), Enzyme.Const(true))
+        Enzyme.autodiff(Enzyme.Reverse, enz_uj, Enzyme.Active, Enzyme.Duplicated(x, g0), Enzyme.Const(w),
+                        Enzyme.Const(kernel), Enzyme.Const(transposed), Enzyme.Const(false))
+        @test isapprox(g, g0; rtol=1e-12)
+        f = x -> enz_uj(x, w, kernel, transposed, true)
+        v = randn(7n); v ./= LinearAlgebra.norm(v); gv = LinearAlgebra.dot(g, v)
+        @test minimum(h -> abs((f(x .+ h .* v) - f(x .- h .* v))/(2h) - gv)/abs(gv), (1e-4, 1e-5, 1e-6)) < 1e-7
+    end
+end

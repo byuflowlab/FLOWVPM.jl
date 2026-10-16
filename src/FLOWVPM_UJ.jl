@@ -24,6 +24,9 @@ gpu_direct!(pfield::ParticleField) = error(
     "$(typeof(pfield.particles)). Load `using CUDA` alongside FLOWVPM to enable " *
     "the GPU direct (no-FMM) N-body sum for `CuArray`-backed particle fields.")
 
+# Host direct sum of U and J (FLOWVPMEnzymeExt carries its reverse rule).
+_direct_UJ!(pfield) = (fmm.direct!(pfield; scalar_potential=false, hessian=true); nothing)
+
 """
   `UJ_direct(pfield)`
 
@@ -48,7 +51,7 @@ function UJ_direct(pfield::ParticleField;
     end
 
     if pfield.particles isa Array
-        fmm.direct!(pfield; scalar_potential=false, hessian=true)
+        _direct_UJ!(pfield)
     else
         gpu_direct!(pfield)
     end
