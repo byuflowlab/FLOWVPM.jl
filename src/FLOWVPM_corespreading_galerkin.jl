@@ -703,7 +703,10 @@ function _gal_solve_adjoint(sys, x, cbar, sol::_GalSolve)
     gr = sol.gr; U = sys.U; O = sys.O; N = size(U.x, 2); K = size(O.x, 2)
     b = cbar[:, sys.uperm]
     lam = zeros(3, N); r = similar(lam); p = similar(lam); Ap = similar(lam); z = similar(lam)
-    _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, Float64(gr.tol), 0.0)
+    # tolerance 2 tol: the forward solve's error dominates the gradient's (measured,
+    # N 1559 reset: ~24 tol from the forward, ~2.3 tol from the adjoint, adding in
+    # quadrature), so 2 tol costs <2 % of the accuracy and saves ~15 % of the iterations
+    _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, 2 * Float64(gr.tol), 0.0)
     gY = zeros(3, N); gv = zeros(N); gXo = zeros(3, K); gvo = zeros(K); gGo = zeros(3, K)
     _gal_pair_adj!(gY, gv, gXo, gvo, gGo, U.x, U.v, lam, O, sys.God, sys.cut2, 1.0)    # lambda' f
     _gal_pair_adj!(gY, gv, gY, gv, nothing, U.x, U.v, lam, U, x, sys.cut2, -1.0)        # -lambda' M c
