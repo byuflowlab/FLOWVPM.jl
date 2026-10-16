@@ -540,6 +540,12 @@ The conjugate gradient has not converged when it stops at `itmax` (or breaks dow
 before its stopping rule; if the relative field error is then above `tol`, it
 throws with `iterror = true` and warns otherwise.
 
+The target `sgm0` may also be above the cores of `idx`, which grows them: the
+projection keeps what cores of `sgm0` can carry of the field (finer detail is
+smoothed out). Like the shrink, it needs overlapping cores: on a sparse field
+(cores well below the spacing) the L2 fit moves strength and adds edge points
+without keeping the field; check the reported `err`.
+
 Example, cores above 1.5 sgm0: `idx = findall(>(1.5sgm0), Array(view(pfield.particles, FLOWVPM.SIGMA_INDEX, 1:get_np(pfield))))`.
 
 Returns counts (K reset, Kk kept, H halo, E edge points added, D thinned),

@@ -141,8 +141,14 @@ info  = vpm.galerkin_shrink!(pfield, idx, sgm0; galerkin = reset)
 #       memory and timing of each phase
 ```
 
-In FLOWUnsteadyCore, the `simulate!` options `core_reset` and `core_reset_every`
-call it every step or every N steps.
+The same call grows small cores when `sgm0` is above them (e.g. `idx = findall(<(0.7 * sgm0), sig)`):
+the field keeps what cores of `sgm0` can carry, and finer detail is smoothed out.
+Growing a fifth of a lattice tube's particles from 0.6 to 1.0 changed the field by
+1.3 % and circulation by 0.04 %. Shrinking and growing both need overlapping cores:
+on a sparse field the projection cannot keep the field (check `info.err`).
+
+In FLOWUnsteadyCore, the `simulate!` options `core_reset`, `core_grow` and
+`core_reset_every` call it every step or every N steps.
 
 ### Reset parameters (`GalerkinReset`)
 

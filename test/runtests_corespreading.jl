@@ -65,6 +65,22 @@ end
     @test abs(sum(G[3, :]) - sum(G0[3, :])) <= 1e-3 * sum(G0[3, :])
 end
 
+@testset "Galerkin growth: small cores grown to sgm0 keep the field" begin
+    # galerkin_shrink! with a target above the current cores: a fifth of the tube's
+    # particles at 0.6 sgm0 grown to sgm0 (measured: field 1.3e-2, circulation 4e-4)
+    X0, G0 = cs_tube(); n = size(X0, 2)
+    S0 = ones(n); idx = collect(3:5:n); S0[idx] .= 0.6
+    pf = FLOWVPM.ParticleField(2n, Float64)
+    blk = zeros(FLOWVPM.nfields, n); blk[1:3, :] .= X0; blk[4:6, :] .= G0; blk[7, :] .= S0; blk[FLOWVPM.CIRCULATION_INDEX, :] .= 1
+    FLOWVPM.add_particles!(pf, blk)
+    FLOWVPM.galerkin_shrink!(pf, idx, CS_SGM0)
+    X, G, S, _ = cs_state(pf)
+    @test all(S .== CS_SGM0)
+    W = cs_omega(X0, G0, S0, CS_PROBES)
+    @test sqrt(sum(abs2, cs_omega(X, G, S, CS_PROBES) .- W) / sum(abs2, W)) <= 2e-2
+    @test abs(sum(G[3, :]) - sum(G0[3, :])) <= 2e-3 * sum(G0[3, :])
+end
+
 @testset "CoreSpreading: static particles are neither grown nor reset" begin
     X0, G0 = cs_tube()
     st = collect(1:7:size(X0, 2))
