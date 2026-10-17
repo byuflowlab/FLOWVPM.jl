@@ -159,3 +159,64 @@ const _SFSC_ROWS = (C_INDEX[1],)
 const _CLIP_IN = (C_INDEX[1], GAMMA_INDEX..., SFS_INDEX...)
 @inline _clip_backscatter_col(x) =
     @inbounds SVector(ifelse(x[1] * (x[2]*x[5] + x[3]*x[6] + x[4]*x[7]) < 0, zero(x[1]), x[1]))
+
+# dynamic SFS on the device. After UJ (`_pseudo3level_afterUJ_broadcast!`, active
+# particles): the model coefficient from the test- and domain-filter terms in M,
+# relaxed, clamped (piecewise: the branch carries no derivative), then M flushed.
+# Reads Gamma sigma J M[1:9] C SFS (28), writes C M[1:9] (12).
+const _SFSA_IN = (GAMMA_INDEX..., SIGMA_INDEX, J_INDEX..., M_INDEX..., C_INDEX..., SFS_INDEX...)
+const _SFSA_OUT = (C_INDEX..., M_INDEX...)
+_sfs_afterUJ_consts(::Type{R}, pfield, alpha, rlxf, minC, maxC, twolevel) where R =
+    (twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC), R(pfield.kernel.zeta(zero(R))), R(eps()))
+@inline function _sfs_afterUJ_col(x, transposed, sc, ::Val{FP}, subtract::Bool) where {FP}
+    fac, rlxf, minC, maxC, zeta0, epsv = sc
+    T = eltype(x)
+    @inbounds begin
+        g1 = x[1]; g2 = x[2]; g3 = x[3]; sig = x[4]
+        m1 = x[14]; m2 = x[15]; m3 = x[16]; m4 = x[17]; m5 = x[18]; m6 = x[19]
+        c2r = x[24]; c3r = x[25]; s1 = x[26]; s2 = x[27]; s3 = x[28]
+        # subtract the domain-filter stretching / SFS from the test-filter values
+        d1, d2, d3 = _sfs_stretch(transposed, x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12],x[13], g1,g2,g3)
+        if subtract      # the two-level procedure holds the derivatives themselves
+            m1 -= d1; m2 -= d2; m3 -= d3
+            m4 -= s1; m5 -= s2; m6 -= s3
+        end
+        nume_raw = (m1*g1 + m2*g2 + m3*g3) * fac
+        deno_raw = (m4*g1 + m5*g2 + m6*g3) * (sig*sig*sig / zeta0)
+        c3i = c3r == zero(T) ? (deno_raw == zero(T) ? epsv : deno_raw) : c3r
+        nume = rlxf * nume_raw + (one(T) - rlxf) * c2r
+        deno = rlxf * deno_raw + (one(T) - rlxf) * c3i
+        # clamping, in the host's branch order: `big` is tested with the OLD
+        # deno, deno is then updated, and nume re-tested against the NEW one
+        big = abs(nume / deno) > maxC
+        if big && abs(deno) < abs(c3i)
+            deno = copysign(abs(c3i), iszero(deno) ? c3i : deno)     # sign(0) kept a zero denominator (host fix mirrored)
+        end
+        if big && abs(nume / deno) >= maxC
+            nume = sign(nume) * abs(deno) * maxC
+        elseif !big && abs(nume / deno) < minC
+            nume = sign(nume) * abs(deno) * minC
+        end
+        c1r = nume / deno
+        FP && (c1r = abs(c1r))
+        z = zero(T)
+        return SVector(c1r, nume, deno, z, z, z, z, z, z, z, z, z)
+    end
+end
+
+# Before UJ (pseudo-three-level): sigma *= alpha (the test filter width), then
+# after the test-width UJ: M = [stretching, SFS, 0, 0, 0], sigma /= alpha.
+const _SCALE_ROWS = (SIGMA_INDEX,)
+@inline _sfs_scale_col(x, alpha) = SVector(x[1] * alpha)
+const _SFSB_IN = (GAMMA_INDEX..., SIGMA_INDEX, J_INDEX..., SFS_INDEX...)
+const _SFSB_OUT = (M_INDEX..., SIGMA_INDEX)
+@inline function _sfs_store_col(x, transposed, alpha)
+    @inbounds begin
+        d1, d2, d3 = _sfs_stretch(transposed, x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12],x[13], x[1],x[2],x[3])
+        z = zero(eltype(x))
+        return SVector(d1, d2, d3, x[14], x[15], x[16], z, z, z, x[4] / alpha)
+    end
+end
+# the two device launches around the test-width UJ (GPU extension)
+function _sfs_scale_sigma_dev! end
+function _sfs_beforeUJ_store_dev! end

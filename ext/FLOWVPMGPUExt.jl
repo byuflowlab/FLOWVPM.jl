@@ -964,93 +964,35 @@ _sfs_nan_flag(backend) = get!(() -> KA.zeros(backend, Int32, 1), _SFS_NAN_FLAG, 
 
 const _sfs_stretch = FLOWVPM._sfs_stretch
 
-# Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
-@kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
-        sc, ::Val{FP}, subtract::Bool,
-        ig, isig, ij, im, ic, isfs, istat) where {FP}
+# Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order
+# (the per-particle math: FLOWVPM._sfs_afterUJ_col)
+@kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool, sc, ::Val{FP}, subtract::Bool, istat) where {FP}
     i = @index(Global)
-    fac, rlxf, minC, maxC, zeta0, epsv = sc.v
-    @inbounds if i <= np
-        T = eltype(P)
-        act = P[istat, i] == zero(T)
-        g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
-        j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
-        j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
-        j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
-        s1 = P[isfs, i]; s2 = P[isfs+1, i]; s3 = P[isfs+2, i]
-        m1 = P[im, i];   m2 = P[im+1, i];  m3 = P[im+2, i]
-        m4 = P[im+3, i]; m5 = P[im+4, i];  m6 = P[im+5, i]
-
-        # subtract the domain-filter stretching / SFS from the test-filter values
-        d1, d2, d3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
-        if act && subtract      # the two-level procedure holds the derivatives themselves
-            m1 -= d1; m2 -= d2; m3 -= d3
-            m4 -= s1; m5 -= s2; m6 -= s3
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        y = FLOWVPM._sfs_afterUJ_col(FLOWVPM._gather_col(P, i, FLOWVPM._SFSA_IN), transposed, sc.v, Val(FP), subtract)
+        for k in 1:length(FLOWVPM._SFSA_OUT)
+            P[FLOWVPM._SFSA_OUT[k], i] = y[k]
         end
-
-        sig = P[isig, i]
-        c1r = P[ic, i]; c2r = P[ic+1, i]; c3r = P[ic+2, i]
-        nume_raw = (m1*g1 + m2*g2 + m3*g3) * fac
-        deno_raw = (m4*g1 + m5*g2 + m6*g3) * (sig*sig*sig / zeta0)
-        c3i = c3r == zero(T) ? (deno_raw == zero(T) ? epsv : deno_raw) : c3r
-        nume = rlxf * nume_raw + (one(T) - rlxf) * c2r
-        deno = rlxf * deno_raw + (one(T) - rlxf) * c3i
-
-        # clamping, in the host's branch order: `big` is tested with the OLD
-        # deno, deno is then updated, and nume re-tested against the NEW one
-        big = abs(nume / deno) > maxC
-        if big && abs(deno) < abs(c3i)
-            deno = copysign(abs(c3i), iszero(deno) ? c3i : deno)     # sign(0) kept a zero denominator (host fix mirrored)
-        end
-        if big && abs(nume / deno) >= maxC
-            nume = sign(nume) * abs(deno) * maxC
-        elseif !big && abs(nume / deno) < minC
-            nume = sign(nume) * abs(deno) * minC
-        end
-
-        if act
-            c2r = nume; c3r = deno; c1r = c2r / c3r
-            FP && (c1r = abs(c1r))
-            P[ic, i] = c1r; P[ic+1, i] = c2r; P[ic+2, i] = c3r
-            isnan(c1r) && (nan_flag[1] = Int32(1))
-            for r in 0:8            # flush temporal memory (all M rows)
-                P[im+r, i] = zero(T)
-            end
-        end
+        isnan(y[1]) && (nan_flag[1] = Int32(1))
     end
 end
 
 # Port of the post-UJ half of `_pseudo3level_beforeUJ_broadcast!`: zero M for
-# active particles, store the test-filter stretching and E_str, restore sigma.
-@kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, sc,
-        ig, isig, ij, im, isfs, istat)
+# active particles, store the test-filter stretching and E_str, restore sigma
+# (FLOWVPM._sfs_store_col); and sigma *= alpha before the UJ (FLOWVPM._sfs_scale_col)
+@kernel function ka_sfs_beforeUJ_store_kernel!(P, np, transposed::Bool, sc, istat)
     i = @index(Global)
-    alpha = sc.v
-    @inbounds if i <= np
-        T = eltype(P)
-        if P[istat, i] == zero(T)
-            g1 = P[ig, i];  g2 = P[ig+1, i];  g3 = P[ig+2, i]
-            j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
-            j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
-            j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
-            d1, d2, d3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
-            for r in 0:8
-                P[im+r, i] = zero(T)
-            end
-            P[im,   i] = d1; P[im+1, i] = d2; P[im+2, i] = d3
-            P[im+3, i] = P[isfs, i]; P[im+4, i] = P[isfs+1, i]; P[im+5, i] = P[isfs+2, i]
-            P[isig, i] = P[isig, i] / alpha
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        y = FLOWVPM._sfs_store_col(FLOWVPM._gather_col(P, i, FLOWVPM._SFSB_IN), transposed, sc.v)
+        for k in 1:length(FLOWVPM._SFSB_OUT)
+            P[FLOWVPM._SFSB_OUT[k], i] = y[k]
         end
     end
 end
-
-# sigma *= alpha on active particles (the test-filter width), before the UJ call
 @kernel function ka_sfs_scale_sigma_kernel!(P, np, sc, isig, istat)
     i = @index(Global)
-    alpha = sc.v
-    @inbounds if i <= np
-        T = eltype(P)
-        P[istat, i] == zero(T) && (P[isig, i] = P[isig, i] * alpha)
+    @inbounds if i <= np && P[istat, i] == zero(eltype(P))
+        P[isig, i] = FLOWVPM._sfs_scale_col(FLOWVPM.SVector(P[isig, i]), sc.v)[1]
     end
 end
 
@@ -1067,11 +1009,8 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
     wg = _sfs_wg(backend)
     kern = ka_sfs_afterUJ_kernel!(backend, wg)
     kern(pfield.particles, flag, np, pfield.transposed,
-         FLOWVPM.KConst((twolevel ? one(R) : R(3 * alpha - 2), R(rlxf), R(minC), R(maxC),
-         R(pfield.kernel.zeta(zero(R))), R(eps()))), Val(force_positive), !twolevel,
-         first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX, first(FLOWVPM.J_INDEX),
-         first(FLOWVPM.M_INDEX), first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX),
-         FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
+         FLOWVPM.KConst(FLOWVPM._sfs_afterUJ_consts(R, pfield, alpha, rlxf, minC, maxC, twolevel)),
+         Val(force_positive), !twolevel, FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
     KA.synchronize(backend)
     Array(flag)[1] == 0 || error("NaN in dynamicprocedure_pseudo3level_afterUJ " *
         "(GPU fused path, np=$(np))")
@@ -1079,21 +1018,24 @@ function FLOWVPM._pseudo3level_afterUJ_broadcast!(pfield::GPUField, SFS,
 end
 
 function FLOWVPM._pseudo3level_beforeUJ_broadcast!(pfield::GPUField, SFS, alpha::Real)
-    np = pfield.np
-    np == 0 && return nothing
-    R = eltype(pfield.particles)
-    backend = KA.get_backend(pfield.particles)
-    wg = _sfs_wg(backend)
-    ndr = cld(np, wg) * wg
-    ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, FLOWVPM.KConst(R(alpha)),
-        FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = ndr)
-    KA.synchronize(backend)
+    pfield.np == 0 && return nothing
+    FLOWVPM._sfs_scale_sigma_dev!(pfield, alpha)
     # UJ at the test filter width (device radix path; resets U/J and the SFS rows)
     pfield.UJ(pfield; sfs=true, reset=true, reset_sfs=true)
-    ka_sfs_beforeUJ_store_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
-        FLOWVPM.KConst(R(alpha)), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
-        first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX), first(FLOWVPM.SFS_INDEX),
-        FLOWVPM.STATIC_INDEX; ndrange = ndr)
+    FLOWVPM._sfs_beforeUJ_store_dev!(pfield, alpha)
+    return nothing
+end
+function FLOWVPM._sfs_scale_sigma_dev!(pfield::GPUField{R}, alpha) where R
+    np = pfield.np; backend = KA.get_backend(pfield.particles); wg = _sfs_wg(backend)
+    ka_sfs_scale_sigma_kernel!(backend, wg)(pfield.particles, np, FLOWVPM.KConst(R(alpha)),
+        FLOWVPM.SIGMA_INDEX, FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
+    KA.synchronize(backend)
+    return nothing
+end
+function FLOWVPM._sfs_beforeUJ_store_dev!(pfield::GPUField{R}, alpha) where R
+    np = pfield.np; backend = KA.get_backend(pfield.particles); wg = _sfs_wg(backend)
+    ka_sfs_beforeUJ_store_kernel!(backend, wg)(pfield.particles, np, pfield.transposed, FLOWVPM.KConst(R(alpha)),
+        FLOWVPM.STATIC_INDEX; ndrange = cld(np, wg) * wg)
     KA.synchronize(backend)
     return nothing
 end

@@ -317,7 +317,11 @@ for (f, fcol, rin, rout, margs, skip) in (
         (vpm._corespreading_euler_broadcast!, vpm._cs_euler_col, vpm._CS_EULER_ROWS, vpm._CS_EULER_ROWS,
          (pf, R, nu, dt) -> (2 * R(nu) * R(dt),), true),
         (vpm._constantsfs_coefficient_broadcast!, vpm._sfs_coefficient_col, vpm._SFSC_ROWS, vpm._SFSC_ROWS,
-         (pf, R, Cs) -> (R(Cs),), true))
+         (pf, R, Cs) -> (R(Cs),), true),
+        (vpm._sfs_scale_sigma_dev!, vpm._sfs_scale_col, vpm._SCALE_ROWS, vpm._SCALE_ROWS,
+         (pf, R, alpha) -> (R(alpha),), true),
+        (vpm._sfs_beforeUJ_store_dev!, vpm._sfs_store_col, vpm._SFSB_IN, vpm._SFSB_OUT,
+         (pf, R, alpha) -> (pf.val.transposed, R(alpha)), true))
     @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
                                                 pf::EnzymeCore.Annotation{<:_DevField}, args...) where RT
         P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
@@ -331,6 +335,24 @@ for (f, fcol, rin, rout, margs, skip) in (
                       $margs(pf, eltype(P0), map(a -> a.val, args)...); skipstatic = $skip)
         return _no_scalar_adjoints(args...)
     end
+end
+
+# dynamic SFS coefficient after UJ (pseudo-three-level and two-level)
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._pseudo3level_afterUJ_broadcast!)},
+                                      ::Type{RT}, pf::EnzymeCore.Annotation{<:_DevField}, args...; kwargs...) where RT
+    P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
+    func.val(pf.val, map(a -> a.val, args)...; kwargs...)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, P0)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._pseudo3level_afterUJ_broadcast!)},
+                             ::Type{RT}, P0, pf::EnzymeCore.Annotation{<:_DevField}, SFS, alpha, rlxf, minC, maxC;
+                             force_positive::Bool = false, twolevel::Bool = false) where RT
+    if !(pf isa EnzymeCore.Const)
+        sc = vpm._sfs_afterUJ_consts(eltype(P0), pf.val, alpha.val, rlxf.val, minC.val, maxC.val, twolevel)
+        _col_adj!(pf.dval.particles, P0, size(P0, 2), vpm._sfs_afterUJ_col, vpm._SFSA_IN, vpm._SFSA_OUT,
+                  (pf.val.transposed, sc, Val(force_positive), !twolevel))
+    end
+    return _no_scalar_adjoints(SFS, alpha, rlxf, minC, maxC)
 end
 
 # backscatter clipping of the SFS model coefficient
