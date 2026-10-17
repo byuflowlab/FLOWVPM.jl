@@ -500,4 +500,99 @@ for (fn, corrected) in ((vpm.relax_pedrizzetti, false), (vpm.relax_correctedpedr
     end
 end
 
+#------- column gather / scatter / append (the Galerkin reset's device glue) -------#
+# _radix_oversize_gather: host copy of P[rows, idx]; _radix_oversize_scatter!:
+# P[rows, idx] = vals (host); _radix_oversize_mask_rows!: P[rows, idx] = 0;
+# add_particles!: columns np+1:np+k = block (host). Reverses move the cotangents
+# back between the device matrix and the host arrays.
+
+@kernel function ka_cols_add_kernel!(dP, @Const(V), @Const(idx), r0::Int32, nr::Int32, K::Int32)
+    k = @index(Global)
+    @inbounds if k <= K
+        i = idx[k]
+        for q in 1:nr
+            dP[r0 + q - 1, i] += V[q, k]
+        end
+    end
+end
+@kernel function ka_cols_take_kernel!(V, dP, @Const(idx), r0::Int32, nr::Int32, K::Int32)
+    k = @index(Global)
+    @inbounds if k <= K
+        i = idx[k]
+        for q in 1:nr
+            V[q, k] = dP[r0 + q - 1, i]; dP[r0 + q - 1, i] = zero(eltype(dP))
+        end
+    end
+end
+_devidx(dP, idx) = (d = KA.allocate(KA.get_backend(dP), Int32, length(idx)); copyto!(d, Int32.(idx)); d)
+function _cols_add!(dP, idx, rows, vals)                 # dP[rows, idx] += vals (host)
+    isempty(idx) && return nothing
+    backend = KA.get_backend(dP); K = length(idx)
+    V = KA.allocate(backend, eltype(dP), length(rows), K); copyto!(V, eltype(dP).(vals))
+    ka_cols_add_kernel!(backend, 64)(dP, V, _devidx(dP, idx), Int32(first(rows)), Int32(length(rows)), Int32(K); ndrange = K)
+    KA.synchronize(backend)
+    return nothing
+end
+function _cols_take!(dP, idx, rows)                       # host copy of dP[rows, idx], then zeroed
+    K = length(idx); backend = KA.get_backend(dP)
+    V = KA.zeros(backend, eltype(dP), length(rows), K)
+    K == 0 || ka_cols_take_kernel!(backend, 64)(V, dP, _devidx(dP, idx), Int32(first(rows)), Int32(length(rows)), Int32(K); ndrange = K)
+    KA.synchronize(backend)
+    return Array(V)
+end
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_gather)}, ::Type{RT},
+                                      P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows) where RT
+    h = func.val(P.val, idx.val, rows.val)
+    dh = EnzymeRules.needs_shadow(config) ? zero(h) : nothing
+    return EnzymeRules.AugmentedReturn(EnzymeRules.needs_primal(config) ? h : nothing, dh, dh)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_gather)}, ::Type{RT}, dh,
+                             P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows) where RT
+    (P isa EnzymeCore.Const || dh === nothing) || _cols_add!(P.dval, idx.val, rows.val, dh)
+    return (nothing, nothing, nothing)
+end
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_scatter!)}, ::Type{RT},
+                                      P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows, vals) where RT
+    func.val(P.val, idx.val, rows.val, vals.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_scatter!)}, ::Type{RT}, tape,
+                             P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows, vals) where RT
+    if !(P isa EnzymeCore.Const)
+        g = _cols_take!(P.dval, idx.val, rows.val)          # the overwritten entries' cotangents
+        vals isa EnzymeCore.Const || (vals.dval .+= g)
+    end
+    return (nothing, nothing, nothing, nothing)
+end
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_mask_rows!)}, ::Type{RT},
+                                      P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows) where RT
+    func.val(P.val, idx.val, rows.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._radix_oversize_mask_rows!)}, ::Type{RT}, tape,
+                             P::EnzymeCore.Annotation{<:AbstractGPUArray}, idx, rows) where RT
+    P isa EnzymeCore.Const || _cols_take!(P.dval, idx.val, rows.val)
+    return (nothing, nothing, nothing)
+end
+
+const _AnyDevField = vpm.ParticleField{<:AbstractFloat, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:AbstractGPUArray}
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.add_particles!)}, ::Type{RT},
+                                      pf::EnzymeCore.Annotation{<:_AnyDevField}, block) where RT
+    np0 = pf.val.np
+    func.val(pf.val, block.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, np0)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.add_particles!)}, ::Type{RT}, np0,
+                             pf::EnzymeCore.Annotation{<:_AnyDevField}, block) where RT
+    if !(pf isa EnzymeCore.Const)
+        k = size(block.val, 2)
+        g = _cols_take!(pf.dval.particles, collect(np0+1:np0+k), 1:vpm.nfields)
+        block isa EnzymeCore.Const || (block.dval .+= g)
+    end
+    return (nothing, nothing)
+end
+
 end # module
