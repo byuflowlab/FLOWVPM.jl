@@ -79,6 +79,11 @@ end
     W = cs_omega(X0, G0, S0, CS_PROBES)
     @test sqrt(sum(abs2, cs_omega(X, G, S, CS_PROBES) .- W) / sum(abs2, W)) <= 2e-2
     @test abs(sum(G[3, :]) - sum(G0[3, :])) <= 2e-3 * sum(G0[3, :])
+    # the circulation constraint is exact when no edge point is pruned after the solve
+    pf = FLOWVPM.ParticleField(2n, Float64); FLOWVPM.add_particles!(pf, blk)
+    FLOWVPM.galerkin_shrink!(pf, idx, CS_SGM0; galerkin = FLOWVPM.GalerkinReset(; prune_tol = 0))
+    _, G, _, _ = cs_state(pf)
+    @test vec(sum(G; dims = 2)) ≈ vec(sum(G0; dims = 2)) rtol = 1e-12
 end
 
 @testset "CoreSpreading: static particles are neither grown nor reset" begin

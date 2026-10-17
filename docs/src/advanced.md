@@ -167,6 +167,7 @@ Lengths are in units of `sgm0`.
 | `gram_cut` | `5.0` | overlap cutoff in combined core widths (4 is not positive definite on real wakes) | keep 4.5-5 |
 | `block_cell`, `block_cap` | `3.0`, `512` | block-Jacobi blocks (`block_cap = 0`: plain CG) | rarely |
 | `gram_mem` | `2^30` (1 GiB) | CPU memory for stored overlap pairs; the rest is evaluated on the fly | raise for speed if memory allows |
+| `circulation` | `true` | keep the circulation: the strengths of the reset particles, halo increments and edge points sum to the old ones (projected CG, no extra solve) | `false` for the unconstrained L2 fit |
 
 ### Accuracy and cost
 
