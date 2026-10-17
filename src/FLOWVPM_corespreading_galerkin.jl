@@ -335,6 +335,32 @@ function _gal_blocks(S::_GalSet, d::Vector{Float64}, cut2, h, cap, ::Type{TF}) w
 end
 _gal_precond!(z, r, blk::NamedTuple) = _gal_block_apply!(z, r, blk)
 _gal_precond!(z, r, ::Nothing) = (z .= r)
+
+# Circulation constraint: the unknowns' strengths sum (per component) to the old
+# subset's. Projected PCG: the preconditioned residual is projected onto the
+# constraint with w = B^-1 e (B the preconditioner, e the ones), so iterates started
+# on it stay on it and the CG converges to the constrained minimum. The residual
+# tends to nu e (nu the multiplier, per component), not to zero: r takes out the
+# same e-component (r - s e has the projected z as its preconditioned residual and
+# the same r'z), so it goes to zero and the steps after convergence stay at round-off
+# instead of dividing round-off by round-off.
+struct _GalCon{B,TW,TE,T}
+    blk::B; w::TW; e::TE; sw::T
+end
+function _gal_precond!(z, r, c::_GalCon)
+    _gal_precond!(z, r, c.blk)
+    s = (z * c.e) ./ c.sw
+    z .-= c.w .* s; r .-= s
+    return z
+end
+function _GalCon(blk, x)
+    e3 = fill!(similar(x), 1); w3 = _gal_precond!(similar(x), e3, blk)
+    w = w3[1:1, :]; e = fill!(similar(x, size(x, 2)), 1)
+    _gal_free!(e3, w3)
+    return _GalCon(blk, w, e, eltype(x)(sum(Array(w))))
+end
+# moves x onto the constraint sum(x, dims=2) = g along w
+_gal_onto!(x, c::_GalCon, g) = (x .+= c.w .* ((_gal_to(x, g) .- x * c.e) ./ c.sw); x)
 _gal_block_apply!(z, r, blk) = _cs_block_apply!(z, r, (; blk..., nblocks = length(blk.start) - 1))
 
 # Preconditioned conjugate gradient on (M + D) x = f, the three components stacked
@@ -493,6 +519,10 @@ Parameters of the Galerkin core-size reset (`galerkin_shrink!`, the reset of
   as many rows as fit in this many bytes (1 GiB: 1.3e8 pairs) and evaluate the rest on
   the fly (plus 40 bytes per unknown and thread); device fields evaluate them all on
   the fly.
+- `circulation = true`: the solve keeps the circulation (the sum of the strengths of
+  the reset particles, halo increments and edge points equals the old subset's, per
+  component) by a projected CG at no extra solve; the minimum L2 field error under
+  that constraint. Exact up to the edge points pruned after the solve.
 
 The particle count changes (edge points in, thinned particles out): the field needs
 `maxparticles` headroom (about +1 % per reset on the 5MW wake; edge points that do
@@ -514,13 +544,15 @@ struct GalerkinReset{R}
     itmax::Int
     tol::R
     gram_mem::Int
+    circulation::Bool
     ws::_GalWork
 end
 GalerkinReset{R}(; halo_tail=2.0, halo_min=1.0, halo_tol=3e-3, edge_offsets=[1.0, 2.0], edge_spacing=0.7,
                    edge_tol=1e-2, prune_tol=3e-3, thin=0.5, damping=1e-2, gram_cut=5.0,
-                   block_cell=3.0, block_cap=512, itmax=1000, tol=1e-4, gram_mem=2^30, ws=_GalWork()) where R =
+                   block_cell=3.0, block_cap=512, itmax=1000, tol=1e-4, gram_mem=2^30, circulation=true,
+                   ws=_GalWork()) where R =
     GalerkinReset{R}(halo_tail, halo_min, halo_tol, R.(edge_offsets), edge_spacing, edge_tol, prune_tol,
-                     thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem, ws)
+                     thin, damping, gram_cut, block_cell, block_cap, itmax, tol, gram_mem, circulation, ws)
 GalerkinReset(; optargs...) = GalerkinReset{FLOAT_TYPE}(; optargs...)
 Base.convert(::Type{GalerkinReset{R}}, g::GalerkinReset) where R =
     GalerkinReset{R}(; (k => getfield(g, k) for k in fieldnames(GalerkinReset))...)
@@ -688,11 +720,15 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     blk = gr.block_cap > 0 ? _gal_blocks(U, Float64.(vec(Array(d))), cut2, Float64(gr.block_cell) * sol.sgm0, gr.block_cap, R) : nothing
     mem += blk === nothing ? 0 : sizeof(R) * length(blk.minv)
     blk = blk === nothing || P isa Matrix ? blk : map(a -> copyto!(similar(P, eltype(a), length(a)), a), blk)
+    gr.circulation && (blk = _GalCon(blk, x))
     t3 = time()
 
     if solve
         r = similar(x); p = similar(x); Ap = similar(x); z = similar(x)
+        gr.circulation && _gal_onto!(x, blk, vec(sum(Go; dims = 2)))
         its, conv = _gal_cg!(x, r, p, Ap, z, f, d, A, Ud, cut2, blk, gr.itmax, Float64(gr.tol), oo)
+        # the constrained CG's r is short of its e-component: the true one for the error
+        gr.circulation && (_gal_gram!(r, A, Ud, x, cut2); r .= f .- r .- d .* x)
         sol.its = its; sol.conv = conv; sol.err = _gal_ferr(x, r, f, d, oo)
     end
     c = zeros(3, N); c[:, uperm] .= Float64.(Array(x))
@@ -702,7 +738,7 @@ function _gal_solve_sys(Y::Matrix{Float64}, v::Vector{Float64}, Xo::Matrix{Float
     sol.t = (t1 - t0, t2 - t1, t3 - t2, t4 - t3)
     P isa Matrix && return c, (; U, uperm, O, operm, God, d, A, blk, cut2), x
     # device fields: the system is freed, not returned (the adjoint is host only)
-    _gal_free!(Ud, Od, God, f, fo, x, r, p, Ap, z, d, blk)
+    _gal_free!(Ud, Od, God, f, fo, x, r, p, Ap, z, d, (blk isa _GalCon ? (blk.blk, blk.w, blk.e) : (blk,))...)
     return c, (; A = nothing), nothing
 end
 
@@ -720,6 +756,12 @@ function _gal_solve_adjoint(sys, x, cbar, sol::_GalSolve)
     # quadrature), so 2 tol costs <2 % of the accuracy and saves ~15 % of the iterations
     _gal_cg!(lam, r, p, Ap, z, b, sys.d, sys.A, U, sys.cut2, sys.blk, gr.itmax, 2 * Float64(gr.tol), 0.0)
     gY = zeros(3, N); gv = zeros(N); gXo = zeros(3, K); gvo = zeros(K); gGo = zeros(3, K)
+    # constrained: lambda has zero sum and the residual cbar - (M + D) lambda tends to
+    # nu e; nu, per component, is the adjoint of the constraint's right side sum(Go)
+    if sys.blk isa _GalCon
+        _gal_gram!(Ap, sys.A, U, lam, sys.cut2); Ap .+= sys.d .* lam
+        gGo .+= sum(b .- Ap; dims = 2) ./ N
+    end
     _gal_pair_adj!(gY, gv, gXo, gvo, gGo, U.x, U.v, lam, O, sys.God, sys.cut2, 1.0)    # lambda' f
     _gal_pair_adj!(gY, gv, gY, gv, nothing, U.x, U.v, lam, U, x, sys.cut2, -1.0)        # -lambda' M c
     for i in 1:N                                       # -lambda' D c, D_ii = damping N(0; 2 v_i)
