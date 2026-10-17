@@ -924,7 +924,7 @@ end
     i = @index(Global)
     @inbounds if i <= np
         T = eltype(P)
-        acc = ntuple(_ -> zero(T), 9)
+        acc = ntuple(_ -> zero(T), Val(9))
         if P[st, i] == zero(T)
             A = T(sqrt(2 / pi))
             xi = P[1, i]; yi = P[2, i]; zi = P[3, i]
@@ -970,8 +970,8 @@ end
                 z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
                 dz_ = z * (rho2 - 3)
                 gj1 = P[4, j]; gj2 = P[5, j]; gj3 = P[6, j]
-                s = FLOWVPM._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)..., gj1, gj2, gj3, transposed)
-                ds = FLOWVPM._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj1, gj2, gj3, transposed)
+                s = FLOWVPM._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], Val(9))..., gj1, gj2, gj3, transposed)
+                ds = FLOWVPM._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], Val(9))..., gj1, gj2, gj3, transposed)
                 e1 += dz_ * s[1] + z * ds[1]
                 e2 += dz_ * s[2] + z * ds[2]
                 e3 += dz_ * s[3] + z * ds[3]

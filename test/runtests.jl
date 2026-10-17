@@ -42,6 +42,7 @@ end
 
 if cuda_functional
     include("runtests_gpu.jl")
+    include("runtests_gpu_enzyme.jl")
 end
 
 # Independent ForwardDiff oracle for the Gaussian-erf velocity Jacobian,
