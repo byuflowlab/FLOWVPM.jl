@@ -98,28 +98,34 @@ end
 
 #------- SFS stretching Estr (gpu_estr_direct!) -------#
 # Reverse of SFS_t += sum_s z(r) M(J_t - J_s) Gamma_s over non-static t != s
-# (src/FLOWVPM_adjoint.jl, ext/FLOWVPMEnzymeExt.jl `_estr_reverse!` for the
-# derivation): one thread per source (B: its x, Gamma, sigma cotangents and
-# b = sum_t z w_t), one per target (C: its x cotangent and a = sum_s z Gamma_s),
-# then one per particle for the J and Gamma terms. w = SFSbar (zero at static targets).
+# (ext/FLOWVPMEnzymeExt.jl `_estr_reverse!` for the derivation): one thread per
+# source (B: its x, Gamma, sigma cotangents and b = sum_t z w_t), one per target
+# (C: its x cotangent and a = sum_s z Gamma_s), then one per particle for the J and
+# Gamma terms. As the host version, general in zd(q) = (zeta, dzeta/dq) and in where
+# J is read (Jm rows jr0:jr0+8), w = the output cotangent (W rows wr0:wr0+2; zero at
+# static targets) and the J cotangent goes (dJm rows dr0:dr0+8).
 
 @inline _devstatic(P, st, i) = !iszero(P[st, i])
+struct _ZetaD{F}; zeta::F; end
+@inline (z::_ZetaD)(q) = vpm._zeta_dzeta(z.zeta, q)
+struct _ZetaDSigma end
+@inline (::_ZetaDSigma)(q) = vpm._zd_dsigma(q)
 
-@kernel function ka_estr_adj_source_kernel!(B, @Const(P), @Const(dP), n::Int32, zeta, transposed::Bool,
-                                            st::Int32, j0::Int32, f0::Int32)
+@kernel function ka_estr_adj_source_kernel!(B, @Const(P), @Const(Jm), @Const(W), n::Int32, zd, transposed::Bool,
+                                            st::Int32, jr0::Int32, wr0::Int32)
     s = @index(Global)
     @inbounds if s <= n
         xs = _dev3(P, 1, s); G = _dev3(P, 4, s); sgm = P[7, s]
         dxs = zero(xs); dGy = zero(G); dsg = zero(sgm); b = zero(G)
         if !_devstatic(P, st, s)
-            h = vpm._M(_dev9(P, j0, s), transposed) * G
+            h = vpm._M(_dev9(Jm, jr0, s), transposed) * G
             t = Int32(1)
             while t <= n
-                w = _dev3(dP, f0, t)
+                w = _dev3(W, wr0, t)
                 if t != s && !_devstatic(P, st, t) && !iszero(w)
-                    y = vpm._M(_dev9(P, j0, t), transposed)' * w
+                    y = vpm._M(_dev9(Jm, jr0, t), transposed)' * w
                     d = xs - _dev3(P, 1, t); r = sqrt(d[1]*d[1] + d[2]*d[2] + d[3]*d[3])
-                    zq, dzq = vpm._zeta_dzeta(zeta, r/sgm)
+                    zq, dzq = zd(r/sgm)
                     z = zq/(sgm*sgm*sgm)
                     zbar = (G[1]*y[1] + G[2]*y[2] + G[3]*y[3]) - (h[1]*w[1] + h[2]*w[2] + h[3]*w[3])
                     b += z*w; dGy += z*y
@@ -138,21 +144,21 @@ end
     end
 end
 
-@kernel function ka_estr_adj_target_kernel!(C, @Const(P), @Const(dP), n::Int32, zeta, transposed::Bool,
-                                            st::Int32, j0::Int32, f0::Int32)
+@kernel function ka_estr_adj_target_kernel!(C, @Const(P), @Const(Jm), @Const(W), n::Int32, zd, transposed::Bool,
+                                            st::Int32, jr0::Int32, wr0::Int32)
     t = @index(Global)
     @inbounds if t <= n
-        xt = _dev3(P, 1, t); w = _dev3(dP, f0, t)
+        xt = _dev3(P, 1, t); w = _dev3(W, wr0, t)
         dxt = zero(xt); a = zero(xt)
         if !_devstatic(P, st, t) && !iszero(w)
-            y = vpm._M(_dev9(P, j0, t), transposed)' * w
+            y = vpm._M(_dev9(Jm, jr0, t), transposed)' * w
             s = Int32(1)
             while s <= n
                 if s != t && !_devstatic(P, st, s)
                     G = _dev3(P, 4, s); sgm = P[7, s]
-                    h = vpm._M(_dev9(P, j0, s), transposed) * G
+                    h = vpm._M(_dev9(Jm, jr0, s), transposed) * G
                     d = _dev3(P, 1, s) - xt; r = sqrt(d[1]*d[1] + d[2]*d[2] + d[3]*d[3])
-                    zq, dzq = vpm._zeta_dzeta(zeta, r/sgm)
+                    zq, dzq = zd(r/sgm)
                     z = zq/(sgm*sgm*sgm)
                     a += z*G
                     if r > zero(r)
@@ -169,12 +175,12 @@ end
     end
 end
 
-@kernel function ka_estr_adj_finish_kernel!(dP, @Const(P), @Const(B), @Const(C), n::Int32, transposed::Bool,
-                                            st::Int32, j0::Int32, f0::Int32)
+@kernel function ka_estr_adj_finish_kernel!(dP, dJm, @Const(P), @Const(Jm), @Const(W), @Const(B), @Const(C), n::Int32,
+                                            transposed::Bool, st::Int32, jr0::Int32, wr0::Int32, dr0::Int32)
     k = @index(Global)
     @inbounds if k <= n
-        G = _dev3(P, 4, k); Mk = vpm._M(_dev9(P, j0, k), transposed)
-        w = _devstatic(P, st, k) ? zero(G) : _dev3(dP, f0, k)
+        G = _dev3(P, 4, k); Mk = vpm._M(_dev9(Jm, jr0, k), transposed)
+        w = _devstatic(P, st, k) ? zero(G) : _dev3(W, wr0, k)
         a = _dev3(C, 4, k); b = _dev3(B, 8, k)
         dG = _dev3(B, 4, k) - Mk'*b
         dJ = vpm._M(w*a', transposed) - vpm._M(b*G', transposed)
@@ -183,18 +189,21 @@ end
         end
         dP[7, k] += B[7, k]
         for i in 1:9
-            dP[j0 + i - 1, k] += dJ[i]
+            dJm[dr0 + i - 1, k] += dJ[i]
         end
     end
 end
 
-function _estr_reverse_dev!(dP, P, n, zeta, transposed)
+function _estr_reverse_dev!(dP, P, n, zd, transposed, W = dP, wr0 = first(vpm.SFS_INDEX),
+                            Jm = P, jr0 = first(vpm.J_INDEX), dJm = dP, dr0 = first(vpm.J_INDEX))
     backend = KA.get_backend(dP); T = eltype(dP)
-    st = Int32(vpm.STATIC_INDEX); j0 = Int32(first(vpm.J_INDEX)); f0 = Int32(first(vpm.SFS_INDEX))
+    st = Int32(vpm.STATIC_INDEX)
     B = KA.zeros(backend, T, 10, n); C = KA.zeros(backend, T, 6, n)
-    ka_estr_adj_source_kernel!(backend, 256)(B, P, dP, Int32(n), zeta, transposed, st, j0, f0; ndrange = n)
-    ka_estr_adj_target_kernel!(backend, 256)(C, P, dP, Int32(n), zeta, transposed, st, j0, f0; ndrange = n)
-    ka_estr_adj_finish_kernel!(backend, 256)(dP, P, B, C, Int32(n), transposed, st, j0, f0; ndrange = n)
+    ka_estr_adj_source_kernel!(backend, 256)(B, P, Jm, W, Int32(n), zd, transposed, st, Int32(jr0), Int32(wr0); ndrange = n)
+    ka_estr_adj_target_kernel!(backend, 256)(C, P, Jm, W, Int32(n), zd, transposed, st, Int32(jr0), Int32(wr0); ndrange = n)
+    # dJm may alias dP (Estr): one kernel writes both, each thread its own column
+    ka_estr_adj_finish_kernel!(backend, 256)(dP, dJm, P, Jm, W, B, C, Int32(n), transposed, st, Int32(jr0), Int32(wr0),
+                                            Int32(dr0); ndrange = n)
     KA.synchronize(backend)
     return nothing
 end
@@ -208,7 +217,112 @@ end
 function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.gpu_estr_direct!)}, ::Type{RT}, P,
                              pf::EnzymeCore.Annotation{<:_DevField}) where RT
     EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeGPUExt: batched reverse not supported")
-    pf isa EnzymeCore.Const || _estr_reverse_dev!(pf.dval.particles, P, size(P, 2), pf.val.kernel.zeta, pf.val.transposed)
+    pf isa EnzymeCore.Const || _estr_reverse_dev!(pf.dval.particles, P, size(P, 2), _ZetaD(pf.val.kernel.zeta), pf.val.transposed)
+    return (nothing,)
+end
+
+#------- analytic core-scaling derivatives (dsigma_direct!) -------#
+# M[1:3] = op(dJ) Gamma, M[4:6] = the Estr sum with zeta (q^2 - 3) on J plus the Estr
+# sum with zeta on dJ, both written; dJ the all-pairs dJ/dalpha. Reverse as the host
+# `_dsigma_reverse!`: the two Estr reverses, op' for M[1:3], then the dJ pair adjoint.
+
+@kernel function ka_dsigma_w_kernel!(WL, WE, dP, @Const(P), n::Int32, st::Int32, m0::Int32)
+    i = @index(Global)
+    @inbounds if i <= n
+        act = !_devstatic(P, st, i)
+        for a in 1:3
+            WL[a, i] = act ? dP[m0 + a - 1, i] : zero(eltype(dP))
+            WE[a, i] = act ? dP[m0 + 2 + a, i] : zero(eltype(dP))
+        end
+        if act                            # the outputs are overwritten
+            for a in 0:5
+                dP[m0 + a, i] = zero(eltype(dP))
+            end
+        end
+    end
+end
+
+@kernel function ka_dsigma_op_adj_kernel!(dP, ddJ, @Const(P), @Const(dJ), @Const(WL), n::Int32, transposed::Bool, st::Int32)
+    i = @index(Global)
+    @inbounds if i <= n && !_devstatic(P, st, i)
+        G = _dev3(P, 4, i); wl = _dev3(WL, 1, i)
+        dG = vpm._M(_dev9(dJ, 1, i), transposed)'*wl; dD = vpm._M(wl*G', transposed)
+        for a in 1:3; dP[3 + a, i] += dG[a]; end
+        for a in 1:9; ddJ[a, i] += dD[a]; end
+    end
+end
+
+@kernel function ka_dsigma_pair_source_kernel!(dP, @Const(P), @Const(ddJ), n::Int32, st::Int32)
+    j = @index(Global)
+    @inbounds if j <= n
+        sgm = P[7, j]
+        xj = _dev3(P, 1, j); G = _dev3(P, 4, j)
+        dxj = zero(xj); dG = zero(G); ds = zero(sgm)
+        if sgm > zero(sgm)
+            i = Int32(1)
+            while i <= n
+                d = _dev3(P, 1, i) - xj
+                if i != j && !_devstatic(P, st, i) && !iszero(d[1]*d[1] + d[2]*d[2] + d[3]*d[3])
+                    dbar, Gbar, sbar = vpm._dsigma_pair_adj(d, G, sgm, _dev9(ddJ, 1, i))
+                    dxj -= dbar; dG += Gbar; ds += sbar
+                end
+                i += Int32(1)
+            end
+        end
+        for a in 1:3
+            dP[a, j] += dxj[a]; dP[3 + a, j] += dG[a]
+        end
+        dP[7, j] += ds
+    end
+end
+
+@kernel function ka_dsigma_pair_target_kernel!(dX, @Const(P), @Const(ddJ), n::Int32, st::Int32)
+    i = @index(Global)
+    @inbounds if i <= n
+        xi = _dev3(P, 1, i); acc = zero(xi)
+        if !_devstatic(P, st, i)
+            s = _dev9(ddJ, 1, i)
+            j = Int32(1)
+            while j <= n
+                sgm = P[7, j]
+                d = xi - _dev3(P, 1, j)
+                if j != i && sgm > zero(sgm) && !iszero(d[1]*d[1] + d[2]*d[2] + d[3]*d[3])
+                    dbar, _, _ = vpm._dsigma_pair_adj(d, _dev3(P, 4, j), sgm, s)
+                    acc += dbar
+                end
+                j += Int32(1)
+            end
+        end
+        dX[1, i] = acc[1]; dX[2, i] = acc[2]; dX[3, i] = acc[3]
+    end
+end
+
+function _dsigma_reverse_dev!(dP, P, dJ, transposed)
+    backend = KA.get_backend(dP); T = eltype(dP); n = size(P, 2)
+    st = Int32(vpm.STATIC_INDEX); m0 = Int32(first(vpm.M_INDEX))
+    WL = KA.zeros(backend, T, 3, n); WE = KA.zeros(backend, T, 3, n); ddJ = KA.zeros(backend, T, 9, n)
+    ka_dsigma_w_kernel!(backend, 256)(WL, WE, dP, P, Int32(n), st, m0; ndrange = n)
+    _estr_reverse_dev!(dP, P, n, _ZetaDSigma(), transposed, WE, 1)
+    _estr_reverse_dev!(dP, P, n, _ZetaD(vpm.zeta_gauserf), transposed, WE, 1, dJ, 1, ddJ, 1)
+    ka_dsigma_op_adj_kernel!(backend, 256)(dP, ddJ, P, dJ, WL, Int32(n), transposed, st; ndrange = n)
+    dX = KA.zeros(backend, T, 3, n)
+    ka_dsigma_pair_target_kernel!(backend, 256)(dX, P, ddJ, Int32(n), st; ndrange = n)
+    ka_dsigma_pair_source_kernel!(backend, 256)(dP, P, ddJ, Int32(n), st; ndrange = n)
+    view(dP, 1:3, 1:n) .+= dX
+    KA.synchronize(backend)
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.dsigma_direct!)}, ::Type{RT},
+                                      pf::EnzymeCore.Annotation{<:_DevField}) where RT
+    pf isa EnzymeCore.Const && return EnzymeRules.AugmentedReturn(func.val(pf.val), nothing, nothing)
+    P = pf.val.particles[:, 1:pf.val.np]
+    return EnzymeRules.AugmentedReturn(nothing, nothing, (P, vpm._dsigma_direct!(pf.val)))
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.dsigma_direct!)}, ::Type{RT}, tape,
+                             pf::EnzymeCore.Annotation{<:_DevField}) where RT
+    EnzymeRules.width(config) == 1 || error("FLOWVPMEnzymeGPUExt: batched reverse not supported")
+    tape === nothing || _dsigma_reverse_dev!(pf.dval.particles, tape[1], tape[2], pf.val.transposed)
     return (nothing,)
 end
 

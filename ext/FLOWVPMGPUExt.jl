@@ -916,6 +916,90 @@ function FLOWVPM.gpu_estr_direct!(pfield::FLOWVPM.ParticleField{R,F,V,TUinf,S,Tk
     return nothing
 end
 
+#------- analytic core-scaling derivatives (dsigma_direct!), all pairs -------#
+# Ports of FLOWVPM._dsigma_dJ / _dsigma_LE! (src/FLOWVPM_subfilterscale_models.jl),
+# one thread per target, in the host loops' operation order.
+
+@kernel function ka_dsigma_dj_kernel!(dJ, @Const(P), np::Int32, st::Int32)
+    i = @index(Global)
+    @inbounds if i <= np
+        T = eltype(P)
+        acc = ntuple(_ -> zero(T), 9)
+        if P[st, i] == zero(T)
+            A = T(sqrt(2 / pi))
+            xi = P[1, i]; yi = P[2, i]; zi = P[3, i]
+            j = Int32(1)
+            while j <= np
+                sigma = P[7, j]
+                if j != i && sigma > zero(T)
+                    dx = xi - P[1, j]; dy = yi - P[2, j]; dz = zi - P[3, j]
+                    r2 = dx * dx + dy * dy + dz * dz
+                    if r2 != zero(T)
+                        rho2 = r2 / (sigma * sigma)
+                        invr = inv(sqrt(r2))
+                        G = A * rho2 * sqrt(rho2) * exp(-rho2 / 2)
+                        h = fmm._vortex_pair_ugh(dx, dy, dz, r2, invr, P[4, j], P[5, j], P[6, j], -G, rho2 * G)
+                        acc = acc .+ ntuple(k -> h[4 + k], Val(9))
+                    end
+                end
+                j += Int32(1)
+            end
+        end
+        for k in 1:9
+            dJ[k, i] = acc[k]
+        end
+    end
+end
+
+@kernel function ka_dsigma_le_kernel!(P, @Const(dJ), np::Int32, transposed::Bool, st::Int32, j0::Int32, m0::Int32)
+    i = @index(Global)
+    @inbounds if i <= np && P[st, i] == zero(eltype(P))
+        T = eltype(P)
+        K1 = T((2pi)^(-1.5))
+        gi1 = P[4, i]; gi2 = P[5, i]; gi3 = P[6, i]
+        L = FLOWVPM._sfs_apply_op(dJ[1, i], dJ[2, i], dJ[3, i], dJ[4, i], dJ[5, i], dJ[6, i],
+            dJ[7, i], dJ[8, i], dJ[9, i], gi1, gi2, gi3, transposed)
+        xi = P[1, i]; yi = P[2, i]; zi = P[3, i]
+        e1 = zero(T); e2 = zero(T); e3 = zero(T)
+        j = Int32(1)
+        while j <= np
+            if j != i && P[st, j] == zero(T)
+                sigma = P[7, j]
+                dx = xi - P[1, j]; dy = yi - P[2, j]; dz = zi - P[3, j]
+                rho2 = (dx * dx + dy * dy + dz * dz) / (sigma * sigma)
+                z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
+                dz_ = z * (rho2 - 3)
+                gj1 = P[4, j]; gj2 = P[5, j]; gj3 = P[6, j]
+                s = FLOWVPM._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], 9)..., gj1, gj2, gj3, transposed)
+                ds = FLOWVPM._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], 9)..., gj1, gj2, gj3, transposed)
+                e1 += dz_ * s[1] + z * ds[1]
+                e2 += dz_ * s[2] + z * ds[2]
+                e3 += dz_ * s[3] + z * ds[3]
+            end
+            j += Int32(1)
+        end
+        P[m0, i] = L[1]; P[m0 + 1, i] = L[2]; P[m0 + 2, i] = L[3]
+        P[m0 + 3, i] = e1; P[m0 + 4, i] = e2; P[m0 + 5, i] = e3
+    end
+end
+
+function FLOWVPM.gpu_dsigma_dJ(pfield::GPUField)
+    np = pfield.np; backend = KA.get_backend(pfield.particles)
+    dJ = KA.zeros(backend, eltype(pfield.particles), 9, np)
+    np == 0 && return dJ
+    ka_dsigma_dj_kernel!(backend, 256)(dJ, pfield.particles, Int32(np), Int32(FLOWVPM.STATIC_INDEX); ndrange = np)
+    KA.synchronize(backend)
+    return dJ
+end
+function FLOWVPM.gpu_dsigma_LE!(pfield::GPUField, dJ)
+    np = pfield.np; np == 0 && return nothing
+    backend = KA.get_backend(pfield.particles)
+    ka_dsigma_le_kernel!(backend, 256)(pfield.particles, dJ, Int32(np), pfield.transposed, Int32(FLOWVPM.STATIC_INDEX),
+        Int32(first(FLOWVPM.J_INDEX)), Int32(first(FLOWVPM.M_INDEX)); ndrange = np)
+    KA.synchronize(backend)
+    return nothing
+end
+
 #------- fused dynamic-SFS pointwise passes -------#
 #
 # `_pseudo3level_{before,after}UJ_broadcast!` (src/FLOWVPM_subfilterscale_gpu.jl)

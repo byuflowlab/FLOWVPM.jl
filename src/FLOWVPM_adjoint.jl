@@ -220,3 +220,26 @@ end
 # the two device launches around the test-width UJ (GPU extension)
 function _sfs_scale_sigma_dev! end
 function _sfs_beforeUJ_store_dev! end
+
+# two-level dynamic SFS, analytic core-scaling derivatives (`dsigma_direct!`): the
+# zeta factor of the dE term (zeta (q^2 - 3) and its q-derivative), and the reverse
+# of one dJ pair: (dbar, Gammabar, sigmabar) from dJbar = s (ext/FLOWVPMEnzymeExt.jl)
+@inline _zd_dsigma(q) = (z = zeta_gauserf(q); (z*(q*q - 3), z*q*(5 - q*q)))
+@inline function _dsigma_pair_adj(d, G, sgm, s)
+    k = oftype(sgm, const4)
+    r2 = dot(d, d); r = sqrt(r2); r3 = r2*r; is2 = 1/(sgm*sgm)
+    e = oftype(sgm, sqrt(2/pi))*exp(-r2*is2/2)/(sgm*sgm*sgm)
+    Ah = e*r3*is2; Bh = k*e
+    c = (-k/r3) * cross(d, G)
+    sd = s*d
+    tau = SVector(s[2,3] - s[3,2], s[3,1] - s[1,3], s[1,2] - s[2,1])
+    Q = dot(c, sd); T = dot(tau, G)
+    v = Ah*sd
+    dbar = (-k/r3)*cross(G, v) - (3*dot(v, c)/r2)*d + Ah*(s'*c) + ((Q*Ah*(3/r - r*is2) - T*Bh*r*is2)/r)*d
+    Gbar = (-k/r3)*cross(v, d) + Bh*tau
+    sbar = (Q*Ah*(r2*is2 - 5) + T*Bh*(r2*is2 - 3))/sgm
+    return dbar, Gbar, sbar
+end
+# device dsigma_direct! (GPU extension): dJ (9 x np), then L and dE into M[1:6]
+function gpu_dsigma_dJ end
+function gpu_dsigma_LE! end

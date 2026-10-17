@@ -256,24 +256,9 @@ end
 #   on J plus the Estr sum with zeta on dJ (both written, not accumulated).
 # Reverse: the two Estr reverses, then op' for M[1:3], then one pair loop for dJ.
 # ------------------------------------------------------------------------------
-_zd_dsigma(q) = (z = vpm.zeta_gauserf(q); (z*(q*q - 3), z*q*(5 - q*q)))
+const _zd_dsigma = vpm._zd_dsigma
 
-# reverse of one dJ pair: (dbar, Gammabar, sigmabar) from dJbar = s
-@inline function _dsigma_pair_adj(d, G, sgm, s)
-    k = vpm.const4
-    r2 = dot(d, d); r = sqrt(r2); r3 = r2*r; is2 = 1/(sgm*sgm)
-    e = sqrt(2/pi)*exp(-r2*is2/2)/(sgm*sgm*sgm)
-    Ah = e*r3*is2; Bh = k*e
-    c = (-k/r3) * cross(d, G)
-    sd = s*d
-    tau = SVector(s[2,3] - s[3,2], s[3,1] - s[1,3], s[1,2] - s[2,1])
-    Q = dot(c, sd); T = dot(tau, G)
-    v = Ah*sd
-    dbar = (-k/r3)*cross(G, v) - (3*dot(v, c)/r2)*d + Ah*(s'*c) + ((Q*Ah*(3/r - r*is2) - T*Bh*r*is2)/r)*d
-    Gbar = (-k/r3)*cross(v, d) + Bh*tau
-    sbar = (Q*Ah*(r2*is2 - 5) + T*Bh*(r2*is2 - 3))/sgm
-    return dbar, Gbar, sbar
-end
+const _dsigma_pair_adj = vpm._dsigma_pair_adj
 
 function _dsigma_reverse!(dP, P, dJ, transposed)
     X, Gm, S, M = vpm.X_INDEX, vpm.GAMMA_INDEX, vpm.SIGMA_INDEX, vpm.M_INDEX

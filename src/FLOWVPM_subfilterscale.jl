@@ -880,12 +880,7 @@ function dynamicprocedure_twolevel_afterUJ(pfield, SFS::SubFilterScale{R},
                                        minC::Real, maxC::Real;
                                        force_positive::Bool=false) where {R}
     _sfs_dsigma_request!(pfield, false)
-    if !_sfs_dsigma_delivered(pfield)
-        pfield.particles isa Array || error("two-level dynamic procedure: the " *
-            "evaluation delivered no core-scaling derivatives; a device field " *
-            "needs the radix FMM path (UJ_fmm_gpu!)")
-        dsigma_direct!(pfield)
-    end
+    _sfs_dsigma_delivered(pfield) || dsigma_direct!(pfield)     # all pairs, host or device
     return dynamicprocedure_pseudo3level_afterUJ(pfield, SFS, alpha, rlxf, minC, maxC;
         force_positive, twolevel=true)
 end

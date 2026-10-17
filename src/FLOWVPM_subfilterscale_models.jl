@@ -256,10 +256,10 @@ current velocity gradient in `J_INDEX`; gaussianerf kernel only. Sources of
 dsigma_direct!(pfield::ParticleField) = (_dsigma_direct!(pfield); nothing)
 # ... returning ∂J (FLOWVPMEnzymeExt's reverse rule keeps it)
 function _dsigma_direct!(pfield)
-    pfield.particles isa Array || error("dsigma_direct! is a host (Array) reference")
     pfield.kernel.zeta === zeta_gauserf || error("dsigma_direct!: gaussianerf kernel only")
-    dJ = _dsigma_dJ(pfield)
-    _dsigma_LE!(pfield, dJ)
+    host = pfield.particles isa Array
+    dJ = host ? _dsigma_dJ(pfield) : gpu_dsigma_dJ(pfield)          # device: ext/FLOWVPMGPUExt.jl
+    host ? _dsigma_LE!(pfield, dJ) : gpu_dsigma_LE!(pfield, dJ)
     _sfs_dsigma_delivered!(pfield, true)
     return dJ
 end
