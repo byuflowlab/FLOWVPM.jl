@@ -62,6 +62,9 @@ EnzymeRules.inactive(::typeof(vpm._gal_plan), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._radix_oversize_above), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._radix_oversize_top), args...) = nothing
 EnzymeRules.inactive(::typeof(vpm._gal_report), args...) = nothing
+# device-field checks read back to the host (largest core, core band): no derivative
+EnzymeRules.inactive(::typeof(vpm._radix_row_extrema), args...) = nothing
+EnzymeRules.inactive(::typeof(vpm.any_outside_core_band), args...) = nothing
 EnzymeRules.inactive_type(::Type{<:vpm._GalSolve}) = true
 
 function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._gal_solve)}, ::Type{RT},
@@ -76,6 +79,10 @@ function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.
         c, sys, x = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, r.c, sol.val; solve = false)
         sol.val.its = r.its; sol.val.conv = r.conv; sol.val.err = r.err
     end
+    # a device field's solve frees its system: rebuild it on the host around the device
+    # solution (the inputs are host Float64 already), no CG; the adjoint runs there
+    sys.A === nothing && ((_, sys, x) = vpm._gal_solve_sys(Y.val, v.val, Xo.val, vo.val, Go.val, c,
+                              vpm._GalSolve(sol.val.gr, sol.val.sgm0, zeros(0, 0)); solve = false))
     A = sys.A                  # its stored pairs live in the GalerkinReset's workspace: keep a copy
     A isa vpm._GalOp && (sys = merge(sys, (; A = vpm._GalOp(A.R, A.rp, copy(A.col), copy(A.val), A.y, A.ib, A.rb))))
     dc = zero(c)
@@ -106,45 +113,17 @@ end
 #   A = g'/(sigma r) - 3g/r^2,  B = -k g/r^3,  E_ab = eps_abc Gamma_c.
 # ------------------------------------------------------------------------------
 
-# second derivative of g from g' = dgdr (q > 0), per kernel (the rules apply only to these kernels)
-_d2g(::typeof(vpm.g_dgdr_gauserf), q, g1) = g1*(2 - q*q)/q
-_d2g(::typeof(vpm.g_dgdr_gaus), q, g1) = g1*(2 - 3*q*q*q)/q
-_d2g(::typeof(vpm.g_dgdr_wnklmns), q, g1) = g1*(2 - 5*q*q)/(q*(q*q + 1))
-_d2g(::typeof(vpm.g_dgdr_sing), q, g1) = zero(q)
-# zeta and its derivative, per kernel
-_zeta_dzeta(f::typeof(vpm.zeta_gauserf), q) = (z = f(q); (z, -q*z))
-_zeta_dzeta(f::typeof(vpm.zeta_gaus), q) = (z = f(q); (z, -3*q*q*z))
-_zeta_dzeta(f::typeof(vpm.zeta_wnklmns), q) = (z = f(q); (z, -7*q*z/(q*q + 1)))
-_zeta_dzeta(f::typeof(vpm.zeta_sing), q) = (f(q), zero(q))
+const _zeta_dzeta = vpm._zeta_dzeta
 _zd(zeta) = q -> _zeta_dzeta(zeta, q)
 
-const _KnownKernel = vpm.Kernel{<:Union{typeof.((vpm.zeta_gauserf, vpm.zeta_gaus, vpm.zeta_wnklmns, vpm.zeta_sing))...},
-                                <:Any, <:Any,
-                                <:Union{typeof.((vpm.g_dgdr_gauserf, vpm.g_dgdr_gaus, vpm.g_dgdr_wnklmns, vpm.g_dgdr_sing))...}}
+const _KnownKernel = vpm._KnownKernel
 const _HostField = vpm.ParticleField{<:AbstractFloat, <:Any, <:Any, <:Any, <:Any, <:_KnownKernel, <:Any, <:Any, <:Any, <:Matrix}
 
 _col3(P, rows, i) = SVector{3}(P[rows[1], i], P[rows[2], i], P[rows[3], i])
 _col9(P, rows, i) = SMatrix{3,3}(ntuple(k -> P[rows[k], i], Val(9)))
 
-# reverse of one pair: (dbar, Gammabar, sigmabar) from Ubar = u, Jbar = s
-@inline function _uj_pair_adj(d, G, sgm, u, s, gdg)
-    k = vpm.const4
-    r2 = dot(d, d); r = sqrt(r2); r3 = r2*r
-    g, g1 = gdg(r/sgm); g2 = _d2g(gdg, r/sgm, g1)
-    c = (-k/r3) * cross(d, G)
-    A = g1/(sgm*r) - 3*g/r2
-    B = -k*g/r3
-    sd = s*d
-    tau = SVector(s[2,3] - s[3,2], s[3,1] - s[1,3], s[1,2] - s[2,1])
-    P = dot(u, c); Q = dot(c, sd); T = dot(tau, G)
-    v = g*u + A*sd
-    Ar = g2/(sgm*sgm*r) - 4*g1/(sgm*r2) + 6*g/r3
-    Br = -k*g1/(sgm*r3) + 3*k*g/(r2*r2)
-    dbar = (-k/r3)*cross(G, v) - (3*dot(v, c)/r2)*d + A*(s'*c) + ((P*g1/sgm + Q*Ar + T*Br)/r)*d
-    Gbar = (-k/r3)*cross(v, d) + B*tau
-    sbar = -P*g1*r/(sgm*sgm) + Q*(2*g1/(sgm*sgm*r) - g2/(sgm*sgm*sgm)) + T*k*g1/(sgm*sgm*r2)
-    return dbar, Gbar, sbar
-end
+const _uj_pair_adj = vpm._uj_pair_adj
+const _d2g = vpm._d2g
 
 # outer loop over sources in nthreads chunks (source-side cotangents written in
 # place); target-side cotangents go to per-chunk buffers, summed at the end
@@ -189,7 +168,7 @@ end
 # With w_t = SFSbar_t, the pair sums factor through per-body vectors:
 #   y_t = M(J_t)' w_t, h_s = M(J_s) Gamma_s, zbar = Gamma_s.y_t - h_s.w_t,
 #   Mbar summed = w_t (sum_s z Gamma_s)' at t and (sum_t z w_t) Gamma_s' at s.
-_M(J, transposed) = transposed ? J' : J
+const _M = vpm._M
 # `blocks`: (targets, sources) index sets whose every pair is in the sum; per
 # thread, both sides accumulate in a buffer (a source set can recur in blocks
 # on different threads). `zd(q)` = (zeta, dzeta/dq); w = SFSbar (zero at static

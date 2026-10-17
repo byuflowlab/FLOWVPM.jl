@@ -23,7 +23,7 @@ import DataStructures: OrderedDict
 import Roots
 import SpecialFunctions: erf
 using StaticArrays
-using LinearAlgebra: eigen, Symmetric, dot, LAPACK, copytri!
+using LinearAlgebra: eigen, Symmetric, dot, cross, LAPACK, copytri!
 
 # ------------ FLOW CODES ------------------------------------------------------
 import FastMultipole
@@ -80,7 +80,7 @@ for header_name in ["kernel", "corespreading_galerkin", "viscous", "formulation"
                     "gpu_erf", "rectangular",
                     "UJ", "subfilterscale_models", "subfilterscale_gpu",
                     "timeintegration",
-                    "monitors", "utils"]
+                    "monitors", "utils", "adjoint"]
     include(joinpath( module_path, "FLOWVPM_"*header_name*".jl" ))
 end
 
