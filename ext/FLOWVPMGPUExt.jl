@@ -951,6 +951,12 @@ end
     end
 end
 
+# A[r0:r0+8, i] - A[r0:r0+8, j] as a tuple (no closure: a closure over the loop's
+# `j` boxes it, which a CUDA kernel rejects)
+@inline _diff9(A, r0, i, j) = @inbounds (A[r0, i] - A[r0, j], A[r0+1, i] - A[r0+1, j], A[r0+2, i] - A[r0+2, j],
+    A[r0+3, i] - A[r0+3, j], A[r0+4, i] - A[r0+4, j], A[r0+5, i] - A[r0+5, j],
+    A[r0+6, i] - A[r0+6, j], A[r0+7, i] - A[r0+7, j], A[r0+8, i] - A[r0+8, j])
+
 @kernel function ka_dsigma_le_kernel!(P, @Const(dJ), np::Int32, transposed::Bool, st::Int32, j0::Int32, m0::Int32)
     i = @index(Global)
     @inbounds if i <= np && P[st, i] == zero(eltype(P))
@@ -970,8 +976,8 @@ end
                 z = K1 * exp(-rho2 / 2) / (sigma * sigma * sigma)
                 dz_ = z * (rho2 - 3)
                 gj1 = P[4, j]; gj2 = P[5, j]; gj3 = P[6, j]
-                s = FLOWVPM._sfs_apply_op(ntuple(k -> P[j0 + k - 1, i] - P[j0 + k - 1, j], Val(9))..., gj1, gj2, gj3, transposed)
-                ds = FLOWVPM._sfs_apply_op(ntuple(k -> dJ[k, i] - dJ[k, j], Val(9))..., gj1, gj2, gj3, transposed)
+                s = FLOWVPM._sfs_apply_op(_diff9(P, j0, i, j)..., gj1, gj2, gj3, transposed)
+                ds = FLOWVPM._sfs_apply_op(_diff9(dJ, 1, i, j)..., gj1, gj2, gj3, transposed)
                 e1 += dz_ * s[1] + z * ds[1]
                 e2 += dz_ * s[2] + z * ds[2]
                 e3 += dz_ * s[3] + z * ds[3]
