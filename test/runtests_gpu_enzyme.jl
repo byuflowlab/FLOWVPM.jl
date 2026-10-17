@@ -50,6 +50,6 @@ const gvpm = FLOWVPM
     # one preconditioner block over every unknown: the reset's CG solves exactly in one
     # iteration, so FD does not see the stopping rule (an iterative solve put ~1e-6 of
     # stopping noise into FD)
-    exact = gvpm.GalerkinReset(; block_cell = 1e3, block_cap = 10^6, tol = 1e-10, itmax = 50)
+    exact = gvpm.GalerkinReset(; block_cell = 1e3, block_cap = 10^6, tol = 1e-6, itmax = 50)   # as the host test (tol^2 above round-off)
     @test check((; viscous = gvpm.CoreSpreading(0.2, 0.25; beta = 1.02, galerkin = exact)), pf -> gvpm.nextstep(pf, dt)) < 1e-6
 end
