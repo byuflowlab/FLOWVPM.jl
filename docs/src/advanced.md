@@ -206,7 +206,19 @@ models, Euler and RK3, core spreading with the Galerkin reset, and the threaded 
 (fields above `FLOWVPM.MIN_MT_NP` particles with Julia started with `-t 2` or more). The
 gradient is checked against finite differences in `test/runtests_enzyme.jl`. With
 threads, the reverse pass accumulates in a different order from run to run (relative
-differences around `1e-13`). The FMM path (`UJ_fmm`) is not differentiable yet.
+differences around `1e-13`). On the CPU octree FMM path (`UJ_fmm`), the U/J evaluation
+has a reverse rule (two real-valued FMM calls plus the exact near-field pair adjoint),
+checked in the same file.
+
+**GPU fields (CUDA).** Device fields on the `UJ_direct` path are differentiated the same
+way: every device operation of a step has a reverse rule (`ext/FLOWVPMEnzymeGPUExt.jl`,
+loaded with EnzymeCore, GPUArraysCore and KernelAbstractions), so Enzyme never
+differentiates a kernel itself. This covers U/J, the SFS stretching, Euler and RK3, both
+relaxations, core spreading with the Galerkin reset, and the constant and dynamic SFS
+models (including the two-level analytic one). The gradient is checked against finite
+differences on CUDA in `test/runtests_gpu_enzyme.jl`. The reverse pass costs about 3.5
+steps (CUDA, 96 particles). The per-particle reverse kernels call Enzyme inside the kernel,
+which Metal does not support. The radix FMM path on a device is not differentiable yet.
 
 **Many steps.** Differentiating a loop of steps in one call keeps every step's tape in
 memory: about 32 MB per RK3 step at 500 particles (it grows linearly with the steps and
