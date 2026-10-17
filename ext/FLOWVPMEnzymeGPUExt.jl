@@ -212,4 +212,140 @@ function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.gpu_estr_
     return (nothing,)
 end
 
+#------- row zeroing (U, vorticity, J, PSE; SFS; the RK3 M storage) -------#
+# P[rows, i] = 0 for non-static i: the reverse zeroes the same rows of the
+# cotangent (the old values do not reach the output). Rules so that Enzyme never
+# sees the masked row-view broadcasts (illegal type analysis on CUDA).
+
+@kernel function ka_zero_rows_adj_kernel!(dP, @Const(P), np::Int32, r0::Int32, r1::Int32, st::Int32, skipstatic::Bool)
+    i = @index(Global)
+    @inbounds if i <= np && !(skipstatic && !iszero(P[st, i]))
+        for r in r0:r1
+            dP[r, i] = zero(eltype(dP))
+        end
+    end
+end
+function _zero_rows_adj!(dP, P, np, rows; skipstatic = true)
+    np == 0 && return nothing
+    backend = KA.get_backend(dP)
+    ka_zero_rows_adj_kernel!(backend, 256)(dP, P, Int32(np), Int32(first(rows)), Int32(last(rows)),
+                                           Int32(vpm.STATIC_INDEX), skipstatic; ndrange = np)
+    KA.synchronize(backend)
+    return nothing
+end
+
+# (U_prev = |U| of every particle is bookkeeping read by no step: no derivative)
+for (f, rows, skip) in ((vpm._reset_particles_broadcast!, first(vpm.U_INDEX):last(vpm.PSE_INDEX), true),
+                        (vpm._reset_particles_sfs_broadcast!, vpm.SFS_INDEX, true),
+                        (vpm._reset_M_storage!, vpm.M_INDEX, true),
+                        (vpm._update_U_prev_broadcast!, vpm.U_PREV_INDEX:vpm.U_PREV_INDEX, false))
+    @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
+                                                pf::EnzymeCore.Annotation{<:_DevField}) where RT
+        func.val(pf.val)
+        return EnzymeRules.AugmentedReturn(nothing, nothing, pf.val.np)
+    end
+    @eval function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT}, np,
+                                       pf::EnzymeCore.Annotation{<:_DevField}) where RT
+        pf isa EnzymeCore.Const || _zero_rows_adj!(pf.dval.particles, pf.val.particles, np, $rows; skipstatic = $skip)
+        return (nothing,)
+    end
+end
+
+#------- per-particle updates (generic column VJP) -------#
+# A fused device update maps each non-static column through a pure function
+# y = fcol(x, args...) of the rows `rin`, written to the rows `rout` (a subset of
+# `rin`). Reverse, per particle: xbar = (dfcol/dx)' ybar by Enzyme inside the
+# kernel; the written rows' cotangents are replaced, the read-only rows' added to.
+
+@inline function _col_vjp(fcol, x, yb, args...)
+    h(x) = sum(yb .* fcol(x, args...))
+    return EnzymeCore.autodiff_deferred(EnzymeCore.Reverse, EnzymeCore.Const(h), EnzymeCore.Active,
+                                        EnzymeCore.Active(x))[1][1]
+end
+
+@kernel function ka_col_adj_kernel!(dP, @Const(P0), np::Int32, st::Int32, skipstatic::Bool, fcol, rin, rout, args)
+    i = @index(Global)
+    @inbounds if i <= np && !(skipstatic && !iszero(P0[st, i]))
+        x = vpm._gather_col(P0, i, rin); yb = vpm._gather_col(dP, i, rout)
+        xb = _col_vjp(fcol, x, yb, args...)
+        for k in 1:length(rout)
+            dP[rout[k], i] = zero(eltype(dP))
+        end
+        for k in 1:length(rin)
+            dP[rin[k], i] += xb[k]
+        end
+    end
+end
+function _col_adj!(dP, P0, np, fcol, rin, rout, args; skipstatic = true)
+    np == 0 && return nothing
+    backend = KA.get_backend(dP)
+    ka_col_adj_kernel!(backend, 256)(dP, P0, Int32(np), Int32(vpm.STATIC_INDEX), skipstatic, fcol, rin, rout, args;
+                                     ndrange = np)
+    KA.synchronize(backend)
+    return nothing
+end
+
+# zero adjoints for the Active scalar arguments a rule does not differentiate
+_no_scalar_adjoints(args...) = (nothing, map(x -> x isa EnzymeCore.Active ? EnzymeCore.make_zero(x.val) : nothing, args)...)
+
+# RK3 register update (reformulated VPM). The scheme constants (a, b, dt, the
+# freestream, f, g, zeta0) carry no derivative here.
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm.update_particle_states_broadcast_reformulated!)},
+                                      ::Type{RT}, pf::EnzymeCore.Annotation{<:_DevField}, a, b, dt, Uinf, f, g, zeta0) where RT
+    P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
+    func.val(pf.val, a.val, b.val, dt.val, Uinf.val, f.val, g.val, zeta0.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, P0)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm.update_particle_states_broadcast_reformulated!)},
+                             ::Type{RT}, P0, pf::EnzymeCore.Annotation{<:_DevField}, a, b, dt, Uinf, f, g, zeta0) where RT
+    if !(pf isa EnzymeCore.Const)
+        R = eltype(P0)
+        sc = vpm._rk3_consts(R, a.val, b.val, dt.val, Uinf.val, f.val, g.val, zeta0.val)
+        _col_adj!(pf.dval.particles, P0, size(P0, 2), vpm._rk3_reformulated_col, vpm._RK3_IN, vpm._RK3_OUT,
+                  (pf.val.transposed, sc))
+    end
+    return _no_scalar_adjoints(a, b, dt, Uinf, f, g, zeta0)
+end
+
+# the other per-particle updates, each: (function, its column map, rows read, rows
+# written, the map's arguments from the call's, whether static particles are skipped)
+for (f, fcol, rin, rout, margs, skip) in (
+        (vpm._euler_broadcast_reformulated!, vpm._euler_reformulated_col, vpm._EULER_IN, vpm._EULER_OUT,
+         (pf, R, dt, Uinf, f, g, zeta0) -> (pf.val.transposed, vpm._euler_consts(R, dt, Uinf, f, g, zeta0)), true),
+        (vpm._corespreading_rk3_broadcast!, vpm._cs_rk3_col, vpm._CS_RK3_ROWS, vpm._CS_RK3_ROWS,
+         (pf, R, nu, dt, aux1, aux2) -> ((R(dt) * 2 * R(nu), R(aux1), R(aux2)),), true),
+        (vpm._corespreading_euler_broadcast!, vpm._cs_euler_col, vpm._CS_EULER_ROWS, vpm._CS_EULER_ROWS,
+         (pf, R, nu, dt) -> (2 * R(nu) * R(dt),), true))
+    @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
+                                                pf::EnzymeCore.Annotation{<:_DevField}, args...) where RT
+        P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
+        func.val(pf.val, map(a -> a.val, args)...)
+        return EnzymeRules.AugmentedReturn(nothing, nothing, P0)
+    end
+    @eval function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT}, P0,
+                                       pf::EnzymeCore.Annotation{<:_DevField}, args...) where RT
+        pf isa EnzymeCore.Const ||
+            _col_adj!(pf.dval.particles, P0, size(P0, 2), $fcol, $rin, $rout,
+                      $margs(pf, eltype(P0), map(a -> a.val, args)...); skipstatic = $skip)
+        return _no_scalar_adjoints(args...)
+    end
+end
+
+# relaxation: every particle (static ones too, as the kernel)
+for (fn, corrected) in ((vpm.relax_pedrizzetti, false), (vpm.relax_correctedpedrizzetti, true))
+    @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._relax_broadcast!)}, ::Type{RT},
+                                                fa::EnzymeCore.Const{typeof($fn)}, rlxf, pf::EnzymeCore.Annotation{<:_DevField}) where RT
+        P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
+        func.val(fa.val, rlxf.val, pf.val)
+        return EnzymeRules.AugmentedReturn(nothing, nothing, P0)
+    end
+    @eval function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._relax_broadcast!)}, ::Type{RT}, P0,
+                                       fa::EnzymeCore.Const{typeof($fn)}, rlxf, pf::EnzymeCore.Annotation{<:_DevField}) where RT
+        pf isa EnzymeCore.Const ||
+            _col_adj!(pf.dval.particles, P0, size(P0, 2), vpm._relax_col, vpm._RELAX_IN, vpm._RELAX_OUT,
+                      (eltype(P0)(rlxf.val), Val($corrected)); skipstatic = false)
+        return (nothing, rlxf isa EnzymeCore.Active ? zero(rlxf.val) : nothing, nothing)
+    end
+end
+
 end # module

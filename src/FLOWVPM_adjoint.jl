@@ -45,3 +45,109 @@ const _KnownKernel = Kernel{<:Union{typeof.((zeta_gauserf, zeta_gaus, zeta_wnklm
     sbar = -P*g1*r/(sgm*sgm) + Q*(2*g1/(sgm*sgm*r) - g2/(sgm*sgm*sgm)) + T*k*g1/(sgm*sgm*r2)
     return dbar, Gbar, sbar
 end
+
+#=##############################################################################
+# Per-particle maps of the fused device updates (ext/FLOWVPMGPUExt.jl) as pure
+# functions of one column: the kernels call them, and the device reverse rules
+# (ext/FLOWVPMEnzymeGPUExt.jl) differentiate them particle by particle.
+=###############################################################################
+
+@inline function _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
+    return transposed ?
+        (j1*g1 + j2*g2 + j3*g3, j4*g1 + j5*g2 + j6*g3, j7*g1 + j8*g2 + j9*g3) :
+        (j1*g1 + j4*g2 + j7*g3, j2*g1 + j5*g2 + j8*g3, j3*g1 + j6*g2 + j9*g3)
+end
+
+@inline _gather_col(P, i, rows::NTuple{N,Int}) where N = SVector{N}(ntuple(k -> @inbounds(P[rows[k], i]), Val(N)))
+
+# RK3 register update of the reformulated VPM (one stage): reads X G sigma U J
+# M[1:8] C SFS (31 rows, `_RK3_IN`), writes X G sigma M[1:8] (15, `_RK3_OUT`)
+const _RK3_IN = (X_INDEX..., GAMMA_INDEX..., SIGMA_INDEX, U_INDEX..., J_INDEX..., M_INDEX[1:8]...,
+                 C_INDEX[1], SFS_INDEX...)
+const _RK3_OUT = (X_INDEX..., GAMMA_INDEX..., SIGMA_INDEX, M_INDEX[1:8]...)
+_rk3_consts(::Type{R}, a, b, dt, Uinf, f, g, zeta0) where R =
+    (fR = R(f); gR = R(g); (R(a), R(b), R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]),
+                            (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0)))
+@inline function _rk3_reformulated_col(x, transposed, sc)
+    a, b, dt, uinf1, uinf2, uinf3, cfg, cf, inv_zeta0 = sc
+    T = eltype(x)
+    @inbounds begin
+        g1 = x[4]; g2 = x[5]; g3 = x[6]; sig = x[7]
+        s1 = x[29]; s2 = x[30]; s3 = x[31]; c1 = x[28]
+        m1n = a * x[20] + dt * (x[8]  + uinf1)
+        m2n = a * x[21] + dt * (x[9]  + uinf2)
+        m3n = a * x[22] + dt * (x[10] + uinf3)
+        mm1, mm2, mm3 = _sfs_stretch(transposed, x[11],x[12],x[13],x[14],x[15],x[16],x[17],x[18],x[19], g1,g2,g3)
+        gn2 = g1*g1 + g2*g2 + g3*g3
+        sdotg = mm1*g1 + mm2*g2 + mm3*g3
+        sig3z = sig*sig*sig * inv_zeta0
+        cepsg = c1 * (s1*g1 + s2*g2 + s3*g3) * sig3z
+        mm4 = gn2 > zero(T) ? (cfg * sdotg - cf * cepsg) / gn2 : zero(T)
+        m4n = a * x[23] + dt * (mm1 - 3 * mm4 * g1 - c1 * s1 * sig3z)
+        m5n = a * x[24] + dt * (mm2 - 3 * mm4 * g2 - c1 * s2 * sig3z)
+        m6n = a * x[25] + dt * (mm3 - 3 * mm4 * g3 - c1 * s3 * sig3z)
+        m8n = a * x[27] - dt * (sig * mm4)
+        return SVector(x[1] + b * m1n, x[2] + b * m2n, x[3] + b * m3n,
+                       g1 + b * m4n, g2 + b * m5n, g3 + b * m6n, sig + b * m8n,
+                       m1n, m2n, m3n, m4n, m5n, m6n, x[26], m8n)
+    end
+end
+
+# Euler update of the reformulated VPM (`_euler_broadcast_reformulated!`, same
+# math per particle): reads X G sigma U J C SFS (23), writes X G sigma (7)
+const _EULER_IN = (X_INDEX..., GAMMA_INDEX..., SIGMA_INDEX, U_INDEX..., J_INDEX..., C_INDEX[1], SFS_INDEX...)
+const _EULER_OUT = (X_INDEX..., GAMMA_INDEX..., SIGMA_INDEX)
+_euler_consts(::Type{R}, dt, Uinf, f, g, zeta0) where R =
+    (fR = R(f); gR = R(g); (R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]), (fR + gR) / (1 + 3fR), fR / (1 + 3fR), 1 / R(zeta0)))
+@inline function _euler_reformulated_col(x, transposed, sc)
+    dt, uinf1, uinf2, uinf3, cfg, cf, inv_zeta0 = sc
+    T = eltype(x)
+    @inbounds begin
+        g1 = x[4]; g2 = x[5]; g3 = x[6]; sig = x[7]; c1 = x[20]; s1 = x[21]; s2 = x[22]; s3 = x[23]
+        mm1, mm2, mm3 = _sfs_stretch(transposed, x[11],x[12],x[13],x[14],x[15],x[16],x[17],x[18],x[19], g1,g2,g3)
+        gn2 = g1*g1 + g2*g2 + g3*g3
+        sig3z = sig*sig*sig * inv_zeta0
+        mm4 = gn2 > zero(T) ? (cfg * (mm1*g1 + mm2*g2 + mm3*g3) - cf * c1 * (s1*g1 + s2*g2 + s3*g3) * sig3z) / gn2 : zero(T)
+        return SVector(x[1] + dt * (x[8] + uinf1), x[2] + dt * (x[9] + uinf2), x[3] + dt * (x[10] + uinf3),
+                       g1 + dt * (mm1 - 3*mm4*g1 - c1*s1*sig3z), g2 + dt * (mm2 - 3*mm4*g2 - c1*s2*sig3z),
+                       g3 + dt * (mm3 - 3*mm4*g3 - c1*s3*sig3z), sig - dt * (sig * mm4))
+    end
+end
+
+# core spreading's growth: RK3 (M[7], sigma) and Euler (sigma)
+const _CS_RK3_ROWS = (M_INDEX[7], SIGMA_INDEX)
+@inline function _cs_rk3_col(x, sc)
+    nu2dt, aux1, aux2 = sc
+    m7 = aux1 * x[1] + nu2dt
+    return SVector(m7, sqrt(x[2] * x[2] + aux2 * m7))
+end
+const _CS_EULER_ROWS = (SIGMA_INDEX,)
+@inline _cs_euler_col(x, nu2dt) = SVector(sqrt(x[1] * x[1] + nu2dt))
+
+# relaxation (Pedrizzetti; CORRECTED: the corrected form): reads Gamma and J, writes Gamma
+const _RELAX_IN = (GAMMA_INDEX..., J_INDEX...)
+const _RELAX_OUT = (GAMMA_INDEX...,)
+@inline function _relax_col(x, rlxf, ::Val{CORRECTED}) where {CORRECTED}
+    T = eltype(x)
+    @inbounds begin
+        G1 = x[1]; G2 = x[2]; G3 = x[3]
+        J2 = x[5]; J3 = x[6]; J4 = x[7]; J6 = x[9]; J7 = x[10]; J8 = x[11]
+        w1 = J6 - J8; w2 = J7 - J3; w3 = J2 - J4
+        nrmw = sqrt(w1^2 + w2^2 + w3^2)
+        nrmGamma = sqrt(G1^2 + G2^2 + G3^2)
+        # the corrected form divides by |Gamma|, so guard it as the host does
+        apply = CORRECTED ? (nrmw > zero(T)) & (nrmGamma > zero(T)) : nrmw > zero(T)
+        safenrmw = ifelse(nrmw > zero(T), nrmw, one(T))
+        omr = 1 - rlxf
+        if CORRECTED
+            sqrtb2 = sqrt(1 - 2 * omr * rlxf * (1 - (G1*w1 + G2*w2 + G3*w3) / (nrmGamma * safenrmw)))
+            return SVector(ifelse(apply, (omr*G1 + rlxf*nrmGamma*w1/safenrmw) / sqrtb2, G1),
+                           ifelse(apply, (omr*G2 + rlxf*nrmGamma*w2/safenrmw) / sqrtb2, G2),
+                           ifelse(apply, (omr*G3 + rlxf*nrmGamma*w3/safenrmw) / sqrtb2, G3))
+        else
+            return SVector(ifelse(apply, omr*G1 + rlxf*nrmGamma*w1/safenrmw, G1),
+                           ifelse(apply, omr*G2 + rlxf*nrmGamma*w2/safenrmw, G2),
+                           ifelse(apply, omr*G3 + rlxf*nrmGamma*w3/safenrmw, G3))
+        end
+    end
+end

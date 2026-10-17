@@ -184,37 +184,13 @@ end
 # falls back to the broadcast chain (the reference these are gated against).
 const RK3_FUSED = Ref(true)          # FLOWVPM_RK3_FUSED=0 in the environment turns it off
 
-@kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, sc,
-        ix, ig, isig, iu, ij, im, ic, isfs, istat)
+@kernel function ka_rk3_update_reformulated_kernel!(P, np, transposed::Bool, sc, istat)
     i = @index(Global)
-    a, b, dt, uinf1, uinf2, uinf3, cfg, cf, inv_zeta0 = sc.v
     @inbounds if i <= np && P[istat, i] == zero(eltype(P))
-        T = eltype(P)
-        g1 = P[ig, i]; g2 = P[ig+1, i]; g3 = P[ig+2, i]
-        j1 = P[ij, i];   j2 = P[ij+1, i]; j3 = P[ij+2, i]
-        j4 = P[ij+3, i]; j5 = P[ij+4, i]; j6 = P[ij+5, i]
-        j7 = P[ij+6, i]; j8 = P[ij+7, i]; j9 = P[ij+8, i]
-        s1 = P[isfs, i]; s2 = P[isfs+1, i]; s3 = P[isfs+2, i]
-        c1 = P[ic, i]; sig = P[isig, i]
-        m1n = a * P[im, i]   + dt * (P[iu, i]   + uinf1)
-        m2n = a * P[im+1, i] + dt * (P[iu+1, i] + uinf2)
-        m3n = a * P[im+2, i] + dt * (P[iu+2, i] + uinf3)
-        mm1, mm2, mm3 = _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
-        gn2 = g1*g1 + g2*g2 + g3*g3
-        sdotg = mm1*g1 + mm2*g2 + mm3*g3
-        sig3z = sig*sig*sig * inv_zeta0
-        cepsg = c1 * (s1*g1 + s2*g2 + s3*g3) * sig3z
-        mm4 = gn2 > zero(T) ? (cfg * sdotg - cf * cepsg) / gn2 : zero(T)
-        m4n = a * P[im+3, i] + dt * (mm1 - 3 * mm4 * g1 - c1 * s1 * sig3z)
-        m5n = a * P[im+4, i] + dt * (mm2 - 3 * mm4 * g2 - c1 * s2 * sig3z)
-        m6n = a * P[im+5, i] + dt * (mm3 - 3 * mm4 * g3 - c1 * s3 * sig3z)
-        m8n = a * P[im+7, i] - dt * (sig * mm4)
-        P[ix, i]   += b * m1n; P[ix+1, i] += b * m2n; P[ix+2, i] += b * m3n
-        P[ig, i]   = g1 + b * m4n; P[ig+1, i] = g2 + b * m5n; P[ig+2, i] = g3 + b * m6n
-        P[isig, i] = sig + b * m8n
-        P[im, i] = m1n; P[im+1, i] = m2n; P[im+2, i] = m3n
-        P[im+3, i] = m4n; P[im+4, i] = m5n; P[im+5, i] = m6n
-        P[im+7, i] = m8n
+        y = FLOWVPM._rk3_reformulated_col(FLOWVPM._gather_col(P, i, FLOWVPM._RK3_IN), transposed, sc.v)
+        for k in 1:length(FLOWVPM._RK3_OUT)
+            P[FLOWVPM._RK3_OUT[k], i] = y[k]
+        end
     end
 end
 
@@ -231,13 +207,8 @@ function FLOWVPM.update_particle_states_broadcast_reformulated!(
     np == 0 && return nothing
     backend = KA.get_backend(pfield.particles)
     wg = _sfs_wg(backend)
-    fR = R(f); gR = R(g)
     ka_rk3_update_reformulated_kernel!(backend, wg)(pfield.particles, np, pfield.transposed,
-        FLOWVPM.KConst((R(a), R(b), R(dt), R(Uinf[1]), R(Uinf[2]), R(Uinf[3]),
-        (fR + gR) / (1 + 3fR), fR / (1 + 3fR), R(1 / zeta0))),
-        first(FLOWVPM.X_INDEX), first(FLOWVPM.GAMMA_INDEX), FLOWVPM.SIGMA_INDEX,
-        first(FLOWVPM.U_INDEX), first(FLOWVPM.J_INDEX), first(FLOWVPM.M_INDEX),
-        first(FLOWVPM.C_INDEX), first(FLOWVPM.SFS_INDEX), FLOWVPM.STATIC_INDEX;
+        FLOWVPM.KConst(FLOWVPM._rk3_consts(R, a, b, dt, Uinf, f, g, zeta0)), FLOWVPM.STATIC_INDEX;
         ndrange = cld(np, wg) * wg)
     KA.synchronize(backend)
     return nothing
@@ -281,12 +252,9 @@ end
 # 400k Metal field) as one kernel
 @kernel function ka_corespreading_rk3_kernel!(P, np, sc, im7, isig, istat)
     i = @index(Global)
-    nu2dt, aux1, aux2 = sc.v
     @inbounds if i <= np && P[istat, i] == zero(eltype(P))
-        m7 = aux1 * P[im7, i] + nu2dt
-        P[im7, i] = m7
-        s = P[isig, i]
-        P[isig, i] = sqrt(s * s + aux2 * m7)
+        y = FLOWVPM._cs_rk3_col(FLOWVPM.SVector(P[im7, i], P[isig, i]), sc.v)
+        P[im7, i] = y[1]; P[isig, i] = y[2]
     end
 end
 function FLOWVPM._corespreading_rk3_broadcast!(pfield::GPUField{R}, nu, dt, aux1, aux2) where R
@@ -307,29 +275,9 @@ end
 # other fused kernels. CORRECTED selects the corrected-Pedrizzetti form.
 @kernel function ka_relax_kernel!(P, np, sc, ig, ij, ::Val{CORRECTED}) where {CORRECTED}
     i = @index(Global)
-    rlxf = sc.v
     @inbounds if i <= np
-        T = eltype(P)
-        J2 = P[ij + 1, i]; J3 = P[ij + 2, i]; J4 = P[ij + 3, i]
-        J6 = P[ij + 5, i]; J7 = P[ij + 6, i]; J8 = P[ij + 7, i]
-        G1 = P[ig, i]; G2 = P[ig + 1, i]; G3 = P[ig + 2, i]
-        w1 = J6 - J8; w2 = J7 - J3; w3 = J2 - J4
-        nrmw = sqrt(w1^2 + w2^2 + w3^2)
-        nrmGamma = sqrt(G1^2 + G2^2 + G3^2)
-        # The corrected form divides by |Gamma|, so guard it as the host does.
-        apply = CORRECTED ? (nrmw > zero(T)) & (nrmGamma > zero(T)) : nrmw > zero(T)
-        safenrmw = ifelse(nrmw > zero(T), nrmw, one(T))
-        omr = 1 - rlxf
-        if CORRECTED
-            sqrtb2 = sqrt(1 - 2 * omr * rlxf * (1 - (G1*w1 + G2*w2 + G3*w3) / (nrmGamma * safenrmw)))
-            P[ig, i]     = ifelse(apply, (omr*G1 + rlxf*nrmGamma*w1/safenrmw) / sqrtb2, G1)
-            P[ig + 1, i] = ifelse(apply, (omr*G2 + rlxf*nrmGamma*w2/safenrmw) / sqrtb2, G2)
-            P[ig + 2, i] = ifelse(apply, (omr*G3 + rlxf*nrmGamma*w3/safenrmw) / sqrtb2, G3)
-        else
-            P[ig, i]     = ifelse(apply, omr*G1 + rlxf*nrmGamma*w1/safenrmw, G1)
-            P[ig + 1, i] = ifelse(apply, omr*G2 + rlxf*nrmGamma*w2/safenrmw, G2)
-            P[ig + 2, i] = ifelse(apply, omr*G3 + rlxf*nrmGamma*w3/safenrmw, G3)
-        end
+        y = FLOWVPM._relax_col(FLOWVPM._gather_col(P, i, FLOWVPM._RELAX_IN), sc.v, Val(CORRECTED))
+        P[ig, i] = y[1]; P[ig + 1, i] = y[2]; P[ig + 2, i] = y[3]
     end
 end
 for (fn, corrected) in ((FLOWVPM.relax_pedrizzetti, false), (FLOWVPM.relax_correctedpedrizzetti, true))
@@ -1014,11 +962,7 @@ end
 const _SFS_NAN_FLAG = Dict{Any,Any}()
 _sfs_nan_flag(backend) = get!(() -> KA.zeros(backend, Int32, 1), _SFS_NAN_FLAG, typeof(backend))
 
-@inline function _sfs_stretch(transposed, j1,j2,j3,j4,j5,j6,j7,j8,j9, g1,g2,g3)
-    return transposed ?
-        (j1*g1 + j2*g2 + j3*g3, j4*g1 + j5*g2 + j6*g3, j7*g1 + j8*g2 + j9*g3) :
-        (j1*g1 + j4*g2 + j7*g3, j2*g1 + j5*g2 + j8*g3, j3*g1 + j6*g2 + j9*g3)
-end
+const _sfs_stretch = FLOWVPM._sfs_stretch
 
 # Port of `_pseudo3level_afterUJ_broadcast!`, in the host loop's operation order.
 @kernel function ka_sfs_afterUJ_kernel!(P, nan_flag, np, transposed::Bool,
