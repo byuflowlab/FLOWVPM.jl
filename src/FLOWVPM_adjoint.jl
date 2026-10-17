@@ -151,3 +151,11 @@ const _RELAX_OUT = (GAMMA_INDEX...,)
         end
     end
 end
+
+# constant SFS: the model coefficient set to Cs, then clipped to 0 where it would
+# backscatter (C (Gamma . SFS) < 0); the clipping decision carries no derivative
+const _SFSC_ROWS = (C_INDEX[1],)
+@inline _sfs_coefficient_col(x, Cs) = SVector(Cs + zero(x[1]))
+const _CLIP_IN = (C_INDEX[1], GAMMA_INDEX..., SFS_INDEX...)
+@inline _clip_backscatter_col(x) =
+    @inbounds SVector(ifelse(x[1] * (x[2]*x[5] + x[3]*x[6] + x[4]*x[7]) < 0, zero(x[1]), x[1]))

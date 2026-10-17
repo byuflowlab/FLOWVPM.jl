@@ -315,7 +315,9 @@ for (f, fcol, rin, rout, margs, skip) in (
         (vpm._corespreading_rk3_broadcast!, vpm._cs_rk3_col, vpm._CS_RK3_ROWS, vpm._CS_RK3_ROWS,
          (pf, R, nu, dt, aux1, aux2) -> ((R(dt) * 2 * R(nu), R(aux1), R(aux2)),), true),
         (vpm._corespreading_euler_broadcast!, vpm._cs_euler_col, vpm._CS_EULER_ROWS, vpm._CS_EULER_ROWS,
-         (pf, R, nu, dt) -> (2 * R(nu) * R(dt),), true))
+         (pf, R, nu, dt) -> (2 * R(nu) * R(dt),), true),
+        (vpm._constantsfs_coefficient_broadcast!, vpm._sfs_coefficient_col, vpm._SFSC_ROWS, vpm._SFSC_ROWS,
+         (pf, R, Cs) -> (R(Cs),), true))
     @eval function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof($f)}, ::Type{RT},
                                                 pf::EnzymeCore.Annotation{<:_DevField}, args...) where RT
         P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
@@ -329,6 +331,20 @@ for (f, fcol, rin, rout, margs, skip) in (
                       $margs(pf, eltype(P0), map(a -> a.val, args)...); skipstatic = $skip)
         return _no_scalar_adjoints(args...)
     end
+end
+
+# backscatter clipping of the SFS model coefficient
+function EnzymeRules.augmented_primal(config, func::EnzymeCore.Const{typeof(vpm._clip_broadcast!)}, ::Type{RT},
+                                      fa::EnzymeCore.Const{typeof(vpm.clipping_backscatter)}, pf::EnzymeCore.Annotation{<:_DevField}) where RT
+    P0 = pf isa EnzymeCore.Const ? nothing : pf.val.particles[:, 1:pf.val.np]
+    func.val(fa.val, pf.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, P0)
+end
+function EnzymeRules.reverse(config, func::EnzymeCore.Const{typeof(vpm._clip_broadcast!)}, ::Type{RT}, P0,
+                             fa::EnzymeCore.Const{typeof(vpm.clipping_backscatter)}, pf::EnzymeCore.Annotation{<:_DevField}) where RT
+    pf isa EnzymeCore.Const ||
+        _col_adj!(pf.dval.particles, P0, size(P0, 2), vpm._clip_backscatter_col, vpm._CLIP_IN, vpm._SFSC_ROWS, ())
+    return (nothing, nothing)
 end
 
 # relaxation: every particle (static ones too, as the kernel)
